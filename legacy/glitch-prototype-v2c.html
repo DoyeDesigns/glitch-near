@@ -1,0 +1,1056 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Glitch</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><title>Glitch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: full-screen 3D canvas, floating HUD cards, one side panel (bottom sheet on phones). */
+:root{
+  --bg:#070910; --panel:#0e1322; --panel2:#151c33; --line:#26324f;
+  --fg:#e9eefc; --mute:#8b97b8; --cyan:#2ee6ff; --pink:#ff3d9a; --lime:#b8ff3d; --amber:#ffb12e;
+  --disp:'Chakra Petch','Trebuchet MS',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
+  --top:calc(8px + env(safe-area-inset-top,0px)); --bot:calc(10px + env(safe-area-inset-bottom,0px));
+  color-scheme:dark;
+}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 var(--disp);overflow:hidden;user-select:none;-webkit-user-select:none}
+#app{position:fixed;inset:0;overflow:hidden;background:var(--bg)}
+#gl{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+#gl:active{cursor:grabbing}
+#gl.glitch{animation:glitch .6s steps(8) 1}
+@keyframes glitch{0%{filter:none}20%{transform:translate(-6px,2px);filter:hue-rotate(90deg) saturate(2)}40%{transform:translate(5px,-3px);filter:hue-rotate(-60deg) contrast(1.4)}60%{transform:translate(-3px,0);filter:invert(.15)}100%{transform:none;filter:none}}
+#fx{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .5s;background:radial-gradient(ellipse at center,transparent 45%,var(--pink) 140%)}
+#fx.on{opacity:.55}
+.card{background:color-mix(in srgb,var(--panel) 82%,transparent);border:1px solid var(--line);border-radius:10px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.tag{font:600 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--cyan);border:1px solid var(--cyan);border-radius:4px;padding:1px 5px}
+.tag.demo{color:var(--amber);border-color:var(--amber)}
+small{color:var(--mute);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+button{font:600 13px var(--disp);color:var(--fg);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+button:hover{border-color:var(--cyan)} button:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+button.pri{background:var(--cyan);color:#021018;border-color:var(--cyan)} button.pri:hover{filter:brightness(1.1)}
+button.up{background:var(--lime);color:#0a1400;border-color:var(--lime)} button.dn{background:var(--pink);color:#1a0010;border-color:var(--pink)}
+button[disabled]{opacity:.4;cursor:not-allowed}
+#tl{position:absolute;left:10px;top:var(--top);padding:10px 12px;min-width:190px}
+#tl .row{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.bal{font:700 26px var(--mono);margin:4px 0 0}.bal small{margin-left:6px}
+.sub{display:flex;gap:12px;font:500 12px var(--mono);color:var(--mute)}
+#ret.up{color:var(--lime)} #ret.dn{color:var(--pink)}
+.meter{height:5px;border-radius:3px;background:var(--panel2);margin-top:8px;overflow:hidden}.meter i{display:block;height:100%;width:0;background:var(--cyan);transition:width .4s}
+.cap{display:flex;justify-content:space-between;font:11px var(--mono);color:var(--mute);margin-top:3px}
+  .needs{display:flex;gap:8px;margin-top:6px}.needs>div{flex:1;font:10px var(--mono);color:var(--mute)}.needs i{display:block;height:5px;background:var(--panel2);border-radius:3px;margin-top:2px;overflow:hidden}.needs i b{display:block;height:100%;width:0}
+#tr{position:absolute;right:10px;top:var(--top);display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.metrics{display:flex;gap:14px;padding:8px 12px;align-items:center}.metrics div{display:flex;flex-direction:column}.metrics b{font:700 14px var(--mono)}
+.tabs{display:flex;gap:6px}.tabs button{padding:6px 10px}.tabs button.on{border-color:var(--cyan);color:var(--cyan)}
+#mk{position:absolute;left:10px;top:calc(var(--top) + 146px);padding:8px 10px;width:190px;font:12px var(--mono)}
+.tk{display:flex;justify-content:space-between;gap:8px;padding:2px 0}.tk b{font-weight:700}.pos{color:var(--lime)}.neg{color:var(--pink)}
+.bar{height:4px;border-radius:2px;background:var(--panel2);margin:2px 0 6px;overflow:hidden}.bar i{display:block;height:100%}
+#side{position:absolute;right:10px;top:calc(var(--top) + 86px);width:310px;max-height:calc(100% - 200px);overflow:auto;padding:10px;touch-action:pan-y}
+.post{padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}.post .who{font-weight:700;color:var(--cyan)}.post.sys .who{color:var(--amber)}.post.bad .who{color:var(--pink)}.post time{float:right;color:var(--mute);font:10px var(--mono)}.post .lk{color:var(--mute);font:11px var(--mono)}
+.sk{margin:8px 0}.sk .top{display:flex;justify-content:space-between}.sk.lock{opacity:.45}
+.rk{display:flex;justify-content:space-between;padding:4px 0;font:12px var(--mono)}.rk.me{color:var(--cyan);font-weight:700}
+#banner{position:absolute;left:50%;top:calc(var(--top) + 6px);transform:translateX(-50%);max-width:min(560px,70vw);padding:8px 14px;border-radius:8px;font-weight:700;text-align:center;background:var(--pink);color:#1a0010;z-index:5}
+#banner.good{background:var(--lime);color:#0a1400}#banner.info{background:var(--cyan);color:#021018}
+#prompt{position:absolute;left:50%;bottom:calc(var(--bot) + 14px);transform:translateX(-50%);padding:12px 22px;font-size:15px;z-index:4}
+#joy{position:absolute;left:22px;bottom:calc(var(--bot) + 18px);width:120px;height:120px;border-radius:50%;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 60%,transparent);touch-action:none;z-index:3}
+#joy i{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:var(--cyan);opacity:.7}
+#coach{position:absolute;left:50%;bottom:calc(var(--bot) + 70px);transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:color-mix(in srgb,var(--panel) 85%,transparent);border:1px solid var(--line);color:var(--mute);font-size:12px;text-align:center;max-width:86vw;pointer-events:none}
+#modal{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(3,5,10,.62);z-index:10;padding:12px}
+.sheet{width:min(560px,100%);max-height:100%;overflow:auto;touch-action:pan-y;background:var(--panel);border:1px solid var(--cyan);border-radius:12px;padding:16px;box-shadow:0 0 40px rgba(46,230,255,.18)}
+.sheet h2{margin:0 0 4px;font-size:20px}.sheet p{margin:4px 0 10px;color:var(--mute)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.chips button.on{border-color:var(--cyan);color:var(--cyan)}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.acts>*{flex:1 1 120px}
+pre.code{margin:8px 0;padding:10px;background:#04060c;border:1px solid var(--line);border-radius:8px;font:12px/1.5 var(--mono);color:#b9f3ff;overflow:auto;white-space:pre}
+canvas.chart{width:100%;height:120px;background:#04060c;border:1px solid var(--line);border-radius:8px;display:block}
+.sig{display:grid;grid-template-columns:70px 1fr;gap:2px 8px;font:11px var(--mono);align-items:center;margin-top:6px}
+.res{text-align:center;padding:14px 0}.res b{display:block;font:700 30px var(--mono)}.res.win b{color:var(--lime)}.res.loss b{color:var(--pink)}
+#intro{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,7,14,.7);backdrop-filter:blur(3px);z-index:20;padding:16px}
+#intro .sheet{text-align:center}#intro h1{margin:0;font-size:44px;letter-spacing:.04em;color:var(--cyan);text-shadow:0 0 18px rgba(46,230,255,.6)}
+input[type=text]{font:600 16px var(--disp);color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;width:100%;box-sizing:border-box;margin:10px 0;user-select:text;-webkit-user-select:text}
+.hint{font:11px/1.35 var(--disp);color:var(--mute);margin:4px 0}
+.sig small{font-family:var(--disp)}.sig em{display:block;font:10px var(--disp);font-style:normal;color:var(--mute)}.sig{grid-template-columns:120px 1fr}
+.bet{display:flex;align-items:center;gap:10px;text-align:left;padding:10px 12px;border-width:2px}
+.bet .bt{display:flex;flex-direction:column}.bet b{font-size:16px}.bet small{font:11px/1.25 var(--disp);text-transform:none;letter-spacing:0;color:inherit;opacity:.85}
+.bet.up{background:var(--lime);color:#0a1400;border-color:var(--lime)}.bet.dn{background:var(--pink);color:#1a0010;border-color:var(--pink)}
+.bet .ico{width:30px;height:30px;overflow:hidden;display:flex;align-items:center;justify-content:center;flex:none;border-radius:6px;background:rgba(0,0,0,.18)}
+.bet .ar{display:block;line-height:0;animation:goUp 1.6s ease-in-out infinite}.bet .ar.d{animation-name:goDn}
+@keyframes goUp{0%,15%{transform:translateY(0)}45%{transform:translateY(-34px)}46%{transform:translateY(34px)}75%,100%{transform:translateY(0)}}
+@keyframes goDn{0%,15%{transform:translateY(0)}45%{transform:translateY(34px)}46%{transform:translateY(-34px)}75%,100%{transform:translateY(0)}}
+.live{display:flex;align-items:center;gap:14px;margin:10px 0;position:relative}
+.live .ring{width:84px;height:84px;transform:rotate(-90deg);flex:none}.ring circle{fill:none;stroke-width:8}.ring .bg{stroke:var(--panel2)}.ring .fg{stroke:var(--cyan);stroke-linecap:round;transition:stroke-dashoffset .25s linear}
+.live #rnum{position:absolute;left:0;top:0;height:84px;line-height:84px;width:84px;text-align:center;font:700 30px var(--mono)}.big{font:700 26px var(--mono)}
+.locks{display:flex;gap:8px;margin:8px 0}.lk2{flex:1;text-align:center;padding:6px;border:1px solid var(--line);border-radius:8px;font:700 12px var(--mono);color:var(--mute)}.lk2.now{border-color:var(--cyan);color:var(--cyan)}.lk2.ok{border-color:var(--lime);color:var(--lime)}
+.vbar{position:relative;height:46px;border-radius:10px;background:#04060c;border:1px solid var(--line);margin:10px 0;overflow:hidden}
+.vbar .zone{position:absolute;top:0;bottom:0;background:rgba(184,255,61,.35);border-left:2px solid var(--lime);border-right:2px solid var(--lime)}
+.vbar .needle{position:absolute;top:0;bottom:0;width:6px;left:-3px;background:var(--cyan);box-shadow:0 0 14px var(--cyan)}
+.sw{width:30px;height:30px;padding:0;border-radius:50%;border:2px solid var(--line)}.sw.on{border-color:var(--cyan);box-shadow:0 0 0 2px var(--cyan)}
+.cz small{display:block;margin-top:6px}
+#modal.low{background:transparent;align-items:flex-end;pointer-events:none}#modal.low .sheet{pointer-events:auto;max-height:52%;width:min(560px,100%)}
+@media (prefers-reduced-motion:reduce){.bet .ar{animation:none}}
+#phoneBtn{position:absolute;right:12px;bottom:calc(var(--bot) + 14px);z-index:4;padding:10px 18px;border-radius:20px;font-size:14px}
+#phoneBtn[data-n]:not([data-n=""])::after{content:attr(data-n);margin-left:8px;background:var(--pink);color:#fff;border-radius:10px;padding:0 6px;font-size:12px}
+.phonesheet{width:min(340px,100%);height:min(640px,100%);box-sizing:border-box;padding:0!important;border:6px solid #1c2440!important;border-radius:34px!important;display:flex;flex-direction:column;overflow:hidden!important;background:#070910!important}
+.ph-bar{display:flex;justify-content:space-between;padding:8px 18px 4px;font:600 11px var(--mono);color:var(--mute)}
+.ph-scr{flex:1;overflow:auto;padding:6px 12px;touch-action:pan-y;font-size:13px}.ph-scr .acts{margin-top:8px}
+.ph-nav{display:flex;justify-content:center;padding:8px}.ph-nav button{width:90px;height:6px;padding:0;border-radius:3px;background:var(--mute);border:0}
+.ph-h{display:flex;align-items:center;gap:8px;margin:2px 0 8px;font-size:17px}.ph-h button{padding:2px 10px;font-size:18px}
+.apps{display:grid;grid-template-columns:repeat(4,1fr);gap:12px 6px;margin-top:10px}.ap{all:unset;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:var(--fg)}
+.ap i{position:relative;width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;font:700 22px var(--disp);font-style:normal;color:#06101a}.ap.soon{opacity:.45;cursor:default}
+.ap u{position:absolute;top:-4px;right:-4px;background:var(--pink);color:#fff;border-radius:9px;padding:0 5px;font:700 11px var(--mono);text-decoration:none}
+.cmp{display:flex;gap:6px;margin:8px 0}.cmp input{margin:0;flex:1;padding:8px 10px;font-size:14px}
+button.lnk{all:unset;cursor:pointer;color:var(--cyan);font-weight:700}button.lk{display:inline-block;color:var(--mute);font:11px var(--mono);margin-top:3px}button.lk.liked{color:var(--pink)}
+.pf{display:flex;gap:10px;align-items:center}.pf i{width:48px;height:48px;border-radius:50%;background:var(--cyan);color:#021018;display:flex;align-items:center;justify-content:center;font:700 22px var(--disp);font-style:normal}
+.pstats{display:flex;gap:20px;margin:10px 0}.pstats span{display:flex;flex-direction:column}.pstats b{font:700 16px var(--mono)}
+.msgs{display:flex;flex-direction:column;gap:6px;margin:8px 0}.m{max-width:82%;padding:6px 10px;border-radius:12px;background:var(--panel2);align-self:flex-start}.m small{display:block;color:var(--cyan);font-size:10px}.m.me{align-self:flex-end;background:var(--cyan);color:#021018}
+.thr{all:unset;display:flex;flex-direction:column;width:100%;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer}.thr span{color:var(--mute);font-size:12px}
+.map{width:100%;border:1px solid var(--line);border-radius:10px;display:block}.loc{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
+.tx{display:grid;grid-template-columns:70px 1fr auto;gap:6px;padding:5px 0;border-bottom:1px solid var(--line);font:12px var(--mono)}.tx code{color:var(--mute)}
+@media (max-width:700px){
+  #tl{min-width:0;padding:7px 9px}.bal{font-size:20px}
+  .metrics{gap:8px;padding:6px 8px}.metrics b{font-size:12px}
+  #mk{top:auto;bottom:calc(var(--bot) + 150px);left:10px;width:160px;font-size:11px}
+  #side{left:0;right:0;top:auto;bottom:0;width:auto;max-height:46%;border-radius:14px 14px 0 0;padding-bottom:var(--bot)}
+  #banner{top:calc(var(--top) + 100px);max-width:90vw;font-size:13px}
+  .cap span:last-child{margin-left:8px}
+  #joy{bottom:calc(var(--bot) + 8px)} #coach{bottom:calc(var(--bot) + 140px)}
+}
+@media (prefers-reduced-motion:reduce){#gl.glitch{animation:none}}
+</style>
+<div id="app">
+  <canvas id="gl" aria-label="3D city hub"></canvas>
+  <div id="fx"></div>
+  <section id="tl" class="card">
+    <div class="row"><b id="pname">Newcomer</b><span id="role" class="tag">Newcomer</span><button id="styleBtn" style="padding:2px 8px;font-size:11px">Style</button></div>
+    <div class="bal"><span id="bal">0</span><small>GD</small></div>
+    <div class="sub"><span id="ret">+0.0%</span><span id="rep">Rep 0</span></div>
+    <div class="meter"><i id="payBar"></i></div>
+    <div class="cap"><span>Daily skill pay</span><span id="payTxt"></span></div>
+    <div class="needs"><div><span>Energy <b id="enT"></b></span><i><b id="enB"></b></i></div><div><span>Hunger <b id="huT"></b></span><i><b id="huB"></b></i></div></div>
+  </section>
+  <section id="tr">
+    <div class="card metrics">
+      <div><small>Online</small><b id="mOn">0</b></div>
+      <div><small>District</small><b id="mDist">0</b></div>
+      <div><small>Visits</small><b id="mVis">0</b></div>
+      <span class="tag demo" title="Simulated numbers in this prototype">Demo</span>
+    </div>
+    <div class="card" id="loc" style="padding:4px 12px;font:600 12px var(--mono);color:var(--cyan)"></div>
+    <nav class="tabs">
+      <button data-tab="skills">Skills</button><button data-tab="rank">Rank</button><button id="aboutBtn">About</button>
+    </nav>
+  </section>
+  <section id="mk" class="card"></section>
+  <aside id="side" class="card" hidden></aside>
+  <button id="phoneBtn" class="pri" data-n="">Phone</button>
+  <div id="banner" hidden></div>
+  <button id="prompt" class="pri" hidden></button>
+  <div id="joy" hidden><i></i></div>
+  <div id="coach">Drag to look around. WASD or the stick to move. Step into a glowing ring, then press Use.</div>
+  <div id="modal" hidden><div class="sheet" id="sheet"></div></div>
+  <div id="intro">
+    <div class="sheet">
+      <h1>GLITCH</h1>
+      <p>Become a glitch. Get rich. Rewrite the chain.</p>
+      <label for="nameIn"><small>Your name</small></label>
+      <input id="nameIn" type="text" maxlength="14" value="Newcomer" autocomplete="off">
+      <p>Free to play. You start with 250,000 GD.</p>
+      <button id="startBtn" class="pri" style="width:100%;padding:12px">Enter the city</button>
+    </div>
+  </div>
+</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js';
+
+/* ---------- helpers ---------- */
+const $ = (s, r = document) => r.querySelector(s);
+const rnd = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const randn = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const fmt = n => { const a = Math.abs(n), s = n < 0 ? '-' : ''; if (a >= 1e9) return s + (a / 1e9).toFixed(2) + 'B'; if (a >= 1e6) return s + (a / 1e6).toFixed(2) + 'M'; if (a >= 1e3) return s + (a / 1e3).toFixed(a >= 1e5 ? 0 : 1) + 'K'; return s + Math.round(a); };
+const fmtN = n => Math.round(n).toLocaleString('en-US');
+
+/* ---------- renderer, scene, camera ---------- */
+const lowEnd = (navigator.hardwareConcurrency || 4) <= 4 || matchMedia('(pointer:coarse)').matches;
+const canvas = $('#gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !lowEnd, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, lowEnd ? 1.25 : 1.75));
+renderer.setClearColor(0x070910);
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0f22, 0.017);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 400);
+function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+scene.add(new THREE.HemisphereLight(0x7088ff, 0x140a1e, 1.0));
+const sun = new THREE.DirectionalLight(0x88aaff, 0.4); sun.position.set(-20, 40, 10); scene.add(sun);
+
+function canvasTex(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d'); draw(x, w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 2;
+  return { c, x, t, redraw(fn) { x.clearRect(0, 0, w, h); fn(x, w, h); t.needsUpdate = true; } };
+}
+const labelDraw = (text, col) => (x, w, h) => {
+  x.font = '600 28px "Chakra Petch",sans-serif'; x.textAlign = 'center';
+  const tw = Math.min(w - 8, x.measureText(text).width + 26);
+  x.fillStyle = 'rgba(7,9,16,.7)'; x.fillRect(w / 2 - tw / 2, 8, tw, 48);
+  x.fillStyle = col; x.fillText(text, w / 2, 44);
+};
+function label(text, col = '#e9eefc', scale = 1) {
+  const t = canvasTex(256, 64, labelDraw(text, col));
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t.t, transparent: true, depthTest: false }));
+  s.scale.set(4 * scale, scale, 1); s.renderOrder = 10; s.userData.tex = t; return s;
+}
+const relabel = (s, text, col = '#e9eefc') => s.userData.tex.redraw(labelDraw(text, col));
+
+/* ---------- ground, skyline, buildings ---------- */
+const groundTex = canvasTex(512, 512, (x, w, h) => {
+  x.fillStyle = '#0a0e1a'; x.fillRect(0, 0, w, h); x.strokeStyle = '#17304a'; x.lineWidth = 3;
+  for (let i = 0; i <= 8; i++) { x.beginPath(); x.moveTo(i * w / 8, 0); x.lineTo(i * w / 8, h); x.stroke(); x.beginPath(); x.moveTo(0, i * h / 8); x.lineTo(w, i * h / 8); x.stroke(); }
+});
+groundTex.t.wrapS = groundTex.t.wrapT = THREE.RepeatWrapping; groundTex.t.repeat.set(20, 20);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshLambertMaterial({ map: groundTex.t }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+
+const logoTex = canvasTex(512, 256, (x, w, h) => {
+  x.font = '700 120px "Chakra Petch",sans-serif'; x.textAlign = 'center'; x.shadowColor = '#ff3d9a'; x.shadowBlur = 30;
+  x.fillStyle = '#ff3d9a'; x.fillText('GLITCH', w / 2, 150); x.shadowColor = '#2ee6ff'; x.fillStyle = '#2ee6ff'; x.fillText('GLITCH', w / 2 - 4, 146);
+});
+const logo = new THREE.Mesh(new THREE.PlaneGeometry(12, 6), new THREE.MeshBasicMaterial({ map: logoTex.t, transparent: true }));
+logo.rotation.x = -Math.PI / 2; logo.position.set(0, 0.04, 2); scene.add(logo);
+
+{ // skyline
+  const N = lowEnd ? 60 : 100, d = new THREE.Object3D();
+  const win = canvasTex(128, 128, (x, w, h) => { x.fillStyle = '#000'; x.fillRect(0, 0, w, h); for (let i = 0; i < 90; i++) { x.fillStyle = pick(['#2ee6ff', '#ff3d9a', '#ffb12e', '#7a8cff']); x.fillRect(Math.random() * w, Math.random() * h, 6, 9); } });
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveMap: win.t, emissiveIntensity: 0.9 });
+  const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, N);
+  for (let i = 0; i < N; i++) {
+    const a = Math.random() * Math.PI * 2, r = rnd(60, 105), w = rnd(7, 15), h = rnd(14, 55);
+    d.position.set(Math.cos(a) * r, h / 2, Math.sin(a) * r); d.scale.set(w, h, rnd(7, 15)); d.updateMatrix(); im.setMatrixAt(i, d.matrix);
+    im.setColorAt(i, new THREE.Color(pick([0x0d1430, 0x160d30, 0x0a1a2a])));
+  }
+  scene.add(im);
+}
+const colliders = [];
+function building(x, z, w, h, dpt, col, edge) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, dpt), new THREE.MeshLambertMaterial({ color: col }));
+  m.position.set(x, h / 2, z); scene.add(m); colliders.push({ x, z, hw: w / 2 + 0.7, hd: dpt / 2 + 0.7 });
+  const e = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), new THREE.LineBasicMaterial({ color: edge }));
+  e.position.copy(m.position); scene.add(e); return m;
+}
+function screen(w, h, x, y, z, ry, tex) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex.t, toneMapped: false }));
+  m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); return m;
+}
+building(-26, -9, 14, 9, 12, 0x101a30, 0x2ee6ff);   // exchange
+building(26, -9, 14, 8, 12, 0x0c1a1c, 0xb8ff3d);    // security lab
+building(0, -34, 10, 26, 10, 0x1a1030, 0xff3d9a);    // feed tower
+building(34, 28, 10, 6, 8, 0x1a1408, 0xffb12e); { const dl = label('Neon Diner', '#ffb12e', 1.3); dl.position.set(34, 8, 28); scene.add(dl); }
+const exTex = canvasTex(512, 280, () => {}), labTex = canvasTex(512, 280, () => {}), towTex = canvasTex(512, 512, () => {});
+screen(11, 6, -18.9, 6, -9, Math.PI / 2, exTex);
+screen(11, 6, 18.9, 6, -9, -Math.PI / 2, labTex);
+screen(9, 9, 0, 15, -28.9, 0, towTex);
+const adTex = [0, 1, 2].map(() => canvasTex(512, 256, () => {}));
+[[-15, 15, 0.5], [15, 15, -0.5], [0, 27, 0]].forEach(([x, z, ry], i) => {
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.5, 4, 0.5), new THREE.MeshLambertMaterial({ color: 0x151c33 })); post.position.set(x, 2, z); scene.add(post);
+  const s = screen(8, 4, x, 5.2, z, ry, adTex[i]);
+  s.rotation.y = Math.atan2(0 - x, 6 - z); // face the plaza centre
+});
+
+/* ---------- stations ---------- */
+const stations = [
+  { id: 'trade', name: 'Trade Terminal', x: -13, z: -6, col: 0x2ee6ff },
+  { id: 'sec', name: 'Vault Cracker', x: 13, z: -6, col: 0xb8ff3d },
+  { id: 'comm', name: 'Attention Booth', x: 0, z: -22, col: 0xff3d9a },
+  { id: 'build', name: 'Deploy Lab', x: -30, z: 10, col: 0x555f7a, locked: 'Build skill: next update' },
+  { id: 'cap', name: 'Allocation Desk', x: 30, z: 10, col: 0x555f7a, locked: 'Capital skill: next update' },
+  { id: 'forge', name: 'Gear Forge', x: 0, z: -9, col: 0xff6a3d },
+  { id: 'eat', name: 'Diner Counter', x: 27, z: 21, col: 0xffb12e },
+  { id: 'rest', name: 'Park Bench', x: 8, z: 15, col: 0x7a8cff },
+  { id: 'bed', name: 'Bed', x: 134, z: -2, col: 0x7a8cff },
+  { id: 'door', name: 'Front Door', x: 140, z: 6.5, col: 0xffb12e },
+];
+for (const s of stations) {
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.5, 2.0, 40), new THREE.MeshBasicMaterial({ color: s.col, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; ring.position.set(s.x, 0.06, s.z); scene.add(ring);
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 7, 24, 1, true), new THREE.MeshBasicMaterial({ color: s.col, transparent: true, opacity: s.locked ? 0.05 : 0.14, side: THREE.DoubleSide, depthWrite: false }));
+  beam.position.set(s.x, 3.5, s.z); scene.add(beam);
+  const lb = label(s.name, s.locked ? '#8b97b8' : '#ffffff', 1.1); lb.position.set(s.x, 5.2, s.z); scene.add(lb);
+  s.ring = ring; s.beam = beam;
+}
+const sirenA = new THREE.PointLight(0xff2040, 0, 40), sirenB = new THREE.PointLight(0x2060ff, 0, 40);
+sirenA.position.set(-26, 14, -9); sirenB.position.set(-26, 14, -9); scene.add(sirenA, sirenB);
+
+/* ---------- avatars ---------- */
+/* ---------- humanoid avatars (customizable) ---------- */
+const SKINS = [0xf1c8a0, 0xd9a273, 0xb07a4f, 0x8a5a3a, 0x5e3a24, 0x3b2416];
+const HAIRC = [0x0b0b10, 0x3a2414, 0x7a4a22, 0xe8d27a, 0xff3d9a, 0x2ee6ff];
+const TOPC = [0x2ee6ff, 0xff3d9a, 0xb8ff3d, 0xffb12e, 0xe9eefc, 0x7a8cff, 0x2a3150];
+const BOTC = [0x10172a, 0x2a3150, 0x4a3a2a, 0x6a6f85, 0x1a3a2a];
+const GLASSC = [0x2ee6ff, 0xff3d9a, 0xb8ff3d, 0xffb12e];
+const HAIRS = ['Short', 'Afro', 'Braids', 'Bald'], GEARS = ['None', 'Cap', 'Headphones', 'Chain', 'Backpack', 'Cape', 'Crown'];
+const DEFAULT_LOOK = { skin: 3, hair: 0, hairC: 0, top: 0, bot: 0, glasses: true, glassC: 0, gear: 0 };
+const randLook = () => ({ skin: Math.floor(rnd(0, SKINS.length)), hair: Math.floor(rnd(0, HAIRS.length)), hairC: Math.floor(rnd(0, HAIRC.length)), top: Math.floor(rnd(0, TOPC.length)), bot: Math.floor(rnd(0, BOTC.length)), glasses: Math.random() < .6, glassC: Math.floor(rnd(0, GLASSC.length)), gear: Math.floor(rnd(0, GEARS.length)) });
+const lam = (c, e = .22) => new THREE.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: e });
+const bx = (w, h, d, m, x, y, z) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); return o; };
+function buildLook(g, L) {
+  const rig = g.userData.rig; rig.clear(); const u = rig.userData = {};
+  const skin = lam(SKINS[L.skin], .12), top = lam(TOPC[L.top]), bot = lam(BOTC[L.bot], .1), hair = lam(HAIRC[L.hairC], .08);
+  const mkLeg = x => { const p = new THREE.Group(); p.position.set(x, .85, 0); p.add(bx(.3, .85, .32, bot, 0, -.425, 0), bx(.32, .12, .42, lam(0x0b0f1c, .05), 0, -.82, .05)); rig.add(p); return p; };
+  u.legL = mkLeg(-.17); u.legR = mkLeg(.17);
+  rig.add(bx(.74, .82, .4, top, 0, 1.26, 0));
+  const mkArm = x => { const p = new THREE.Group(); p.position.set(x, 1.6, 0); p.add(bx(.2, .46, .24, top, 0, -.23, 0), bx(.17, .3, .2, skin, 0, -.61, 0)); rig.add(p); return p; };
+  u.armL = mkArm(-.48); u.armR = mkArm(.48);
+  rig.add(bx(.14, .12, .14, skin, 0, 1.72, 0));
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.28, 14, 12), skin); head.position.y = 1.99; rig.add(head);
+  if (!L.glasses) { rig.add(bx(.06, .06, .04, lam(0x10131f, 0), -.1, 2.02, .26), bx(.06, .06, .04, lam(0x10131f, 0), .1, 2.02, .26)); }
+  if (L.hair === 0) { const h = new THREE.Mesh(new THREE.SphereGeometry(.3, 14, 10, 0, Math.PI * 2, 0, Math.PI * .5), hair); h.position.set(0, 2.02, -.015); rig.add(h); }
+  if (L.hair === 1) { const h = new THREE.Mesh(new THREE.SphereGeometry(.42, 14, 12), hair); h.position.set(0, 2.1, -.06); rig.add(h); }
+  if (L.hair === 2) { const h = new THREE.Mesh(new THREE.SphereGeometry(.3, 14, 10, 0, Math.PI * 2, 0, Math.PI * .5), hair); h.position.set(0, 2.02, -.015); rig.add(h); for (let i = 0; i < 7; i++) { const a = -1.1 + i * .37, b = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, .55, 5), hair); b.position.set(Math.sin(a) * .27, 1.84, -.2 - Math.abs(Math.sin(a)) * .02); rig.add(b); } }
+  if (L.glasses) { const gm = new THREE.MeshBasicMaterial({ color: GLASSC[L.glassC] }); rig.add(bx(.2, .1, .06, gm, -.1, 2.02, .27), bx(.2, .1, .06, gm, .1, 2.02, .27), bx(.58, .03, .05, gm, 0, 2.03, .26)); }
+  if (L.gear === 1) { rig.add(bx(.6, .16, .6, lam(0xe9eefc, .2), 0, 2.24, 0), bx(.4, .04, .34, lam(0xe9eefc, .2), 0, 2.2, .4)); }
+  if (L.gear === 2) { const t = new THREE.Mesh(new THREE.TorusGeometry(.31, .035, 6, 16, Math.PI), lam(0x151c33, .3)); t.position.y = 2.0; t.rotation.z = 0; rig.add(t, bx(.1, .24, .2, lam(0xff3d9a, .5), -.31, 2.0, 0), bx(.1, .24, .2, lam(0xff3d9a, .5), .31, 2.0, 0)); }
+  if (L.gear === 3) { const t = new THREE.Mesh(new THREE.TorusGeometry(.2, .03, 6, 18), lam(0xffb12e, .6)); t.position.set(0, 1.58, .14); t.rotation.x = Math.PI / 2.4; rig.add(t); }
+  if (L.gear === 5) { const c = bx(.78, 1.15, .05, lam(0xc4163f, .35), 0, 1.15, -.27); c.rotation.x = .08; rig.add(c, bx(.8, .1, .1, lam(0xffb12e, .6), 0, 1.68, -.2)); }
+  if (L.gear === 6) { const m = lam(0xffb12e, .7), cr = new THREE.Mesh(new THREE.CylinderGeometry(.26, .28, .13, 10), m); cr.position.y = 2.33; rig.add(cr); for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2, k = new THREE.Mesh(new THREE.ConeGeometry(.06, .18, 5), m); k.position.set(Math.sin(a) * .26, 2.46, Math.cos(a) * .26); rig.add(k); } }
+  if (L.gear === 4) rig.add(bx(.5, .6, .22, lam(0x2a3150, .3), 0, 1.3, -.31), bx(.46, .1, .24, lam(0x2ee6ff, .4), 0, 1.5, -.31));
+}
+function makeAvatar(L, name) {
+  const g = new THREE.Group(), rig = new THREE.Group(), lb = label(name, '#e9eefc', 0.8); lb.position.y = 2.85;
+  g.add(rig, lb); g.userData = { rig, lb, phase: Math.random() * 6 }; buildLook(g, L); scene.add(g); return g;
+}
+function walkAnim(a, sp, t, ph) {
+  const r = a.userData.rig, u = r.userData, s = Math.sin(t * 9 + ph) * sp * .75;
+  u.legL.rotation.x = s; u.legR.rotation.x = -s; u.armL.rotation.x = -s; u.armR.rotation.x = s; r.position.y = sp > .1 ? Math.abs(Math.sin(t * 9 + ph)) * .07 * sp : 0;
+}
+
+const player = makeAvatar(DEFAULT_LOOK, 'You'); player.position.set(0, 0, 10);
+const NPC_COLORS = [0xff3d9a, 0xb8ff3d, 0xffb12e, 0x8a7bff, 0x3dffb0, 0xff6a3d];
+const NPC_NAMES = ['NgozGM', '0xSade', 'Tola_Bags', 'MikkyRug', 'BisiFloor', 'ChukaAudit', 'ZainabHODL', 'DapoShill', 'KemiBuilder', 'Amaka_LP', 'OluwaAlpha'];
+const WAY = [[-13, -2], [13, -2], [0, -17], [0, 10], [-14, 12], [14, 12], [-6, 3], [6, 3], [0, -4], [-20, 2], [20, 2]];
+const npcs = NPC_NAMES.map((n, i) => {
+  const a = makeAvatar(randLook(), n); const w = pick(WAY);
+  a.position.set(w[0] + rnd(-2, 2), 0, w[1] + rnd(-2, 2));
+  a.userData.npc = { name: n, tx: a.position.x, tz: a.position.z, wait: rnd(0, 3), bubble: null, bt: 0 };
+  return a;
+});
+function say(a, text) {
+  const n = a.userData.npc; if (n.bubble) { a.remove(n.bubble); n.bubble.material.dispose(); }
+  n.bubble = label(text, '#2ee6ff', 1.05); n.bubble.position.y = 3.6; a.add(n.bubble); n.bt = 3.2;
+}
+const worldFx = { crowd: null, crowdT: 0, shake: 0, siren: 0, panic: 0 };
+function crowdTo(zone, secs) { worldFx.crowd = zone; worldFx.crowdT = secs; }
+function glitchFx() { canvas.classList.remove('glitch'); void canvas.offsetWidth; canvas.classList.add('glitch'); worldFx.shake = 0.9; }
+
+/* ---------- camera, input, movement ---------- */
+const cam = { yaw: 0, pitch: 0.5, dist: 16, tx: 0, ty: 1.2, tz: 10 };
+const keys = new Set();
+const hideCoach = () => { $('#coach').hidden = true; };
+addEventListener('keydown', e => {
+  if (modalOpen() || introOpen()) return;
+  const k = e.key.toLowerCase();
+  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'q', 'r'].includes(k)) { keys.add(k); hideCoach(); e.preventDefault(); }
+  if ((k === 'e' || k === 'enter') && nearStation && !nearStation.locked) { e.preventDefault(); useStation(); }
+});
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+addEventListener('blur', () => keys.clear());
+
+const ptrs = new Map(); let pinch0 = 1;
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); hideCoach();
+  if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y) || 1; }
+});
+canvas.addEventListener('pointermove', e => {
+  const p = ptrs.get(e.pointerId); if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+  if (ptrs.size === 1) { cam.yaw -= dx * 0.006; cam.pitch = clamp(cam.pitch + dy * 0.005, 0.06, 1.5); }
+  else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y) || 1; cam.dist = clamp(cam.dist * (pinch0 / d), 6, 36); pinch0 = d; }
+});
+const endPtr = e => ptrs.delete(e.pointerId);
+canvas.addEventListener('pointerup', endPtr); canvas.addEventListener('pointercancel', endPtr);
+canvas.addEventListener('wheel', e => { e.preventDefault(); cam.dist = clamp(cam.dist + e.deltaY * 0.012, 6, 36); }, { passive: false });
+
+const joy = $('#joy'), knob = $('#joy i'), joyV = { x: 0, y: 0 }; let joyId = null;
+const touchUI = matchMedia('(pointer:coarse)').matches; joy.hidden = !touchUI;
+function joyMove(e) {
+  const r = joy.getBoundingClientRect(), max = 44;
+  let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2); const m = Math.hypot(dx, dy);
+  if (m > max) { dx *= max / m; dy *= max / m; }
+  knob.style.transform = `translate(${dx}px,${dy}px)`; joyV.x = dx / max; joyV.y = -dy / max;
+}
+joy.addEventListener('pointerdown', e => { joyId = e.pointerId; joy.setPointerCapture(e.pointerId); joyMove(e); hideCoach(); });
+joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) joyMove(e); });
+const joyEnd = e => { if (e.pointerId === joyId) { joyId = null; joyV.x = joyV.y = 0; knob.style.transform = ''; } };
+joy.addEventListener('pointerup', joyEnd); joy.addEventListener('pointercancel', joyEnd);
+
+function collide(p) {
+  for (const c of colliders) {
+    const dx = p.x - c.x, dz = p.z - c.z, ox = c.hw - Math.abs(dx), oz = c.hd - Math.abs(dz);
+    if (ox > 0 && oz > 0) { if (ox < oz) p.x += Math.sign(dx || 1) * ox; else p.z += Math.sign(dz || 1) * oz; }
+  }
+}
+const SPEED = 7.5, vel = { x: 0, z: 0 }; let clockT = 0, nearStation = null, customizing = false;
+function stepPlayer(dt) {
+  if (introOpen()) { cam.yaw += dt * 0.12; return; }
+  if (customizing) { cam.yaw += dt * 0.5; walkAnim(player, 0, clockT, 0); return; }
+  const frozen = modalOpen();
+  let ix = frozen ? 0 : (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + joyV.x;
+  let iy = frozen ? 0 : (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0) + joyV.y;
+  if (!frozen) { if (keys.has('q')) cam.yaw += dt * 1.8; if (keys.has('r')) cam.yaw -= dt * 1.8; }
+  const m = Math.hypot(ix, iy); if (m > 1) { ix /= m; iy /= m; }
+  const SPD = SPEED * (weak() ? 0.7 : 1);
+  const fx = -Math.sin(cam.yaw), fz = -Math.cos(cam.yaw), rx = Math.cos(cam.yaw), rz = -Math.sin(cam.yaw);
+  const k = Math.min(1, dt * 10);
+  vel.x += ((fx * iy + rx * ix) * SPD - vel.x) * k; vel.z += ((fz * iy + rz * ix) * SPD - vel.z) * k;
+  const p = player.position; p.x += vel.x * dt; p.z += vel.z * dt; collide(p);
+  if (p.x > 100) { p.x = clamp(p.x, 132.8, 147.2); p.z = clamp(p.z, -7.2, 7.8); } else { const r = Math.hypot(p.x, p.z); if (r > 46) { p.x *= 46 / r; p.z *= 46 / r; } }
+  const sp = Math.hypot(vel.x, vel.z);
+  if (sp > 0.4) { let d = Math.atan2(vel.x, vel.z) - player.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d)); player.rotation.y += d * Math.min(1, dt * 12); }
+  walkAnim(player, Math.min(1, sp / 4), clockT, 0);
+}
+function stepNpcs(dt) {
+  for (const a of npcs) {
+    const n = a.userData.npc;
+    if (n.bubble) { n.bt -= dt; if (n.bt <= 0) { a.remove(n.bubble); n.bubble.material.map.dispose(); n.bubble.material.dispose(); n.bubble = null; } }
+    const dx = n.tx - a.position.x, dz = n.tz - a.position.z, d = Math.hypot(dx, dz);
+    if (d < 0.5) {
+      walkAnim(a, 0, clockT, 0); n.wait -= dt;
+      if (n.wait <= 0) {
+        let w = pick(WAY), tx = w[0], tz = w[1];
+        if (worldFx.crowd && Math.random() < 0.75) { const s = stations.find(s => s.id === worldFx.crowd); tx = s.x + rnd(-4, 4); tz = s.z + rnd(1, 5); }
+        n.tx = tx + rnd(-1.5, 1.5); n.tz = tz + rnd(-1.5, 1.5); n.wait = rnd(1, 5);
+      }
+    } else {
+      const sp = (worldFx.panic > 0 ? 5.5 : 2.6) * dt; a.position.x += dx / d * sp; a.position.z += dz / d * sp; a.rotation.y = Math.atan2(dx, dz);
+      walkAnim(a, 1, clockT, a.userData.phase);
+    }
+  }
+}
+const FOG_FEAR = new THREE.Color(0x2a0818), FOG_MID = new THREE.Color(0x0a0f22), FOG_GREED = new THREE.Color(0x06262e), tmpC = new THREE.Color();
+const RN = lowEnd ? 250 : 500, rp = new Float32Array(RN * 3);
+for (let i = 0; i < RN; i++) { rp[i * 3] = rnd(-40, 40); rp[i * 3 + 1] = rnd(0, 30); rp[i * 3 + 2] = rnd(-40, 40); }
+const rainGeo = new THREE.BufferGeometry(); rainGeo.setAttribute('position', new THREE.BufferAttribute(rp, 3));
+const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0x7fd8ff, size: 0.12, transparent: true, opacity: 0.55, depthWrite: false })); rain.frustumCulled = false; scene.add(rain);
+
+function worldUpdate(dt) {
+  clockT += dt; stepPlayer(dt); stepNpcs(dt);
+  worldFx.crowdT -= dt; if (worldFx.crowdT <= 0) worldFx.crowd = null;
+  worldFx.panic = Math.max(0, worldFx.panic - dt); worldFx.shake = Math.max(0, worldFx.shake - dt * 1.2); worldFx.siren = Math.max(0, worldFx.siren - dt);
+  for (const s of stations) { const k = 1 + Math.sin(clockT * 3 + s.x) * 0.06; s.ring.scale.set(k, k, k); s.beam.rotation.y += dt * 0.5; }
+  const on = worldFx.siren > 0, ph = Math.sin(clockT * 12) > 0;
+  sirenA.intensity = on ? (ph ? 70 : 6) : 0; sirenB.intensity = on ? (ph ? 6 : 70) : 0;
+  const m = market.mood; tmpC.copy(FOG_MID).lerp(m < 0 ? FOG_FEAR : FOG_GREED, Math.min(1, Math.abs(m))); scene.fog.color.lerp(tmpC, 0.04); renderer.setClearColor(scene.fog.color);
+  for (let i = 0; i < RN; i++) { rp[i * 3 + 1] -= dt * 22; if (rp[i * 3 + 1] < 0) rp[i * 3 + 1] = 30; }
+  rainGeo.attributes.position.needsUpdate = true; rain.position.set(player.position.x, 0, player.position.z);
+  const p = player.position, k = Math.min(1, dt * 9);
+  cam.tx += (p.x - cam.tx) * k; cam.tz += (p.z - cam.tz) * k;
+  const cp = Math.cos(cam.pitch);
+  let x = cam.tx + Math.sin(cam.yaw) * cp * cam.dist, y = cam.ty + Math.sin(cam.pitch) * cam.dist, z = cam.tz + Math.cos(cam.yaw) * cp * cam.dist;
+  if (worldFx.shake > 0) { x += randn() * 0.12 * worldFx.shake; y += randn() * 0.12 * worldFx.shake; }
+  camera.position.set(x, Math.max(0.7, y), z); camera.lookAt(cam.tx, cam.ty + 0.8, cam.tz);
+  // station prompt
+  let best = null, bd = 3.6;
+  for (const s of stations) { const d = Math.hypot(p.x - s.x, p.z - s.z); if (d < bd) { bd = d; best = s; } }
+  nearStation = best;
+  const b = $('#prompt'), show = !!best && !modalOpen() && !introOpen();
+  const txt = best ? (best.locked ? `${best.name}: ${best.locked}` : `Use ${best.name}`) : '';
+  if (b.hidden === show) b.hidden = !show;
+  if (show && b.textContent !== txt) { b.textContent = txt; b.disabled = !!best.locked; }
+}
+
+/* ---------- player state, wallet, skills ---------- */
+const START = 250000, SAVE = 'glitch-proto-v1';
+const S = { name: 'Newcomer', bal: START, rep: 0, followers: 0, created: 0, burned: 0, payDay: '', payUsed: 0, xp: { trade: 0, sec: 0, comm: 0 }, stats: { trades: 0, wins: 0, found: 0, posts: 0, exploits: 0, reports: 0 }, wantedUntil: 0 };
+try { const j = JSON.parse(localStorage.getItem(SAVE) || 'null'); if (j) { Object.assign(S, j); S.xp = Object.assign({ trade: 0, sec: 0, comm: 0 }, j.xp); S.stats = Object.assign(S.stats, j.stats); } } catch (e) { }
+S.follows = S.follows || []; S.needs = Object.assign({ energy: 100, hunger: 80 }, S.needs || {}); S.usdg = S.usdg || 0; S.shards = S.shards || 0; S.nfts = S.nfts || []; S.home = Object.assign({ owned: false, paidUntil: 0, items: [] }, S.home || {});
+const weak = () => S.needs.energy < 15 || S.needs.hunger < 10;
+S.look = Object.assign({}, DEFAULT_LOOK, S.look || {});
+const save = () => { try { localStorage.setItem(SAVE, JSON.stringify(S)); } catch (e) { } };
+let sideTab = null, bannerT = 0;
+const SK = { trade: 'Trade', sec: 'Security', comm: 'Community' };
+const lvl = xp => 1 + Math.floor(Math.sqrt(xp / 40));
+const L = k => lvl(S.xp[k]);
+function addXp(k, n) {
+  const before = L(k); S.xp[k] += n;
+  if (L(k) > before) { banner(`${SK[k]} skill up: level ${L(k)}`, 'good'); post('sys', 'LEVEL UP', `${S.name} reached ${SK[k]} level ${L(k)}.`); }
+}
+const dayKey = () => new Date().toISOString().slice(0, 10);
+const payCap = () => 150000 + 25000 * (L('trade') + L('sec') + L('comm') - 3);
+const txlog = [];
+function logTx(kind, amt, note) { txlog.unshift({ kind, amt, note, h: '0x' + Math.random().toString(16).slice(2, 6) + '…' + Math.random().toString(16).slice(2, 6) }); if (txlog.length > 40) txlog.pop(); }
+function earn(amount) {
+  if (weak()) amount *= 0.6; // tired or hungry: skill pay -40% // faucet: profits are new money, capped per day. Over the cap pays 20%.
+  if (S.payDay !== dayKey()) { S.payDay = dayKey(); S.payUsed = 0; }
+  const full = Math.min(amount, Math.max(0, payCap() - S.payUsed)), over = amount - full, credited = full + over * 0.2;
+  S.payUsed += full; S.bal += credited; S.created += credited; logTx('in', credited, 'Skill pay'); return { credited, capped: over > 0 };
+}
+const escrow = stake => { S.bal -= stake; };
+function settle(stake, pnl) { // stake comes back; profit is a faucet, loss is a sink
+  if (pnl >= 0) { S.bal += stake; return earn(pnl); }
+  S.bal += stake + pnl; S.burned += -pnl; logTx('out', -pnl, 'Trade loss'); return { credited: pnl, capped: false };
+}
+const burn = n => { S.bal -= n; S.burned += n; };
+function roleName() {
+  if (Date.now() < S.wantedUntil) return 'Wanted';
+  const t = L('trade'), s = L('sec'), c = L('comm');
+  if (s >= 3 && S.stats.exploits > S.stats.reports) return 'Hacker';
+  if (s >= 3 && S.stats.reports > 0) return 'Whitehat';
+  const mx = Math.max(t, s, c); if (mx < 2) return 'Newcomer';
+  return mx === t ? 'Trader' : mx === s ? 'Auditor' : 'Shiller';
+}
+
+/* ---------- market: seven factors, one price ---------- */
+const TOK = [
+  { sym: 'BTX', name: 'Bitcrumb', price: 42000, vol: .0022, base: { hype: .35, usage: .8, trust: .9 } },
+  { sym: 'ETHR', name: 'Ethereal', price: 3100, vol: .0035, base: { hype: .45, usage: .75, trust: .8 } },
+  { sym: 'PIZZ', name: 'PizzaDay', price: 10, vol: .006, base: { hype: .5, usage: .3, trust: .6 } },
+  { sym: 'MOON', name: 'MoonBoy', price: .42, vol: .010, base: { hype: .55, usage: .15, trust: .45 } },
+  { sym: 'FARM', name: 'YieldFarm', price: 7.8, vol: .007, base: { hype: .45, usage: .6, trust: .65 } },
+];
+for (const t of TOK) { Object.assign(t, { hype: t.base.hype, usage: t.base.usage, trust: t.base.trust, flow: 0, supply: 0, hist: [] }); for (let i = 0; i < 120; i++) t.hist.push(t.price * (1 + randn() * 0.004)); }
+const market = { mood: 0, heat: 0.1 };
+const px = p => p >= 1000 ? fmtN(p) : p >= 1 ? p.toFixed(2) : p.toFixed(4);
+const chg = (t, n = 60) => t.price / t.hist[Math.max(0, t.hist.length - 1 - n)] - 1;
+function tickMarket() {
+  let avg = 0;
+  for (const t of TOK) {
+    t.hype = clamp(t.hype + (t.base.hype - t.hype) * 0.012 + randn() * 0.004, 0, 1);
+    t.usage = clamp(t.usage + (t.base.usage - t.usage) * 0.008 + randn() * 0.004, 0, 1);
+    t.trust = clamp(t.trust + (t.base.trust - t.trust) * 0.006, 0, 1);
+    t.flow *= 0.92; t.supply *= 0.985;
+    const drift = 0.9 * (t.hype - t.base.hype) + 0.6 * (t.usage - t.base.usage) + 1.1 * (t.trust - t.base.trust) + 0.8 * t.flow - 0.7 * t.supply + 50 * t.vol * market.mood;
+    const ret = clamp(drift * 0.0035 + randn() * t.vol, -.25, .25);
+    t.price = Math.max(t.price * (1 + ret), 0.0001); t.hist.push(t.price); if (t.hist.length > 300) t.hist.shift(); avg += ret;
+  }
+  market.mood = clamp(market.mood * 0.995 + (avg / TOK.length) * 6, -1, 1);
+  market.heat = Math.max(0, market.heat - 0.0004);
+}
+
+/* ---------- feed, CIA cases, events ---------- */
+const feed = [];
+function post(kind, who, text) { feed.unshift({ kind, who, text, t: Date.now(), likes: Math.floor(rnd(0, 30)) }); if (feed.length > 60) feed.pop(); if (sideTab === 'feed') renderSide(); if (typeof phoneRefresh === 'function' && phoneOpen) phoneRefresh(); }
+const sysPost = text => post('sys', 'NEWS', text);
+function banner(text, kind = 'bad') { const b = $('#banner'); b.textContent = text; b.className = kind === 'bad' ? '' : kind; b.hidden = false; bannerT = 4; }
+const cases = []; let caseNo = 200;
+function openCase(title, suspect, extra) { caseNo++; cases.push(Object.assign({ no: caseNo, title, suspect, at: clockT + rnd(22, 36) }, extra)); post('sys', 'CIA', `Case #${caseNo} opened: ${title}. Investigators are on it.`); }
+function resolveCases() {
+  for (const c of [...cases]) {
+    if (clockT < c.at) continue; cases.splice(cases.indexOf(c), 1);
+    if (c.suspect === 'player') {
+      if (c.caught) {
+        const fine = Math.min(Math.max(S.bal, 0), c.loot * 1.25); burn(fine); S.rep -= 3; S.wantedUntil = Date.now() + 120000;
+        post('bad', 'CIA', `Case #${c.no} closed: ${S.name} found guilty. Loot returned with interest. Rep -3.`); banner(`CIA caught you. -${fmt(fine)} GD and -3 rep`, 'bad');
+      } else { post('sys', 'CIA', `Case #${c.no} closed: no evidence against anyone. Case dismissed.`); banner('CIA case dismissed. You got away with it.', 'info'); }
+    } else if (Math.random() < 0.65) { post('sys', 'CIA', `Case #${c.no} closed: ${pick(NPC_NAMES)} found guilty. Victims refunded with interest.`); market.heat = clamp(market.heat - 0.05, 0, 1); }
+    else post('sys', 'CIA', `Case #${c.no} closed: not enough evidence. Dismissed.`);
+  }
+}
+const memes = () => TOK.filter(t => t.sym !== 'BTX');
+const EVENTS = [
+  { w: 3, run() { const t = pick(memes()); t.hype = clamp(t.hype + .4, 0, 1); t.flow += .7; market.mood = clamp(market.mood + .15, -1, 1); crowdTo('trade', 25); banner(`${t.sym} is pumping`, 'good'); sysPost(`${t.sym} (${t.name}) is trending. Timelines are screaming "send it".`); } },
+  { w: 2, run() { const t = TOK[3]; t.trust = clamp(t.trust - .5, 0, 1); t.hype = clamp(t.hype - .3, 0, 1); t.flow -= 1.4; t.price *= .7; market.mood = clamp(market.mood - .25, -1, 1); market.heat = clamp(market.heat + .12, 0, 1); worldFx.panic = 8; worldFx.siren = 6; crowdTo('comm', 20); banner(`RUG: ${t.sym} liquidity pulled`, 'bad'); sysPost(`${t.sym} dev wallet drained the pool. ${t.name} holders are not okay.`); openCase(`${t.sym} rug pull`, null); } },
+  { w: 2, run() { const t = pick([TOK[1], TOK[4]]); t.trust = clamp(t.trust - .4, 0, 1); t.price *= .82; t.flow -= .9; market.mood = clamp(market.mood - .3, -1, 1); market.heat = clamp(market.heat + .1, 0, 1); worldFx.panic = 8; worldFx.siren = 7; glitchFx(); banner(`HACK: ${t.sym} contract exploited`, 'bad'); sysPost(`${t.name} contract exploited. Contagion fears spread across the city.`); openCase(`${t.sym} exploit`, null); } },
+  { w: 2, run() { const t = pick(TOK), up = Math.random() < .5; t.flow += up ? .8 : -.8; sysPost(`Dormant wallet 0x${Math.floor(Math.random() * 1e6).toString(16)} just moved 12,000 ${t.sym} ${up ? 'off an exchange' : 'onto an exchange'}.`); } },
+  { w: 2, run() { const t = pick(memes()); t.supply = 1; sysPost(`Team tokens for ${t.sym} unlock soon. Sell pressure incoming.`); } },
+  { w: 2, run() { const t = pick(memes()); t.trust = clamp(t.trust + .25, 0, 1); market.heat = clamp(market.heat - .04, 0, 1); banner(`${t.sym} passed a security audit`, 'info'); sysPost(`Auditors cleared ${t.sym}. Trust is back up.`); } },
+  { w: 1, run() { if (market.heat < .35) return EVENTS[0].run(); market.heat = .3; banner('REGULATOR: launch fees up, rules tightened', 'bad'); sysPost('The Regulator announced new rules after a wave of rugs and hacks. Launch costs rise for everyone.'); } },
+];
+let nextEv = 14;
+function runEvent() { const tot = EVENTS.reduce((a, e) => a + e.w, 0); let r = Math.random() * tot; for (const e of EVENTS) { if ((r -= e.w) <= 0) { e.run(); break; } } }
+const CHAT = [t => `${t.sym} looks cooked`, t => `buying the ${t.sym} dip`, t => `gm. ${t.sym} to the moon`, t => `who audited ${t.sym}?`, () => 'rug season again', () => 'gm', () => 'wagmi (maybe)', () => 'sent it', () => 'not financial advice'];
+function chatter() { const a = pick(npcs), txt = pick(CHAT)(pick(TOK)); chatIn(locAt(a.position.x, a.position.z).id, a.userData.npc.name, txt); if (Math.random() < .35) post('npc', a.userData.npc.name, txt); if (Math.random() < .6) say(a, txt.length > 24 ? txt.slice(0, 24) + '…' : txt); }
+const board = NPC_NAMES.map(n => ({ name: n, ret: rnd(-.3, 2.2) }));
+const metrics = { on: 1280, vis: 48213 };
+let slow = 0, upkeepT = 0, saveT = 0, chatT = 5, boardT = 0, drawT = 0, tickT = 0;
+function economyUpdate(dt) {
+  tickT += dt; while (tickT >= 0.5) { tickT -= 0.5; tickMarket(); }
+  nextEv -= dt; if (nextEv <= 0) { runEvent(); nextEv = rnd(32, 58); }
+  chatT -= dt; if (chatT <= 0) { chatter(); chatT = rnd(6, 11); }
+  resolveCases();
+  upkeepT += dt; if (upkeepT >= 10) { upkeepT = 0; burn(Math.max(0, S.bal) * 0.0004); }
+  boardT += dt; if (boardT >= 4) { boardT = 0; for (const b of board) b.ret += randn() * 0.08; metrics.on = clamp(metrics.on + randn() * 22, 700, 2600); metrics.vis += Math.floor(rnd(0, 4)); }
+  saveT += dt; if (saveT >= 5) { saveT = 0; save(); }
+  bannerT -= dt; if (bannerT <= 0) $('#banner').hidden = true;
+  drawT += dt; if (drawT >= 0.35) { drawT = 0; drawScreens(); updateHud(); }
+}
+
+/* ---------- modal helpers ---------- */
+const modalEl = $('#modal'), sheet = $('#sheet'); let modalTimer = 0, modalClose = null;
+const modalOpen = () => !modalEl.hidden;
+const introOpen = () => !$('#intro').hidden;
+function openModal(html, onClose) { closeModal(); delete sheet.dataset.lock; sheet.className = 'sheet'; sheet.onclick = sheet.onkeydown = null; sheet.innerHTML = html; modalEl.hidden = false; modalClose = onClose || null; keys.clear(); }
+function closeModal() { modalEl.classList.remove('low'); clearInterval(modalTimer); modalTimer = 0; modalEl.hidden = true; if (modalClose) { const f = modalClose; modalClose = null; f(); } }
+modalEl.addEventListener('pointerdown', e => { if (e.target === modalEl && !sheet.dataset.lock) closeModal(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && modalOpen() && !sheet.dataset.lock) closeModal(); });
+function useStation() {
+  if (!nearStation || nearStation.locked || modalOpen()) return;
+  ({ trade: tradeGame, sec: secGame, comm: commGame, forge: forgeGame, eat: dinerGame, rest: benchRest, bed: sleepGame, door: exitHome })[nearStation.id]();
+}
+$('#prompt').addEventListener('click', useStation);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function resultCard(win, big, line, brag, draw) {
+  sheet.dataset.lock = '';
+  sheet.innerHTML = `<div class="res ${win ? 'win' : 'loss'}"><small>${esc(line)}</small><b>${big}</b></div>${draw ? '<canvas id="rcv" width="640" height="360" style="width:100%;border-radius:10px;display:block"></canvas>' : ''}
+  <div class="acts"><button id="rcopy">Copy text</button>${draw ? '<button id="rsave">Save image</button>' : ''}<button id="rclose" class="pri">Back to the city</button></div>`;
+  if (draw) { const c = $('#rcv'); draw(c.getContext('2d'), c.width, c.height); $('#rsave').onclick = () => { const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = 'glitch-result.png'; a.click(); }; }
+  $('#rclose').onclick = closeModal;
+  $('#rcopy').onclick = async e => { try { await navigator.clipboard.writeText(brag + ' #Glitch'); e.target.textContent = 'Copied'; } catch (_) { e.target.textContent = 'Copy blocked'; } };
+}
+
+/* ---------- Trade: bet on up or down for 10 seconds ---------- */
+function plotLine(x, d, X, Y, w, h, entry, col) {
+  const mn = Math.min(...d, entry ?? Infinity), mx = Math.max(...d, entry ?? -Infinity), rg = (mx - mn) || 1, pad = 18;
+  const py = v => h - pad - (v - mn) / rg * (h - pad * 2), px_ = i => X + i / Math.max(1, d.length - 1) * w;
+  if (entry != null) { x.strokeStyle = '#8b97b8'; x.lineWidth = 2; x.setLineDash([8, 8]); x.beginPath(); x.moveTo(X, Y + py(entry)); x.lineTo(X + w, Y + py(entry)); x.stroke(); x.setLineDash([]); }
+  x.strokeStyle = col; x.lineWidth = 4; x.lineJoin = 'round'; x.beginPath(); d.forEach((v, i) => i ? x.lineTo(px_(i), Y + py(v)) : x.moveTo(px_(i), Y + py(v))); x.stroke();
+  x.fillStyle = col; x.beginPath(); x.arc(px_(d.length - 1), Y + py(d[d.length - 1]), 6, 0, 7); x.fill();
+}
+function drawChart(cv, d, entry) {
+  const w = cv.width = (cv.clientWidth || 300) * 2, h = cv.height = 220, x = cv.getContext('2d'); x.clearRect(0, 0, w, h);
+  plotLine(x, d, 0, 0, w, h, entry, d[d.length - 1] >= d[0] ? '#b8ff3d' : '#ff3d9a');
+}
+const TOKINFO = { BTX: 'The original coin. Slow and steady.', ETHR: 'Powers apps and contracts. Medium swings.', PIZZ: 'Named after the famous pizza purchase. Jumpy.', MOON: 'A meme coin. Wild swings and risky.', FARM: 'Pays rewards for locking coins. Medium risk.' };
+const STAKES = [1000, 5000, 10000, 50000, 100000];
+const ARROW = d => `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="${d ? 'M12 3 4 13h5v8h6v-8h5z' : 'M12 21 4 11h5V3h6v8h5z'}" fill="currentColor"/></svg>`;
+function tradeGame() {
+  let tk = TOK[0], snap = tk.hist.slice(-120), stake = 5000, pos = null;
+  const R = (l, d, v, col) => `<span>${l}<em>${d}</em></span><div class="bar"><i style="width:${Math.round(clamp(v, 0, 1) * 100)}%;background:${col}"></i></div>`;
+  const sigs = t => { const n = L('trade'); return R('Buzz', 'how much people are talking', t.hype, '#ff3d9a') + (n >= 2 ? R('Real use', 'how many people use it', t.usage, '#2ee6ff') : '') + (n >= 3 ? R('Safety', 'does it look trustworthy', t.trust, '#b8ff3d') : '') + (n >= 4 ? R('Big buyers', 'whales buying or selling', t.flow / 2 + .5, '#ffb12e') : '') + (n < 4 ? '<small style="grid-column:1/3;text-transform:none">Level up Trade to unlock more clues.</small>' : ''); };
+  function render() {
+    sheet.dataset.lock = pos ? '1' : '';
+    const fr = snap[snap.length - 1], c0 = fr / snap[0] - 1;
+    sheet.innerHTML = `<h2>Trade Terminal</h2><p>Pick a coin and guess if its price will go up or down in 10 seconds. Guess right and you win GD. Guess wrong and you lose some.</p>
+    <div class="chips">${TOK.map(t => `<button data-t="${t.sym}" class="${t === tk ? 'on' : ''}" ${pos ? 'disabled' : ''}>${t.sym}</button>`).join('')}</div>
+    <div class="tk"><span><b>${tk.name}</b> <small style="text-transform:none">${TOKINFO[tk.sym]}</small></span></div>
+    <div class="tk"><b>${px(pos ? tk.price : fr)} <small>per coin</small></b><span id="tch" class="${c0 >= 0 ? 'pos' : 'neg'}">${(c0 >= 0 ? '+' : '') + (c0 * 100).toFixed(2)}% recently</span></div>
+    <canvas class="chart" id="tcv"></canvas>
+    ${pos ? '' : '<div class="hint">The chart is paused. It starts moving when you place your bet.</div>'}
+    <div class="sig" id="tsig">${sigs(tk)}</div>
+    ${pos ? `<div class="live"><svg class="ring" viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" class="bg"/><circle cx="50" cy="50" r="42" class="fg" id="rfg"/></svg><b id="rnum">10</b><div><small>Your bet is running</small><div id="tpnl" class="big">0</div><div class="hint" id="tdesc"></div></div></div>` : `
+    <small>How much do you want to bet?</small>
+    <div class="chips" id="stk">${STAKES.map(v => `<button data-s="${v}" class="${v === stake ? 'on' : ''}" ${v > S.bal ? 'disabled' : ''}>${fmtN(v)}</button>`).join('')}</div>
+    <input id="cust" type="text" inputmode="numeric" placeholder="Or type your own amount" autocomplete="off">
+    <div class="hint" id="mult"></div>
+    <div class="acts"><button class="bet up" id="tlong"><span class="ico"><i class="ar">${ARROW(1)}</i></span><span class="bt"><b>Bet UP</b><small>Win if the price is higher in 10 seconds</small></span></button>
+    <button class="bet dn" id="tshort"><span class="ico"><i class="ar d">${ARROW(0)}</i></span><span class="bt"><b>Bet DOWN</b><small>Win if the price is lower in 10 seconds</small></span></button></div>
+    <div class="acts"><button id="tx">Cancel</button></div>`}`;
+    sheet.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { tk = TOK.find(t => t.sym === b.dataset.t); snap = tk.hist.slice(-120); render(); });
+    sheet.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { stake = +b.dataset.s; render(); });
+    if (!pos) { const ci = $('#cust'); ci.oninput = () => { const v = parseInt(ci.value.replace(/\D/g, ''), 10); if (v) { stake = clamp(v, 100, Math.max(100, Math.floor(S.bal))); sheet.querySelectorAll('[data-s]').forEach(b => b.classList.remove('on')); } note(); }; note();
+      $('#tlong').onclick = () => start(1); $('#tshort').onclick = () => start(-1); $('#tx').onclick = closeModal; }
+    drawChart($('#tcv'), pos ? tk.hist.slice(-60) : snap, pos ? pos.p0 : null);
+  }
+  function note() { const m = $('#mult'); if (m) m.innerHTML = `Betting <b>${fmtN(stake)} GD</b> (1% fee). Moves are multiplied by 20: if the price changes 1%, you win or lose about <b>${fmtN(stake * .2)} GD</b>. You can never lose more than your bet.`; }
+  function start(d) {
+    const amt = Math.min(stake, Math.floor(S.bal)); if (amt < 100) return banner('Not enough GD', 'bad');
+    escrow(amt); burn(amt * 0.01); tk.flow += d * Math.min(.5, amt / 2e6);
+    pos = { d, amt: amt * 0.99, p0: tk.price, t: 10, trail: [tk.price] }; render();
+    const C = 2 * Math.PI * 42; $('#rfg').style.strokeDasharray = C; $('#rfg').style.strokeDashoffset = 0; $('#tdesc').textContent = `You bet ${d > 0 ? 'UP' : 'DOWN'} on ${tk.sym}. The dashed line is where you started.`;
+    modalTimer = setInterval(() => {
+      pos.t -= 0.25; pos.trail.push(tk.price); const pnl = Math.max(-pos.amt, pos.amt * 20 * pos.d * (tk.price / pos.p0 - 1));
+      const el = $('#tpnl'); if (el) { el.textContent = (pnl >= 0 ? '+' : '') + fmtN(pnl) + ' GD'; el.className = 'big ' + (pnl >= 0 ? 'pos' : 'neg'); $('#rnum').textContent = Math.max(0, Math.ceil(pos.t)); $('#rfg').style.strokeDashoffset = C * (1 - pos.t / 10); }
+      const c = $('#tcv'); if (c) drawChart(c, tk.hist.slice(-60), pos.p0);
+      if (pos.t <= 0) { clearInterval(modalTimer); modalTimer = 0; finish(pnl); }
+    }, 250);
+  }
+  function finish(pnl) {
+    const r = settle(pos.amt, pnl); S.stats.trades++; if (pnl > 0) S.stats.wins++; addXp('trade', 12 + (pnl > 0 ? 8 : 0)); crowdTo('trade', 12);
+    const side = pos.d > 0 ? 'UP' : 'DOWN', pct = pnl / pos.amt * 100, mv = (tk.price / pos.p0 - 1) * 100, trail = pos.trail.slice(), p0 = pos.p0, sym = tk.sym, nm = tk.name, win = pnl >= 0, col = win ? '#b8ff3d' : '#ff3d9a';
+    const draw = (x, w, h) => { x.fillStyle = '#070910'; x.fillRect(0, 0, w, h); x.strokeStyle = col; x.lineWidth = 3; x.strokeRect(6, 6, w - 12, h - 12);
+      x.fillStyle = '#e9eefc'; x.font = '700 40px "Chakra Petch",sans-serif'; x.fillText(sym + '  ' + (pos.d > 0 ? '▲ UP' : '▼ DOWN'), 28, 62); x.fillStyle = '#8b97b8'; x.font = '500 20px "Chakra Petch",sans-serif'; x.fillText(nm + ' · price moved ' + (mv >= 0 ? '+' : '') + mv.toFixed(2) + '%', 28, 92);
+      x.textAlign = 'right'; x.fillStyle = col; x.font = '700 62px "JetBrains Mono",monospace'; x.fillText((pct >= 0 ? '+' : '') + pct.toFixed(1) + '%', w - 28, 70); x.textAlign = 'left';
+      plotLine(x, trail, 28, 110, w - 56, 190, p0, col); x.fillStyle = '#8b97b8'; x.font = '500 18px "Chakra Petch",sans-serif'; x.fillText('GLITCH · 10 second trade', 28, h - 20); };
+    resultCard(win, (pnl >= 0 ? '+' : '') + fmtN(r.credited) + ' GD', `${pct >= 0 ? 'You won' : 'You lost'} ${Math.abs(pct).toFixed(0)}% of your bet${r.capped ? ' (daily skill pay cap hit)' : ''}`, `I bet ${side} on ${sym} in Glitch: ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% in 10 seconds.`, draw);
+    if (pnl < 0) post('bad', S.name, `lost a bet going ${side} on ${sym}. pain.`); else if (pnl > 50000) post('npc', S.name, `just won ${fmt(pnl)} GD on ${sym}`);
+    save(); updateHud();
+  }
+  openModal(''); render();
+}
+
+/* ---------- Vault Cracker: a light timing game, just for fun ---------- */
+function secGame() {
+  let round = 0, hits = 0, p = 0, dir = 1, done = false, zone = [0, 0], last = performance.now(), busy = false;
+  const ZW = [.24, .18, .13], SP = [.75, 1.0, 1.3];
+  const onKey = e => { if ((e.key === ' ' || e.key === 'Enter') && !done) { e.preventDefault(); stop(); } };
+  addEventListener('keydown', onKey);
+  openModal('', () => { removeEventListener('keydown', onKey); });
+  function setup() { zone = [rnd(.08, .92 - ZW[round]), ZW[round]]; busy = false; p = 0; dir = 1; render(); }
+  function render() {
+    sheet.dataset.lock = '1';
+    sheet.innerHTML = `<h2>Vault Cracker</h2><p>A rich NPC left a vault open. Tap STOP (or press Space) when the glowing needle is inside the green zone.</p>
+    <div class="locks">${[0, 1, 2].map(i => `<span class="lk2 ${i < round ? 'ok' : i === round ? 'now' : ''}">${i < round ? 'OPEN' : 'LOCK ' + (i + 1)}</span>`).join('')}</div>
+    <div class="vbar"><i class="zone" style="left:${zone[0] * 100}%;width:${zone[1] * 100}%"></i><i class="needle" id="ndl"></i></div>
+    <div class="hint">Each lock is faster and the green zone is smaller. Each open lock pays GD.</div>
+    <div class="acts"><button class="pri" id="stopb" style="font-size:18px;padding:14px">STOP</button><button id="vx">Leave</button></div>`;
+    $('#stopb').onclick = stop; $('#vx').onclick = () => { done = true; sheet.dataset.lock = ''; closeModal(); };
+  }
+  function stop() {
+    if (done || busy) return; busy = true; const ok = p >= zone[0] && p <= zone[0] + zone[1]; if (ok) hits++;
+    const n = $('#ndl'); if (n) n.style.background = ok ? '#b8ff3d' : '#ff3d9a'; round++;
+    setTimeout(() => { if (done) return; if (round >= 3) end(); else setup(); }, 600);
+  }
+  function end() {
+    done = true; clearInterval(modalTimer); const pay = hits * 15000 + (hits === 3 ? 30000 : 0), shd = hits + (hits === 3 ? 1 : 0); S.shards += shd; addXp('sec', 8 + hits * 6);
+    const r = pay ? earn(pay) : { credited: 0, capped: false }; if (hits === 3) post('good', S.name, 'cracked a whole vault. smooth.'); save(); updateHud();
+    resultCard(hits >= 2, hits ? '+' + fmtN(r.credited) + ' GD' : 'Locked out', `${hits} of 3 locks opened${hits === 3 ? '. PERFECT!' : ''}${shd ? ` · +${shd} shards` : ''}`, `I opened ${hits}/3 locks in the Glitch vault game.`);
+  }
+  modalTimer = setInterval(() => { const now = performance.now(), dt = (now - last) / 1000; last = now; if (busy || done) return; p += dir * SP[Math.min(round, 2)] * dt; if (p > 1) { p = 1; dir = -1; } if (p < 0) { p = 0; dir = 1; } const n = $('#ndl'); if (n) n.style.left = `calc(${p * 100}% - 3px)`; }, 16);
+  setup();
+}
+
+/* ---------- Customizer ---------- */
+function openCustomizer() {
+  const pd = cam.dist, pp = cam.pitch, pty = cam.ty; customizing = true; cam.dist = 7.6; cam.pitch = .1; cam.ty = -0.7;
+  openModal('', () => { customizing = false; cam.dist = pd; cam.pitch = pp; cam.ty = pty; modalEl.classList.remove('low'); save(); });
+  modalEl.classList.add('low');
+  const hex = c => '#' + c.toString(16).padStart(6, '0');
+  const sw = (a, k) => a.map((c, i) => `<button class="sw ${S.look[k] === i ? 'on' : ''}" data-k="${k}" data-v="${i}" style="background:${hex(c)}" aria-label="${k} ${i + 1}"></button>`).join('');
+  const ch = (a, k) => a.map((n, i) => { const lk = k === 'gear' && !gearOwned(i); return `<button class="${S.look[k] === i ? 'on' : ''}" data-k="${k}" data-v="${i}" ${lk ? 'disabled title="Mint it at the Gear Forge"' : ''}>${n}${lk ? ' (locked)' : ''}</button>`; }).join('');
+  function render() {
+    sheet.innerHTML = `<h2>Your look</h2><div class="cz"><small>Skin</small><div class="chips">${sw(SKINS, 'skin')}</div><small>Hair</small><div class="chips">${ch(HAIRS, 'hair')}</div><small>Hair colour</small><div class="chips">${sw(HAIRC, 'hairC')}</div>
+    <small>Top</small><div class="chips">${sw(TOPC, 'top')}</div><small>Trousers</small><div class="chips">${sw(BOTC, 'bot')}</div>
+    <small>Glasses</small><div class="chips"><button class="${S.look.glasses ? 'on' : ''}" data-k="glasses" data-v="1">On</button><button class="${S.look.glasses ? '' : 'on'}" data-k="glasses" data-v="0">Off</button>${S.look.glasses ? sw(GLASSC, 'glassC') : ''}</div>
+    <small>Gear</small><div class="chips">${ch(GEARS, 'gear')}</div></div><div class="acts"><button class="pri" id="cdone">Done</button></div>`;
+    sheet.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { const k = b.dataset.k; S.look[k] = k === 'glasses' ? b.dataset.v === '1' : +b.dataset.v; buildLook(player, S.look); render(); });
+    $('#cdone').onclick = closeModal;
+  }
+  render();
+}
+
+/* ---------- Community: post a take, attention pays ---------- */
+function commGame() {
+  let tk = TOK[3], take = null; const cost = 10000;
+  function render() {
+    sheet.dataset.lock = '';
+    sheet.innerHTML = `<h2>Attention Booth</h2><p>Boost a post for ${fmt(cost)} GD. Read the mood: hype works in greed, warnings work in fear, memes work any time (a bit less).</p>
+    <div class="chips">${TOK.map(t => `<button data-t="${t.sym}" class="${t === tk ? 'on' : ''}">${t.sym}</button>`).join('')}</div>
+    <div class="chips">${[['hype', `${tk.sym} to the moon`], ['warn', `careful: ${tk.sym} looks like a rug`], ['meme', `me explaining ${tk.sym} to my landlord`]].map(([k, l]) => `<button data-k="${k}" class="${take === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
+    <small>Followers ${fmtN(S.followers)} · Community level ${L('comm')}</small>
+    <div class="acts"><button class="pri" id="pst" ${take && S.bal >= cost ? '' : 'disabled'}>Post</button><button id="px">Cancel</button></div>`;
+    sheet.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { tk = TOK.find(t => t.sym === b.dataset.t); render(); });
+    sheet.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { take = b.dataset.k; render(); });
+    $('#px').onclick = closeModal; $('#pst').onclick = send;
+  }
+  function send() {
+    burn(cost * 0.5); escrow(cost * 0.5); const m = market.mood, h = market.heat;
+    const fit = take === 'hype' ? clamp(0.5 + m * 0.5 - h, 0, 1) : take === 'warn' ? clamp(0.3 + h * 2 - m * 0.3, 0, 1) : 0.45;
+    const luck = Math.exp(randn() * 0.6), reach = fit * luck * (1 + 0.1 * (L('comm') - 1)) + 0.25;
+    const pay = cost * 0.5 * (0.5 + reach * 1.6); const r = settle(cost * 0.5, pay - cost * 0.5);
+    const fol = Math.floor(reach * 40 * (1 + L('comm') * .1)); S.followers += fol; S.stats.posts++; addXp('comm', 14); S.rep += reach > 1.2 ? 1 : 0;
+    if (take === 'hype') { tk.hype = clamp(tk.hype + .06 * reach, 0, 1); tk.flow += .15 * reach; } else if (take === 'warn') { tk.trust = clamp(tk.trust - .05 * reach, 0, 1); tk.flow -= .1 * reach; }
+    const txt = take === 'hype' ? `${tk.sym} to the moon` : take === 'warn' ? `careful: ${tk.sym} looks like a rug` : `me explaining ${tk.sym} to my landlord`;
+    post('npc', S.name, txt); crowdTo('comm', 12); const viral = reach > 1.5;
+    if (viral) post('sys', 'TRENDING', `${S.name}'s ${tk.sym} post is going viral.`);
+    resultCard(r.credited >= 0, (r.credited >= 0 ? '+' : '') + fmt(r.credited) + ' GD', `${viral ? 'VIRAL. ' : ''}+${fol} followers`, `My ${tk.sym} take in Glitch ${viral ? 'went viral' : 'got ' + fol + ' new followers'}.`);
+    save(); updateHud();
+  }
+  openModal(''); render();
+}
+
+/* ---------- locations, chat, follows ---------- */
+const LOCS = [
+  { id: 'plaza', name: 'Central Plaza', x: 0, z: 6, r: 14, sp: [0, 10], note: 'The main square. Everyone passes through.' },
+  { id: 'wall', name: 'Wall Street', x: -17, z: -4, r: 12, sp: [-13, -3], note: 'Trade coins at the Exchange.' },
+  { id: 'lab', name: 'Vault Lab', x: 17, z: -4, r: 12, sp: [13, -3], note: 'Crack vaults and watch the bounty board.' },
+  { id: 'tower', name: 'Attention Tower', x: 0, z: -24, r: 10, sp: [0, -19], note: 'Post, trend and gain followers.' },
+  { id: 'diner', name: 'Neon Diner', x: 30, z: 20, r: 10, sp: [27, 17], note: 'Eat here. Only takes USDG.' },
+  { id: 'home', name: 'My Home', x: 140, z: 0, r: 14, sp: [140, 4], note: 'Your place.' },
+];
+const GAS = 200;
+const locAt = (x, z) => { let b = LOCS[0], bd = 1e9; for (const l of LOCS) { const d = Math.hypot(x - l.x, z - l.z) - l.r; if (d < bd) { bd = d; b = l; } } return b; };
+const here = () => locAt(player.position.x, player.position.z);
+const peopleAt = id => npcs.filter(a => locAt(a.position.x, a.position.z).id === id);
+const chatLog = {}; LOCS.forEach(l => chatLog[l.id] = []);
+const dms = {}; let unread = 0;
+let phoneOpen = false, phoneApp = null, socialTab = 'all', chatTab = 'here', dmWith = null, profOf = null;
+const hash = s => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
+const BIOS = ['Early to everything. Late to nothing.', 'Probably rugged once. Learned a lot.', 'Building in public, sleeping in private.', 'Number go up enthusiast.', 'Audit first, ape later.', 'gm from Lagos.'];
+const followersOf = n => 200 + hash(n) % 9000;
+const isFol = n => S.follows.includes(n);
+function chatIn(id, who, text, me) { const a = chatLog[id]; a.push({ who, text, t: Date.now(), me }); if (a.length > 40) a.shift(); if (phoneOpen && phoneApp === 'chat' && chatTab === 'here' && id === here().id) phoneRefresh(); }
+function dmIn(name, text, me) { (dms[name] = dms[name] || []).push({ text, me, t: Date.now() }); if (!me && !(phoneOpen && phoneApp === 'chat' && dmWith === name)) { unread++; badge(); banner(`${name} sent you a message`, 'info'); } if (phoneOpen) phoneRefresh(); }
+const REPLY = [[/gm/i, ['gm gm', 'gm fren', 'gm, you early today']], [/buy|sell|price|trade|coin|moon/i, ['careful, markets are moody today', 'i only buy when everyone is scared', 'check the Exchange screen first', 'not financial advice but... send it']], [/hack|rug|scam|cia/i, ['stay safe out here, the CIA is watching', 'always check the audit first']], [/.*/, ['lol true', 'haha same', 'tell me more', 'you should come to Wall Street', 'nice, follow me back']]];
+function npcReply(name, text) { const r = REPLY.find(x => x[0].test(text))[1]; setTimeout(() => dmIn(name, pick(r), false), rnd(1500, 3500)); }
+function badge() { const b = $('#phoneBtn'); b.dataset.n = unread || ''; }
+function travel(id) {
+  const l = LOCS.find(x => x.id === id); if (!l) return; if (S.bal < GAS) return banner('Not enough GD for gas', 'bad');
+  burn(GAS); logTx('out', GAS, 'Gas: fast travel'); player.position.set(l.sp[0], 0, l.sp[1]); vel.x = vel.z = 0; cam.tx = l.sp[0]; cam.tz = l.sp[1]; closeModal(); banner(`Arrived at ${l.name}. Gas fee: ${GAS} GD`, 'info'); updateHud(); save();
+}
+
+/* ---------- phone UI ---------- */
+function openPhone(app) {
+  if (introOpen() || (modalOpen() && !phoneOpen)) return;
+  if (phoneOpen) { phoneApp = app || null; return renderPhone(); }
+  phoneOpen = true; phoneApp = app || null; profOf = null; dmWith = null;
+  openModal('', () => { phoneOpen = false; sheet.classList.remove('phonesheet'); sheet.onclick = sheet.onkeydown = null; });
+  sheet.classList.add('phonesheet'); renderPhone();
+}
+function phoneRefresh() { if (!phoneOpen) return; const i = $('#pin'), v = i && i.value, f = i && document.activeElement === i; renderPhone(); if (i) { const n = $('#pin'); if (n) { n.value = v; if (f) { n.focus(); n.setSelectionRange(v.length, v.length); } } } }
+const ago2 = t => { const s = Math.floor((Date.now() - t) / 1000); return s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm' : Math.floor(s / 3600) + 'h'; };
+const hdr = (title, back) => `<div class="ph-h">${back ? `<button data-a="${back}">‹</button>` : ''}<b>${title}</b></div>`;
+function renderPhone() {
+  const t = new Date().toTimeString().slice(0, 5), L0 = here(); let body = '';
+  if (!phoneApp) {
+    const ap = (id, nm, col, ch, soon) => `<button class="ap ${soon ? 'soon' : ''}" ${soon ? 'disabled' : `data-a="app" data-v="${id}"`}><i style="background:${col}">${ch}${id === 'chat' && unread ? `<u>${unread}</u>` : ''}</i><span>${nm}</span></button>`;
+    body = `<div class="ph-h"><b>Apps</b></div><div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('map', 'Map', '#ffb12e', 'M')}${ap('wallet', 'Wallet', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$', 1)}</div><p class="hint" style="text-align:center">Market (buy and sell with other players) arrives in the next update.</p>`;
+  } else if (phoneApp === 'social') {
+    const list = feed.filter(p => socialTab === 'all' || isFol(p.who) || p.who === S.name).slice(0, 30);
+    body = hdr('Social', 'home') + `<div class="chips"><button data-a="stab" data-v="all" class="${socialTab === 'all' ? 'on' : ''}">For you</button><button data-a="stab" data-v="fol" class="${socialTab === 'fol' ? 'on' : ''}">Following</button></div>
+    <div class="cmp"><input id="pin" type="text" maxlength="120" placeholder="What's happening in the city?" autocomplete="off"><button class="pri" data-a="post">Post</button></div>` +
+      (list.map(p => { const i = feed.indexOf(p), me = p.who === S.name, clk = p.kind === 'npc' || me; return `<div class="post ${p.kind}"><time>${ago2(p.t)}</time>${clk ? `<button class="lnk" data-a="prof" data-v="${esc(p.who)}">${esc(p.who)}</button>` : `<span class="who">${esc(p.who)}</span>`}<div>${esc(p.text)}</div><button class="lnk lk ${p.me ? 'liked' : ''}" data-a="like" data-v="${i}">♥ ${p.likes + (p.me ? 1 : 0)}</button></div>`; }).join('') || '<p class="hint">Nothing yet. Follow people to fill this tab.</p>');
+  } else if (phoneApp === 'prof') {
+    const n = profOf, me = n === S.name || n === 'me';
+    const mine = feed.filter(p => p.who === (me ? S.name : n)).slice(0, 5);
+    body = hdr(me ? S.name : n, 'social') + `<div class="pf"><i>${esc((me ? S.name : n)[0].toUpperCase())}</i><div><b>${esc(me ? S.name : n)}</b><div class="hint">${me ? roleName() + ' · Rep ' + S.rep : BIOS[hash(n) % BIOS.length]}</div></div></div>
+    <div class="pstats"><span><b>${fmtN(me ? S.followers : followersOf(n))}</b><small>Followers</small></span><span><b>${me ? S.follows.length : 20 + hash(n) % 300}</b><small>Following</small></span></div>` +
+      (me ? '' : `<div class="acts"><button class="${isFol(n) ? '' : 'pri'}" data-a="fol" data-v="${esc(n)}">${isFol(n) ? 'Following' : 'Follow'}</button><button data-a="dm" data-v="${esc(n)}">Message</button></div>`) +
+      mine.map(p => `<div class="post"><time>${ago2(p.t)}</time><div>${esc(p.text)}</div></div>`).join('');
+  } else if (phoneApp === 'chat' && dmWith) {
+    const th = dms[dmWith] || []; if (unread) { unread = 0; badge(); }
+    body = hdr(esc(dmWith), 'inbox') + `<div class="msgs">${th.map(m => `<div class="m ${m.me ? 'me' : ''}">${esc(m.text)}</div>`).join('') || '<p class="hint">Say hi.</p>'}</div><div class="cmp"><input id="pin" type="text" maxlength="120" placeholder="Message" autocomplete="off"><button class="pri" data-a="sendDM">Send</button></div>`;
+  } else if (phoneApp === 'chat') {
+    const pp = peopleAt(L0.id);
+    body = hdr('Chat', 'home') + `<div class="chips"><button data-a="ctab" data-v="here" class="${chatTab === 'here' ? 'on' : ''}">Here</button><button data-a="ctab" data-v="inbox" class="${chatTab === 'inbox' ? 'on' : ''}">Messages${unread ? ' (' + unread + ')' : ''}</button></div>`;
+    if (chatTab === 'here') body += `<div class="hint"><b>${L0.name}</b> · ${pp.length + 1} here. Messages go to everyone in this place. Tap a name to message one person.</div>
+      <div class="chips">${pp.map(a => `<button data-a="dm" data-v="${esc(a.userData.npc.name)}">${esc(a.userData.npc.name)}</button>`).join('') || '<small>Nobody else here yet</small>'}</div>
+      <div class="msgs">${chatLog[L0.id].slice(-14).map(m => `<div class="m ${m.me ? 'me' : ''}"><small>${esc(m.who)}</small>${esc(m.text)}</div>`).join('') || '<p class="hint">Quiet here. Say something.</p>'}</div><div class="cmp"><input id="pin" type="text" maxlength="120" placeholder="Message everyone here" autocomplete="off"><button class="pri" data-a="sendLoc">Send</button></div>`;
+    else body += Object.keys(dms).map(n => { const l = dms[n][dms[n].length - 1]; return `<button class="thr" data-a="dm" data-v="${esc(n)}"><b>${esc(n)}</b><span>${esc(l.text)}</span></button>`; }).join('') || '<p class="hint">No messages yet. Tap a name in Here to start one.</p>';
+  } else if (phoneApp === 'map') {
+    const X = x => 150 + x * 3, Z = z => 110 + z * 2.3;
+    body = hdr('Map', 'home') + `<svg viewBox="0 0 300 220" class="map"><rect width="300" height="220" fill="#04060c"/>${LOCS.filter(l => l.id !== 'home').map(l => `<g data-a="go" data-v="${l.id}" style="cursor:pointer"><circle cx="${X(l.x)}" cy="${Z(l.z)}" r="${l.r * 1.4}" fill="${l.id === L0.id ? 'rgba(46,230,255,.18)' : 'rgba(255,255,255,.05)'}" stroke="${l.id === L0.id ? '#2ee6ff' : '#26324f'}"/><text x="${X(l.x)}" y="${Z(l.z) + 3}" text-anchor="middle" fill="#e9eefc" font-size="9" font-family="sans-serif">${l.name}</text></g>`).join('')}<circle cx="${X(player.position.x)}" cy="${Z(player.position.z)}" r="4" fill="#b8ff3d"/></svg>
+    <p class="hint">Walking is free. Fast travel costs ${GAS} GD, a small "gas fee", like moving money on a blockchain.</p>` +
+      LOCS.filter(l => l.id !== 'home').map(l => `<div class="loc"><div><b>${l.name}</b> ${l.id === L0.id ? '<span class="tag">You are here</span>' : ''}<div class="hint">${l.note} · ${peopleAt(l.id).length + (l.id === L0.id ? 1 : 0)} people</div></div>${l.id === L0.id ? '' : `<button data-a="go" data-v="${l.id}">Go</button>`}</div>`).join('');
+  } else if (phoneApp === 'wallet') {
+    body = hdr('Wallet', 'home') + `<div class="res win" style="padding:6px 0"><small>Balance</small><b>${fmtN(S.bal)} GD</b></div><div class="pstats"><span><b>${S.usdg}</b><small>USDG</small></span><span><b>${S.shards}</b><small>Shards</small></span><span><b>${S.nfts.length}</b><small>NFTs</small></span></div>${swapHtml()}<div class="hint">Daily skill pay: ${fmt(S.payUsed)} of ${fmt(payCap())} used. After that it pays only 20%.${weak() ? ' <b class="neg">Tired or hungry: skill pay is cut by 40%.</b>' : ''}</div><div class="meter"><i style="width:${Math.min(100, S.payUsed / payCap() * 100)}%"></i></div>
+    <small style="display:block;margin-top:10px">Activity (every move is recorded, like a block explorer)</small>` +
+      (txlog.slice(0, 12).map(x => `<div class="tx"><span class="${x.kind === 'in' ? 'pos' : 'neg'}">${x.kind === 'in' ? '+' : '-'}${fmtN(Math.abs(x.amt))}</span><span>${esc(x.note)}</span><code>${x.h}</code></div>`).join('') || '<p class="hint">No activity yet. Play a game.</p>');
+  } else if (phoneApp === 'myhome') { body = homeHtml();
+  } else if (phoneApp === 'me') { profOf = 'me'; phoneApp = 'prof'; return renderPhone(); }
+  else if (phoneApp === 'set') {
+    body = hdr('Settings', 'home') + `<small>Display name</small><div class="cmp"><input id="pin" type="text" maxlength="14" value="${esc(S.name)}"><button class="pri" data-a="name">Save</button></div><div class="acts"><button data-a="style">Change my look</button></div><div class="acts"><button class="dn" data-a="reset">Reset progress</button></div>`;
+  }
+  sheet.innerHTML = `<div class="ph-bar"><span>${t}</span><span>${esc(L0.name)}</span><span>5G ▮▮▮</span></div><div class="ph-scr">${body}</div><div class="ph-nav"><button data-a="home" aria-label="Home"></button></div>`;
+  sheet.onclick = e => {
+    const b = e.target.closest('[data-a]'); if (!b || b.disabled) return; const a = b.dataset.a, v = b.dataset.v, inp = $('#pin');
+    if (a === 'home') { phoneApp = null; dmWith = null; } else if (a === 'app') { phoneApp = v; if (v === 'chat') { chatTab = 'here'; dmWith = null; } }
+    else if (a === 'social') phoneApp = 'social'; else if (a === 'inbox') { dmWith = null; chatTab = 'inbox'; phoneApp = 'chat'; }
+    else if (a === 'stab') socialTab = v; else if (a === 'ctab') chatTab = v;
+    else if (a === 'like') { const p = feed[+v]; if (p) p.me = !p.me; }
+    else if (a === 'prof') { profOf = v; phoneApp = 'prof'; }
+    else if (a === 'fol') { if (isFol(v)) S.follows = S.follows.filter(x => x !== v); else { S.follows.push(v); S.rep += 0; } save(); }
+    else if (a === 'dm') { dmWith = v; phoneApp = 'chat'; chatTab = 'inbox'; if (v === S.name) return; }
+    else if (a === 'post') { const x = inp.value.trim(); if (!x) return; post('npc', S.name, x); S.stats.posts++; S.followers += Math.floor(rnd(0, 3)); save(); }
+    else if (a === 'sendLoc') { const x = inp.value.trim(); if (!x) return; chatIn(here().id, S.name, x, true); const pp = peopleAt(here().id); if (pp.length && Math.random() < .6) { const n = pick(pp), nm = n.userData.npc.name; setTimeout(() => { const r = pick(REPLY.find(z => z[0].test(x))[1]); chatIn(locAt(n.position.x, n.position.z).id, nm, r); say(n, r.slice(0, 24)); }, rnd(1500, 3500)); } }
+    else if (a === 'sendDM') { const x = inp.value.trim(); if (!x) return; dmIn(dmWith, x, true); npcReply(dmWith, x); }
+    else if (a === 'go') return travel(v);
+    else if (a === 'swap') { const m = swap(b.dataset.d, +b.dataset.n); banner(m.msg, m.ok ? 'good' : 'bad'); }
+    else if (['buyhome', 'payrent', 'furn', 'gohome'].includes(a)) { if (homeAct(a, v)) return; }
+    else if (a === 'name') { const x = inp.value.trim().slice(0, 14); if (x) { S.name = x; save(); updateHud(); } }
+    else if (a === 'style') { closeModal(); return openCustomizer(); }
+    else if (a === 'reset') { try { localStorage.removeItem(SAVE); } catch (_) { } return location.reload(); }
+    renderPhone(); const n = $('#pin'); if (n && (a === 'post' || a === 'sendLoc' || a === 'sendDM')) { n.value = ''; n.focus(); }
+  };
+  sheet.onkeydown = e => { if (e.key === 'Enter' && e.target.id === 'pin') { const b = sheet.querySelector('.cmp .pri'); if (b) b.click(); } };
+}
+$('#phoneBtn').onclick = () => (phoneOpen ? closeModal() : openPhone());
+addEventListener('keydown', e => { if (e.key.toLowerCase() === 'p' && !(e.target && e.target.tagName === 'INPUT')) { if (phoneOpen) closeModal(); else if (!modalOpen()) openPhone(); } });
+
+/* ---------- other players follow and message you ---------- */
+let folT = rnd(20, 35), dmT = rnd(60, 90), phT = 0;
+function phoneUpdate(dt) {
+  folT -= dt; if (folT <= 0) { folT = rnd(25, 45); const n = pick(NPC_NAMES); S.followers++; post('sys', 'NEWS', `${n} followed ${S.name}.`); }
+  dmT -= dt; if (dmT <= 0) { dmT = rnd(70, 110); const n = pick(NPC_NAMES); dmIn(n, pick(['gm! saw your post', 'you trading today?', 'follow back?', 'wagwan, nice look btw'])); }
+  phT += dt; if (phT > 20 && phoneOpen && !document.activeElement?.matches?.('#pin')) { phT = 0; phoneRefresh(); }
+  const l = here(); if (l.id !== phoneUpdate.last) { phoneUpdate.last = l.id; $('#loc').textContent = l.name; }
+  $('#loc').textContent = `${l.name} · ${peopleAt(l.id).length + 1} here`;
+}
+
+/* ---------- life: needs, USDG, diner, bench, home, forge ---------- */
+const RATE = 500, RENT = 15, RENT_MS = 600000, HOMEP = 200000, FREEGEAR = [0, 2];
+const GEARINFO = { 1: { shd: 3, usdg: 2, rar: 'Common' }, 3: { shd: 8, usdg: 10, rar: 'Rare' }, 4: { shd: 5, usdg: 5, rar: 'Common' }, 5: { shd: 15, usdg: 20, rar: 'Epic' }, 6: { shd: 30, usdg: 40, rar: 'Legendary' } };
+const gearOwned = g => FREEGEAR.includes(g) || S.nfts.some(n => n.g === g);
+const clampN = () => { S.needs.energy = clamp(S.needs.energy, 0, 100); S.needs.hunger = clamp(S.needs.hunger, 0, 100); };
+let warnT = 0;
+function lifeUpdate(dt) {
+  const n = S.needs, home = player.position.x > 100;
+  n.hunger -= dt * 0.2; n.energy -= dt * (n.hunger <= 0 ? 0.5 : 0.25) * (home ? .5 : 1); clampN();
+  warnT -= dt; if (warnT <= 0) { if (n.hunger < 10) { banner('You are starving. Eat at the Neon Diner (it takes USDG).', 'bad'); warnT = 60; } else if (n.energy < 15) { banner('You are exhausted. Rest on a bench or sleep at home.', 'bad'); warnT = 60; } }
+  const r = player.userData.rig; r.rotation.x += ((weak() ? .14 : 0) - r.rotation.x) * Math.min(1, dt * 4);
+  rain.visible = !home;
+}
+function progressModal(title, line, secs, done) {
+  sheet.dataset.lock = '1'; const C = 2 * Math.PI * 42;
+  sheet.innerHTML = `<h2>${title}</h2><p>${line}</p><div class="live" style="justify-content:center"><svg class="ring" viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" class="bg"/><circle cx="50" cy="50" r="42" class="fg" id="rfg" style="stroke-dasharray:${C};stroke-dashoffset:0"/></svg><b id="rnum">${secs}</b></div>`;
+  let t = secs; clearInterval(modalTimer);
+  modalTimer = setInterval(() => { t -= .25; $('#rnum').textContent = Math.max(0, Math.ceil(t)); $('#rfg').style.strokeDashoffset = C * (1 - t / secs); if (t <= 0) { clearInterval(modalTimer); modalTimer = 0; sheet.dataset.lock = ''; done(); } }, 250);
+}
+const meters = () => `<div class="needs" style="margin:6px 0"><div><span>Energy ${Math.round(S.needs.energy)}</span><i><b style="width:${S.needs.energy}%;background:var(--amber)"></b></i></div><div><span>Hunger ${Math.round(S.needs.hunger)}</span><i><b style="width:${S.needs.hunger}%;background:var(--lime)"></b></i></div></div>`;
+
+/* swap GD <-> USDG, only at Wall Street */
+function swap(dir, amt) {
+  if (here().id !== 'wall') return { ok: 0, msg: 'Go to Wall Street to swap.' };
+  const gd = amt * RATE, fee = gd * 0.01;
+  if (dir === 'buy') { if (S.bal < gd + fee) return { ok: 0, msg: 'Not enough GD.' }; S.bal -= gd + fee; S.burned += fee; S.usdg += amt; logTx('out', gd + fee, `Swap for ${amt} USDG`); }
+  else { if (S.usdg < amt) return { ok: 0, msg: 'Not enough USDG.' }; S.usdg -= amt; S.bal += gd - fee; S.burned += fee; logTx('in', gd - fee, `Sold ${amt} USDG`); }
+  save(); updateHud(); return { ok: 1, msg: dir === 'buy' ? `Bought ${amt} USDG` : `Sold ${amt} USDG` };
+}
+function swapHtml() {
+  if (here().id !== 'wall') return `<div class="hint">USDG is a stablecoin: it is always worth about ${RATE} GD. Restaurants and rent only take USDG. Swap it at <b>Wall Street</b> (open the Map).</div>`;
+  return `<div class="hint"><b>Swap desk.</b> 1 USDG = ${RATE} GD, 1% fee.</div><div class="chips">${[5, 10, 25].map(n => `<button data-a="swap" data-d="buy" data-n="${n}">Buy ${n} USDG<br><small style="text-transform:none">${fmtN(n * RATE * 1.01)} GD</small></button>`).join('')}</div><div class="chips">${[5, 25].map(n => `<button data-a="swap" data-d="sell" data-n="${n}">Sell ${n} USDG</button>`).join('')}</div>`;
+}
+
+/* Neon Diner */
+const MENU = [{ n: 'Jollof and chicken', h: 45, e: 0, p: 8, d: 'A full meal' }, { n: 'Suya skewer', h: 25, e: 0, p: 4, d: 'Quick bite' }, { n: 'Zobo drink', h: 8, e: 12, p: 2, d: 'Cold and refreshing' }];
+function dinerGame() {
+  openModal('');
+  const r = () => { sheet.innerHTML = `<h2>Neon Diner</h2><p>We only take <b>USDG</b>. You have <b>${S.usdg} USDG</b>.${S.usdg < 4 ? ' Swap some at Wall Street (Wallet app) first.' : ''}</p>${meters()}${MENU.map((m, i) => `<div class="loc"><div><b>${m.n}</b><div class="hint">${m.d}: +${m.h} hunger${m.e ? `, +${m.e} energy` : ''}</div></div><button class="pri" data-m="${i}" ${S.usdg < m.p ? 'disabled' : ''}>${m.p} USDG</button></div>`).join('')}<div class="acts"><button id="dx">Leave</button></div>`;
+    sheet.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { const m = MENU[+b.dataset.m]; if (S.usdg < m.p) return; S.usdg -= m.p; S.needs.hunger += m.h; S.needs.energy += m.e; clampN(); banner(`Ate ${m.n}. Hunger +${m.h}`, 'good'); crowdTo('eat', 8); save(); updateHud(); r(); });
+    $('#dx').onclick = closeModal; }; r();
+}
+function benchRest() { openModal(''); progressModal('Resting on the bench', 'Slow, but free. Sleeping at home is much better.', 8, () => { S.needs.energy += 25; S.needs.hunger -= 3; clampN(); resultCard(true, 'Energy +25', 'You feel a bit better', 'Took a nap on a park bench in Glitch.'); updateHud(); save(); }); }
+const SLEEPLINES = ['Zzz...', 'Dreaming of green candles...', 'Zzz... MOON... Zzz...'];
+
+/* Home room */
+const ROOMC = new THREE.Group(); scene.add(ROOMC);
+{ const fl = bx(16, .2, 16, lam(0x1a2140, .25), 140, -.1, 0); ROOMC.add(fl);
+  [[16, 3.2, .3, 140, 1.6, -8], [.3, 3.2, 16, 132, 1.6, 0], [.3, 3.2, 16, 148, 1.6, 0]].forEach(w => { const m = bx(w[0], w[1], w[2], new THREE.MeshLambertMaterial({ color: 0x10172a, transparent: true, opacity: .85 }), w[3], w[4], w[5]); ROOMC.add(m); const e = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), new THREE.LineBasicMaterial({ color: 0xffb12e })); e.position.copy(m.position); ROOMC.add(e); });
+  const pl = new THREE.PointLight(0xffc890, 40, 40); pl.position.set(140, 5, 0); ROOMC.add(pl);
+  const bench = bx(3, .5, .9, lam(0x4a3a2a, .15), 8, .35, 17.5), back = bx(3, .8, .15, lam(0x4a3a2a, .15), 8, .9, 17.95); scene.add(bench, back); }
+const FURN = [
+  { id: 'bed2', name: 'Royal Bed', price: 150000, pts: 5, d: 'Sleep faster', b: g => { g.add(bx(2.2, .5, 3.2, lam(0x7a1d3a, .3), 134, .45, -5), bx(2, .25, 1, lam(0xe9eefc, .3), 134, .85, -6.2), bx(2.4, 1.4, .2, lam(0xffb12e, .4), 134, 1.1, -6.7)); } },
+  { id: 'rug', name: 'Neon Rug', price: 15000, pts: 2, d: 'Comfy underfoot', b: g => { const m = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, .04, 24), lam(0xff3d9a, .5)); m.position.set(140, .03, 0); g.add(m); } },
+  { id: 'sofa', name: 'Sofa', price: 40000, pts: 3, d: 'Seat for visitors', b: g => { g.add(bx(3.2, .8, 1.3, lam(0x2a3150, .25), 144.5, .4, -5.8), bx(3.2, 1, .3, lam(0x2a3150, .25), 144.5, .9, -6.5)); } },
+  { id: 'plant', name: 'Plant', price: 8000, pts: 1, d: 'Fresh air', b: g => { g.add(bx(.7, .7, .7, lam(0x8a5a3a, .1), 146.5, .35, 5), new THREE.Mesh(new THREE.SphereGeometry(.8, 10, 8), lam(0x2dbd5a, .3))); g.children[g.children.length - 1].position.set(146.5, 1.4, 5); } },
+  { id: 'lamp', name: 'Floor Lamp', price: 12000, pts: 1, d: 'Warm light', b: g => { g.add(bx(.12, 2.6, .12, lam(0x8b97b8, .1), 134, 1.3, 3), bx(.6, .5, .6, lam(0xffe0a0, 1), 134, 2.7, 3)); } },
+  { id: 'tv', name: 'Big TV', price: 60000, pts: 4, d: 'Watch the charts', b: g => { g.add(bx(4, 2.2, .2, lam(0x050810, .1), 140, 1.9, -7.7), bx(3.7, 1.9, .05, new THREE.MeshBasicMaterial({ color: 0x2ee6ff }), 140, 1.9, -7.55), bx(4.5, .5, .8, lam(0x151c33, .1), 140, .25, -7.4)); } },
+  { id: 'pc', name: 'Gaming PC', price: 90000, pts: 5, d: 'RGB everything', b: g => { g.add(bx(2.6, .15, 1.2, lam(0x151c33, .2), 136, .9, 5.5), bx(1.2, .8, .1, new THREE.MeshBasicMaterial({ color: 0xb8ff3d }), 136, 1.5, 5.2), bx(.5, .8, .8, lam(0xff3d9a, .8), 137.6, .4, 5.5)); } },
+  { id: 'neon', name: 'Neon Sign', price: 50000, pts: 3, d: 'Your name in lights', b: g => { const l = label(S.name.toUpperCase().slice(0, 12), '#ff3d9a', 2.4); l.position.set(140, 3.3, -7.5); g.add(l); } },
+  { id: 'trophy', name: 'Trophy Shelf', price: 120000, pts: 6, d: 'Show off', b: g => { g.add(bx(.4, 2.2, 3, lam(0x151c33, .1), 147.6, 1.1, 0)); for (let i = 0; i < 3; i++) { const c = new THREE.Mesh(new THREE.CylinderGeometry(.2, .12, .5, 8), lam(0xffb12e, .8)); c.position.set(147.5, 1.5, -1 + i); g.add(c); } } },
+];
+const furnG = new THREE.Group(); scene.add(furnG);
+const hasF = id => S.home.items.includes(id);
+function buildFurn() {
+  furnG.clear(); if (!S.home.owned) return;
+  if (!hasF('bed2')) furnG.add(bx(1.8, .4, 3, lam(0x3a4a7a, .25), 134, .4, -5), bx(1.6, .2, .8, lam(0xe9eefc, .3), 134, .7, -6.2));
+  for (const f of FURN) if (hasF(f.id)) f.b(furnG);
+}
+const comfort = () => 1 + S.home.items.reduce((a, id) => a + FURN.find(f => f.id === id).pts, 0);
+const rentLeft = () => S.home.paidUntil - Date.now(), overdue = () => S.home.owned && rentLeft() < 0;
+const mmss = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function homeHtml() {
+  const H = S.home;
+  if (!H.owned) return hdr('My Home', 'home') + `<div class="loc"><div><b>Studio apartment</b><div class="hint">Your own space. Sleep here to recover energy fast, and decorate it. Costs ${fmtN(HOMEP)} GD to buy, plus ${RENT} USDG rent every 10 minutes.</div></div></div><div class="acts"><button class="pri" data-a="buyhome">Buy: ${fmtN(HOMEP)} GD + ${RENT} USDG</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(S.bal)} GD and ${S.usdg} USDG. Get USDG at Wall Street (Wallet app).</p>`;
+  return hdr('My Home', 'home') + `<div class="loc"><div><b>Studio apartment</b><div class="hint">${overdue() ? '<span class="neg">RENT OVERDUE. Your bed is locked until you pay.</span>' : 'Rent paid for ' + mmss(rentLeft())} · Comfort ${comfort()}</div></div></div>
+  <div class="acts"><button class="pri" data-a="gohome">Go home (free)</button><button data-a="payrent" ${S.usdg < RENT || rentLeft() > RENT_MS * 2 ? 'disabled' : ''}>Pay rent ${RENT} USDG</button></div>
+  <small style="display:block;margin-top:10px">Furniture (paid in GD)</small>` + FURN.map(f => `<div class="loc"><div><b>${f.name}</b><div class="hint">${f.d} · +${f.pts} comfort</div></div>${hasF(f.id) ? '<span class="tag">Owned</span>' : `<button data-a="furn" data-v="${f.id}" ${S.bal < f.price ? 'disabled' : ''}>${fmtN(f.price)}</button>`}</div>`).join('');
+}
+function homeAct(a, v) {
+  const H = S.home;
+  if (a === 'buyhome') { if (S.bal < HOMEP || S.usdg < RENT) return banner(`You need ${fmtN(HOMEP)} GD and ${RENT} USDG`, 'bad'); burn(HOMEP); logTx('out', HOMEP, 'Bought Studio'); S.usdg -= RENT; H.owned = true; H.paidUntil = Date.now() + RENT_MS; buildFurn(); banner('You bought a Studio! Tap Go home.', 'good'); post('sys', 'NEWS', `${S.name} bought a Studio apartment.`); }
+  else if (a === 'payrent') { if (S.usdg < RENT) return; S.usdg -= RENT; H.paidUntil = Math.max(H.paidUntil, Date.now()) + RENT_MS; banner('Rent paid', 'good'); }
+  else if (a === 'furn') { const f = FURN.find(x => x.id === v); if (!f || S.bal < f.price || hasF(v)) return; burn(f.price); logTx('out', f.price, 'Furniture: ' + f.name); H.items.push(v); buildFurn(); banner(`${f.name} placed in your home`, 'good'); }
+  else if (a === 'gohome') { if (!H.owned) return; closeModal(); player.position.set(140, 0, 4); vel.x = vel.z = 0; cam.tx = 140; cam.tz = 4; cam.yaw = 0; if (overdue()) banner('Rent is overdue. Pay it in the My Home app.', 'bad'); return true; }
+  save(); updateHud();
+}
+function exitHome() { const l = LOCS[0]; player.position.set(l.sp[0], 0, l.sp[1]); vel.x = vel.z = 0; cam.tx = l.sp[0]; cam.tz = l.sp[1]; banner('Back in the city', 'info'); }
+function sleepGame() {
+  if (!S.home.owned) return; if (overdue()) return banner('Your bed is locked: pay rent in the My Home app', 'bad');
+  openModal(''); const secs = Math.max(3, Math.round(8 - comfort() * .5)); progressModal('Sleeping', pick(SLEEPLINES), secs, () => { S.needs.energy = 100; S.needs.hunger -= 10; clampN(); resultCard(true, 'Fully rested', `Comfort ${comfort()}: slept in ${secs}s`, 'Slept in my Glitch apartment.'); updateHud(); save(); });
+}
+
+/* Gear Forge: mint gear NFTs from shards and USDG */
+function forgeGame() {
+  openModal(''); const r = () => {
+    sheet.innerHTML = `<h2>Gear Forge</h2><p>Gear is an <b>NFT</b>: a one-of-a-kind item with its own number that only you own. Collect <b>Shards</b> from the Vault Cracker, get <b>USDG</b> at Wall Street, then mint.</p><div class="hint">You have <b>${S.shards}</b> shards and <b>${S.usdg}</b> USDG.</div>` +
+      Object.keys(GEARINFO).map(k => { const g = +k, i = GEARINFO[g], own = S.nfts.find(n => n.g === g), ok = S.shards >= i.shd && S.usdg >= i.usdg;
+        return `<div class="loc"><div><b>${GEARS[g]}</b> <span class="tag">${i.rar}</span><div class="hint">${own ? 'Owned: NFT #' + own.id : `${i.shd} shards + ${i.usdg} USDG`}</div></div>${own ? `<button data-e="${g}">${S.look.gear === g ? 'Wearing' : 'Wear'}</button>` : `<button class="pri" data-g="${g}" ${ok ? '' : 'disabled'}>Mint</button>`}</div>`; }).join('') + '<div class="acts"><button id="fx2">Leave</button></div>';
+    sheet.querySelectorAll('[data-g]').forEach(b => b.onclick = () => mint(+b.dataset.g));
+    sheet.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { S.look.gear = +b.dataset.e; buildLook(player, S.look); save(); r(); });
+    $('#fx2').onclick = closeModal; };
+  function mint(g) {
+    const i = GEARINFO[g]; if (S.shards < i.shd || S.usdg < i.usdg) return; S.shards -= i.shd; S.usdg -= i.usdg; const id = 1000 + Math.floor(rnd(0, 9000)); S.nfts.push({ g, id, rar: i.rar }); S.look.gear = g; buildLook(player, S.look); save(); updateHud();
+    post('sys', 'NEWS', `${S.name} minted ${GEARS[g]} (${i.rar}) NFT #${id}.`);
+    const col = { Common: '#8b97b8', Rare: '#2ee6ff', Epic: '#ff3d9a', Legendary: '#ffb12e' }[i.rar];
+    resultCard(true, `NFT #${id}`, `${GEARS[g]} minted. Only you own it.`, `I minted a ${i.rar} ${GEARS[g]} NFT #${id} in Glitch.`, (x, w, h) => { x.fillStyle = '#070910'; x.fillRect(0, 0, w, h); x.strokeStyle = col; x.lineWidth = 6; x.strokeRect(8, 8, w - 16, h - 16); x.textAlign = 'center'; x.fillStyle = col; x.font = '700 28px "Chakra Petch",sans-serif'; x.fillText(i.rar.toUpperCase(), w / 2, 70); x.fillStyle = '#e9eefc'; x.font = '700 72px "Chakra Petch",sans-serif'; x.fillText(GEARS[g], w / 2, 190); x.fillStyle = '#8b97b8'; x.font = '500 26px "JetBrains Mono",monospace'; x.fillText('NFT #' + id + ' · owner ' + S.name, w / 2, 250); x.fillText('GLITCH', w / 2, 320); });
+  } r();
+}
+buildFurn();
+
+/* ---------- HUD, panels, in-world screens ---------- */
+const ADS = [['YOUR AD HERE', '2,000 - 50,000 NGN per slot', '#ff3d9a'], ['MOONBOY ARMY', 'Join the $MOON raid. Not financial advice.', '#b8ff3d'], ['AUDIT SZN', 'Vault Cracker: open locks, get paid', '#2ee6ff']];
+let adI = 0, adT = 0;
+const ago = t => { const s = Math.floor((Date.now() - t) / 1000); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm'; };
+function drawScreens() {
+  exTex.redraw((x, w, h) => {
+    x.fillStyle = '#04070f'; x.fillRect(0, 0, w, h); x.font = '700 22px "JetBrains Mono",monospace'; x.fillStyle = '#2ee6ff'; x.fillText('EXCHANGE', 14, 30);
+    TOK.forEach((t, i) => { const c = chg(t); x.fillStyle = '#e9eefc'; x.fillText(t.sym, 14, 70 + i * 40); x.fillText(px(t.price), 150, 70 + i * 40); x.fillStyle = c >= 0 ? '#b8ff3d' : '#ff3d9a'; x.fillText((c >= 0 ? '+' : '') + (c * 100).toFixed(1) + '%', 370, 70 + i * 40); });
+  });
+  labTex.redraw((x, w, h) => {
+    x.fillStyle = '#05100a'; x.fillRect(0, 0, w, h); x.font = '700 22px "JetBrains Mono",monospace'; x.fillStyle = '#b8ff3d'; x.fillText('BOUNTY BOARD', 14, 30);
+    x.font = '600 20px "JetBrains Mono",monospace';
+    if (!cases.length) { x.fillStyle = '#8b97b8'; x.fillText('No open CIA cases', 14, 80); }
+    cases.slice(0, 4).forEach((c, i) => { x.fillStyle = '#ffb12e'; x.fillText('#' + c.no, 14, 80 + i * 40); x.fillStyle = '#e9eefc'; x.fillText(c.title.slice(0, 26), 90, 80 + i * 40); });
+    x.fillStyle = '#8b97b8'; x.fillText('Reports: ' + S.stats.reports + '  Exploits: ' + S.stats.exploits, 14, h - 16);
+  });
+  towTex.redraw((x, w, h) => {
+    x.fillStyle = '#0c0818'; x.fillRect(0, 0, w, h); x.font = '700 24px "Chakra Petch",sans-serif'; x.fillStyle = '#ff3d9a'; x.fillText('LIVE FEED', 14, 34);
+    x.font = '500 19px "Chakra Petch",sans-serif';
+    feed.slice(0, 8).forEach((p, i) => { x.fillStyle = p.kind === 'bad' ? '#ff3d9a' : p.kind === 'sys' ? '#ffb12e' : '#2ee6ff'; x.fillText(p.who.slice(0, 12), 14, 76 + i * 54); x.fillStyle = '#e9eefc'; x.fillText(p.text.slice(0, 40), 14, 100 + i * 54); });
+  });
+  adT++; if (adT % 12 === 0) adI++;
+  adTex.forEach((a, i) => { const ad = ADS[(adI + i) % ADS.length]; a.redraw((x, w, h) => {
+    x.fillStyle = '#080a16'; x.fillRect(0, 0, w, h); x.strokeStyle = ad[2]; x.lineWidth = 6; x.strokeRect(6, 6, w - 12, h - 12);
+    x.textAlign = 'center'; x.fillStyle = ad[2]; x.font = '700 44px "Chakra Petch",sans-serif'; x.fillText(ad[0], w / 2, 110); x.fillStyle = '#e9eefc'; x.font = '500 22px "Chakra Petch",sans-serif'; x.fillText(ad[1], w / 2, 160); }); });
+}
+function updateHud() {
+  $('#pname').textContent = S.name; $('#bal').textContent = fmtN(S.bal);
+  const r = $('#role'), rn = roleName(); r.textContent = rn; r.style.color = rn === 'Wanted' || rn === 'Hacker' ? 'var(--pink)' : ''; r.style.borderColor = r.style.color;
+  const ret = (S.bal - START) / START, re = $('#ret'); re.textContent = (ret >= 0 ? '+' : '') + (ret * 100).toFixed(1) + '%'; re.className = ret >= 0 ? 'up' : 'dn';
+  $('#rep').textContent = 'Rep ' + S.rep;
+  const en = S.needs.energy, hu = S.needs.hunger; $('#enB').style.width = en + '%'; $('#huB').style.width = hu + '%'; $('#enB').style.background = en < 20 ? 'var(--pink)' : 'var(--amber)'; $('#huB').style.background = hu < 20 ? 'var(--pink)' : 'var(--lime)'; $('#enT').textContent = Math.round(en); $('#huT').textContent = Math.round(hu);
+  const used = Math.min(1, S.payUsed / payCap()); $('#payBar').style.width = used * 100 + '%'; $('#payTxt').textContent = fmt(S.payUsed) + ' / ' + fmt(payCap());
+  $('#mOn').textContent = fmtN(metrics.on); $('#mDist').textContent = fmtN(npcs.length + 1 + metrics.on / 40); $('#mVis').textContent = fmtN(metrics.vis);
+  const m = market.mood;
+  $('#mk').innerHTML = `<div class="tk"><small>Market</small><b class="${m >= 0 ? 'pos' : 'neg'}">${m > .25 ? 'GREED' : m < -.25 ? 'FEAR' : 'CALM'}</b></div><div class="bar"><i style="width:${50 + m * 50}%;background:${m >= 0 ? 'var(--lime)' : 'var(--pink)'}"></i></div>` +
+    TOK.map(t => { const c = chg(t); return `<div class="tk"><b>${t.sym}</b><span>${px(t.price)}</span><span class="${c >= 0 ? 'pos' : 'neg'}">${(c * 100).toFixed(1)}%</span></div>`; }).join('') +
+    `<div class="tk"><small>Regulator heat</small><span>${Math.round(market.heat * 100)}%</span></div>`;
+}
+function renderSide() {
+  const el = $('#side'); if (!sideTab) { el.hidden = true; return; } el.hidden = false;
+  document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === sideTab));
+  if (sideTab === 'feed') el.innerHTML = feed.slice(0, 25).map(p => `<div class="post ${p.kind}"><time>${ago(p.t)}</time><span class="who">${esc(p.who)}</span><div>${esc(p.text)}</div><div class="lk">♥ ${p.likes}</div></div>`).join('') || '<small>Quiet for now</small>';
+  else if (sideTab === 'skills') {
+    const row = (k, d) => { const xp = S.xp[k], l = lvl(xp), a = 40 * (l - 1) ** 2, b = 40 * l * l; return `<div class="sk"><div class="top"><b>${SK[k]} L${l}</b><small>${d}</small></div><div class="meter"><i style="width:${Math.round((xp - a) / (b - a) * 100)}%"></i></div></div>`; };
+    el.innerHTML = `<b>Role: ${roleName()}</b><p style="color:var(--mute);margin:2px 0 6px">Everyone starts as a Newcomer. Your role emerges from what you do.</p>` + row('trade', 'read signals') + row('sec', 'find bugs') + row('comm', 'move attention') +
+      ['Build', 'Capital', 'Creative'].map(n => `<div class="sk lock"><div class="top"><b>${n}</b><small>next update</small></div></div>`).join('') +
+      `<small>Trades ${S.stats.trades} · Bugs ${S.stats.found} · Posts ${S.stats.posts} · Followers ${fmtN(S.followers)}</small>`;
+  } else if (sideTab === 'rank') {
+    const all = board.concat([{ name: S.name + ' (you)', ret: (S.bal - START) / START, me: 1 }]).sort((a, b) => b.ret - a.ret);
+    el.innerHTML = `<b>Top returns</b> <span class="tag demo">NPC rivals</span>` + all.map((b, i) => `<div class="rk ${b.me ? 'me' : ''}"><span>${i + 1}. ${esc(b.name)}</span><span>${(b.ret >= 0 ? '+' : '') + (b.ret * 100).toFixed(0)}%</span></div>`).join('');
+  } else {
+    el.innerHTML = `<b>About this prototype</b><p style="color:var(--mute)">Glitch is a free multiplayer city where web3 history becomes a game. This is a one-player slice: the market, other players and visitor counts are simulated. Your GD is stored in this browser only and can never be cashed out.</p>
+    <b>Economy health</b><div class="rk"><span>Created by skill pay</span><span class="pos">${fmt(S.created)}</span></div><div class="rk"><span>Burned (fees, losses, fines, upkeep)</span><span class="neg">${fmt(S.burned)}</span></div>
+    <p style="color:var(--mute)">Profits are capped daily and every loss is destroyed, so skill cannot print unlimited money.</p><button id="resetBtn">Reset progress</button>`;
+    $('#resetBtn').onclick = () => { try { localStorage.removeItem(SAVE); } catch (e) { } location.reload(); };
+  }
+}
+document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => { sideTab = sideTab === b.dataset.tab ? null : b.dataset.tab; hideCoach(); renderSide(); });
+$('#aboutBtn').onclick = () => { sideTab = sideTab === 'about' ? null : 'about'; renderSide(); };
+setInterval(() => { if (sideTab === 'feed' || sideTab === 'rank' || sideTab === 'skills') renderSide(); }, 2000);
+
+/* ---------- start + main loop ---------- */
+$('#styleBtn').onclick = () => { if (!modalOpen() && !introOpen()) openCustomizer(); };
+$('#startBtn').onclick = () => { S.name = ($('#nameIn').value.trim() || 'Newcomer').slice(0, 14); $('#intro').hidden = true; save(); updateHud(); post('npc', S.name, 'just landed in the city. gm.'); if (!S.styled) { S.styled = 1; openCustomizer(); } };
+$('#nameIn').value = S.name;
+$('#nameIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('#startBtn').click(); });
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  try { worldUpdate(dt); if (!introOpen()) { economyUpdate(dt); phoneUpdate(dt); lifeUpdate(dt); } else { tickT += dt; } renderer.render(scene, camera); } catch (e) { console.error(e); }
+  requestAnimationFrame(frame);
+}
+buildLook(player, S.look); drawScreens(); updateHud();
+requestAnimationFrame(frame);
+window.__g = { forgeGame, dinerGame, openPhone, travel, here, LOCS, openCustomizer, S, TOK, market, feed, cases, player, cam, stations, runEvent, tradeGame, secGame, commGame, closeModal, useStation, EVENTS };
+
+</script>
+</body></html>

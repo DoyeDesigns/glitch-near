@@ -1,0 +1,13 @@
+---
+alwaysApply: true
+---
+Project: Glitch, a 3D web3 city game for the NEAR Hackathon https://nearhackathon.com/ (Track 09, Games With Real Economies).
+Stack: TypeScript everywhere. web/ = Vite + three.js. server/ = Node + Hono. shared/ = pure TS used by both.
+Hard rules:
+1. The browser never decides money. The server computes and validates every game result before minting or burning on NEAR.
+2. Players never see wallets, gas or signing. Only the advertiser page uses a wallet.
+3. All randomness is seeded (mulberry32) so fast-forward is deterministic.
+4. Game rules live in readable files: shared/merchants.rules.ts and shared/events.rules.ts.
+5. Network: NEAR testnet only. Contract addresses and keys come from env vars, never hardcoded.
+6. Keep dependencies minimal. Explain any new dependency in one line.
+Original single-file prototype: legacy/glitch-prototype-v2c.html (reference only, do not delete).

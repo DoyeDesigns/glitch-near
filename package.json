@@ -1,0 +1,12 @@
+{
+  "name": "glitch",
+  "private": true,
+  "workspaces": ["shared", "web", "server"],
+  "scripts": {
+    "test": "npm run test -w @glitch/shared",
+    "dev": "npm run dev -w web",
+    "dev:server": "npm run dev -w @glitch/server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web"
+  }
+}

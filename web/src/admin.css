@@ -1,0 +1,28 @@
+body{margin:0;background:#070910;color:#e9eefc;font:14px/1.45 'Chakra Petch',system-ui,sans-serif}
+main{max-width:960px;margin:0 auto;padding:24px 16px 48px}
+h1{margin:0;color:#2ee6ff;letter-spacing:.04em}
+h2{margin:22px 0 8px;font-size:16px}
+#updated{color:#8b97b8;font:12px 'JetBrains Mono',ui-monospace,monospace;min-height:1.2em}
+form{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:16px 0}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#8b97b8;letter-spacing:.06em;text-transform:uppercase}
+input{font:14px 'JetBrains Mono',ui-monospace,monospace;color:#e9eefc;background:#0e1322;border:1px solid #26324f;border-radius:8px;padding:8px 10px;min-width:240px}
+button{font:600 13px 'Chakra Petch',system-ui,sans-serif;color:#e9eefc;background:#151c33;border:1px solid #26324f;border-radius:8px;padding:8px 12px;cursor:pointer}
+button.pri{background:#2ee6ff;color:#021018;border-color:#2ee6ff}
+#err{color:#ff3d9a}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
+.stats div{background:#0e1322;border:1px solid #26324f;border-radius:10px;padding:10px 12px}
+.stats b{display:block;font:700 18px 'JetBrains Mono',ui-monospace,monospace}
+.stats small{color:#8b97b8}
+.acct{background:#0e1322;border:1px solid #26324f;border-radius:10px;padding:10px 12px;margin:8px 0}
+.acct header{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.acct code{font:12px 'JetBrains Mono',ui-monospace,monospace;word-break:break-all}
+.pill{font:700 11px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;border-radius:99px;padding:2px 8px}
+.pill.ok{color:#0a1400;background:#b8ff3d}
+.pill.low{color:#1a1200;background:#ffb12e}
+.pill.critical{color:#1a0010;background:#ff3d9a}
+.topup{margin-top:8px}
+.topup pre{margin:6px 0;padding:8px;background:#04060c;border:1px solid #26324f;border-radius:8px;font:11px/1.45 'JetBrains Mono',ui-monospace,monospace;white-space:pre-wrap;word-break:break-all}
+table{width:100%;border-collapse:collapse;font:12px 'JetBrains Mono',ui-monospace,monospace}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #26324f;vertical-align:top}
+th{color:#8b97b8;font-weight:500}
+td.err{word-break:break-word}
