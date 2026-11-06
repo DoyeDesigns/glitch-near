@@ -3,15 +3,16 @@ import {
   HOMEP_GD,
   RENT_GD,
   RENT_MS as RENT_PERIOD_MS,
+  POST_COST,
   TRADE_MAX_STAKE,
   TRADE_MIN_STAKE,
   vaultLockStart,
   vaultNeedle,
   type VaultLock,
 } from '@glitch/shared';
-import { $, clamp, esc, fmt, fmtN, pick, randn, rnd } from './util';
-import { addXp, burn, escrow, L, logTx, save, settle, S, weak } from './state';
-import { banner, market, post, px, TOK } from './market';
+import { $, clamp, esc, fmt, fmtN, pick, rnd } from './util';
+import { burn, L, logTx, save, S, weak } from './state';
+import { banner, post, px, TOK } from './market';
 import {
   BOTC,
   buildFurn,
@@ -44,6 +45,7 @@ import {
   openModal,
   resultCard,
   setHudAvailable,
+  setHudSettling,
   setModalTimer,
   sheet,
   updateHud,
@@ -141,6 +143,7 @@ type ServerBet = {
 type TradeState = {
   bet: ServerBet | null;
   available: string;
+  settling?: string;
   xp: { trade: number; sec: number; comm: number };
   payUsed: number;
   error?: string;
@@ -178,6 +181,7 @@ export function tradeGame() {
     const today = new Date().toISOString().slice(0, 10);
     funds = Number(state.available);
     setHudAvailable(funds);
+    setHudSettling(Number(state.settling) || 0);
     S.xp.trade = state.xp.trade;
     if (S.payDay !== today) {
       S.payDay = today;
@@ -396,6 +400,7 @@ type VaultFinish = {
   shardsMinted: number;
   shardBalance: string | null;
   available: string;
+  settling?: string;
   xp: { trade: number; sec: number; comm: number };
   payUsed: number;
   error?: string;
@@ -438,6 +443,7 @@ export function secGame() {
     const before = L('sec');
     const today = new Date().toISOString().slice(0, 10);
     setHudAvailable(Number(state.available));
+    setHudSettling(Number(state.settling) || 0);
     S.xp.sec = state.xp.sec;
     if (S.payDay !== today) {
       S.payDay = today;
@@ -635,17 +641,37 @@ export function openCustomizer() {
   render();
 }
 
+type PostTake = 'hype' | 'warn' | 'meme';
+
+type PostResult = {
+  sym: string;
+  take: PostTake;
+  reach: number;
+  viral: boolean;
+  followers: number;
+  followerTotal: number;
+  pnl: string;
+  credited: string;
+  capped: boolean;
+  available: string;
+  settling?: string;
+  xp: { trade: number; sec: number; comm: number };
+  payUsed: number;
+  error?: string;
+};
+
 export function commGame() {
   let tk = TOK[3]!,
-    take: string | null = null;
-  const cost = 10000;
+    take: PostTake | null = null,
+    funds = hudAvailable ?? S.bal,
+    busy = false;
   function render() {
     sheet.dataset.lock = '';
-    sheet.innerHTML = `<h2>Attention Booth</h2><p>Boost a post for ${fmt(cost)} GD. Read the mood: hype works in greed, warnings work in fear, memes work any time (a bit less).</p>
+    sheet.innerHTML = `<h2>Attention Booth</h2><p>Boost a post for ${fmt(POST_COST)} GD. Read the mood: hype works in greed, warnings work in fear, memes work any time (a bit less).</p>
     <div class="chips">${TOK.map(t => `<button data-t="${t.sym}" class="${t === tk ? 'on' : ''}">${t.sym}</button>`).join('')}</div>
-    <div class="chips">${[['hype', `${tk.sym} to the moon`], ['warn', `careful: ${tk.sym} looks like a rug`], ['meme', `me explaining ${tk.sym} to my landlord`]].map(([k, l]) => `<button data-k="${k}" class="${take === k ? 'on' : ''}">${esc(l!)}</button>`).join('')}</div>
+    <div class="chips">${([['hype', `${tk.sym} to the moon`], ['warn', `careful: ${tk.sym} looks like a rug`], ['meme', `me explaining ${tk.sym} to my landlord`]] as const).map(([k, l]) => `<button data-k="${k}" class="${take === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
     <small>Followers ${fmtN(S.followers)} · Community level ${L('comm')}</small>
-    <div class="acts"><button class="pri" id="pst" ${take && S.bal >= cost ? '' : 'disabled'}>Post</button><button id="px">Cancel</button></div>`;
+    <div class="acts"><button class="pri" id="pst" ${take && funds >= POST_COST && !busy ? '' : 'disabled'}>Post</button><button id="px">Cancel</button></div>`;
     sheet.querySelectorAll('[data-t]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         tk = TOK.find(t => t.sym === (b as HTMLElement).dataset.t)!;
@@ -654,49 +680,68 @@ export function commGame() {
     });
     sheet.querySelectorAll('[data-k]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
-        take = (b as HTMLElement).dataset.k!;
+        take = (b as HTMLElement).dataset.k as PostTake;
         render();
       };
     });
     ($('#px') as HTMLButtonElement).onclick = closeModal;
-    ($('#pst') as HTMLButtonElement).onclick = send;
+    ($('#pst') as HTMLButtonElement).onclick = () => void send();
   }
-  function send() {
-    burn(cost * 0.5);
-    escrow(cost * 0.5);
-    const m = market.mood,
-      h = market.heat;
-    const fit = take === 'hype' ? clamp(0.5 + m * 0.5 - h, 0, 1) : take === 'warn' ? clamp(0.3 + h * 2 - m * 0.3, 0, 1) : 0.45;
-    const luck = Math.exp(randn() * 0.6),
-      reach = fit * luck * (1 + 0.1 * (L('comm') - 1)) + 0.25;
-    const pay = cost * 0.5 * (0.5 + reach * 1.6);
-    const r = settle(cost * 0.5, pay - cost * 0.5);
-    const fol = Math.floor(reach * 40 * (1 + L('comm') * .1));
-    S.followers += fol;
-    S.stats.posts++;
-    addXp('comm', 14);
-    S.rep += reach > 1.2 ? 1 : 0;
-    if (take === 'hype') {
-      tk.hype = clamp(tk.hype + .06 * reach, 0, 1);
-      tk.flow += .15 * reach;
-    } else if (take === 'warn') {
-      tk.trust = clamp(tk.trust - .05 * reach, 0, 1);
-      tk.flow -= .1 * reach;
+  function applyAccount(state: PostResult) {
+    const before = L('comm');
+    const today = new Date().toISOString().slice(0, 10);
+    funds = Number(state.available);
+    setHudAvailable(funds);
+    setHudSettling(Number(state.settling) || 0);
+    S.xp.comm = state.xp.comm;
+    S.followers = state.followerTotal;
+    if (S.payDay !== today) {
+      S.payDay = today;
+      S.payUsed = 0;
     }
-    const txt =
-      take === 'hype' ? `${tk.sym} to the moon` : take === 'warn' ? `careful: ${tk.sym} looks like a rug` : `me explaining ${tk.sym} to my landlord`;
-    post('npc', S.name, txt);
-    crowdTo('comm', 12);
-    const viral = reach > 1.5;
-    if (viral) post('sys', 'TRENDING', `${S.name}'s ${tk.sym} post is going viral.`);
-    resultCard(
-      r.credited >= 0,
-      (r.credited >= 0 ? '+' : '') + fmt(r.credited) + ' GD',
-      `${viral ? 'VIRAL. ' : ''}+${fol} followers`,
-      `My ${tk.sym} take in Glitch ${viral ? 'went viral' : 'got ' + fol + ' new followers'}.`,
-    );
+    S.payUsed = Math.max(S.payUsed, state.payUsed);
+    if (L('comm') > before) banner(`Community skill up: level ${L('comm')}`, 'good');
     save();
     updateHud();
+  }
+  async function send() {
+    if (busy || !take || funds < POST_COST) return;
+    busy = true;
+    render();
+    const chosen = take;
+    const sym = tk.sym;
+    try {
+      const res = await fetch('/post', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sym, take: chosen }),
+      });
+      const state = (await res.json()) as PostResult;
+      if (!res.ok) throw new Error(state.error || 'Could not post');
+      applyAccount(state);
+      S.stats.posts++;
+      if (state.reach > 1.2) S.rep++;
+      const txt =
+        chosen === 'hype' ? `${sym} to the moon` : chosen === 'warn' ? `careful: ${sym} looks like a rug` : `me explaining ${sym} to my landlord`;
+      post('npc', S.name, txt);
+      crowdTo('comm', 12);
+      if (state.viral) post('sys', 'TRENDING', `${S.name}'s ${sym} post is going viral.`);
+      const pnl = Number(state.pnl);
+      const credited = Number(state.credited);
+      const shown = pnl >= 0 ? credited : pnl;
+      resultCard(
+        shown >= 0,
+        (shown >= 0 ? '+' : '') + fmt(shown) + ' GD',
+        `${state.viral ? 'VIRAL. ' : ''}+${state.followers} followers${state.capped ? ' (daily skill pay cap hit)' : ''}`,
+        `My ${sym} take in Glitch ${state.viral ? 'went viral' : 'got ' + state.followers + ' new followers'}.`,
+      );
+      save();
+    } catch (err) {
+      busy = false;
+      banner(err instanceof Error ? err.message : 'Could not post', 'bad');
+      render();
+    }
   }
   openModal('');
   render();

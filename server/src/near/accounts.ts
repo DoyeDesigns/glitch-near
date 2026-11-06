@@ -12,7 +12,7 @@ import { decryptPrivateKey, encryptPrivateKey } from './keys';
 import { ChainWriteError, recordChainFailure } from './retry';
 
 const PLAYER_COLS =
-  'id, name, account_id, enc_private_key, status, gd_minted, xp_json, needs_json, pin_hash, pin_salt, pay_day, pay_used';
+  'id, name, account_id, enc_private_key, status, gd_minted, xp_json, needs_json, pin_hash, pin_salt, pay_day, pay_used, followers';
 
 /** 2–20 chars; lowercase letters/digits/-/_; must start and end with letter or digit. */
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,18}[a-z0-9]$/;
@@ -141,6 +141,7 @@ export type PlayerRow = {
   pin_salt: string | null;
   pay_day: string;
   pay_used: number;
+  followers: number;
 };
 
 export function getPlayerById(id: string): PlayerRow | undefined {

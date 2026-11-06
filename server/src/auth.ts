@@ -52,9 +52,19 @@ export type MePayload = {
   name: string;
   accountId: string;
   available: string;
+  settling: string;
   items: Record<string, string>;
   xp: XpState;
   needs: NeedsState;
+};
+
+export type BalanceParts = {
+  chain: bigint;
+  pending: bigint;
+  escrowed: bigint;
+  settling: bigint;
+  spendable: bigint;
+  available: bigint;
 };
 
 function sha256(s: string): string {
@@ -74,6 +84,39 @@ function sumAmounts(table: 'pending_burns' | 'escrow', playerId: string): bigint
     }
   }
   return n;
+}
+
+/** Credited GD on settled rows whose mint flag is still off. */
+function settlingGd(playerId: string): bigint {
+  const rows = db
+    .prepare(
+      `SELECT credited AS amount FROM trades WHERE player_id = ? AND status = 'settled' AND minted = 0
+       UNION ALL
+       SELECT credited AS amount FROM vaults WHERE player_id = ? AND status = 'settled' AND gd_minted = 0
+       UNION ALL
+       SELECT credited AS amount FROM posts WHERE player_id = ? AND minted = 0`,
+    )
+    .all(playerId, playerId, playerId) as { amount: string | null }[];
+  let n = 0n;
+  for (const row of rows) {
+    if (!row.amount) continue;
+    try {
+      const value = BigInt(row.amount);
+      if (value > 0n) n += value;
+    } catch {
+      /* skip corrupt rows */
+    }
+  }
+  return n;
+}
+
+/** Pending burns, escrow, and unminted credits. Safe to call inside a SQLite transaction. */
+export function ledgerTotals(playerId: string): { pending: bigint; escrowed: bigint; settling: bigint } {
+  return {
+    pending: sumAmounts('pending_burns', playerId),
+    escrowed: sumAmounts('escrow', playerId),
+    settling: settlingGd(playerId),
+  };
 }
 
 function parseXp(raw: string): XpState {
@@ -314,24 +357,58 @@ export async function loginPlayer(opts: {
   return { token: issueSession(fresh.id), player: fresh };
 }
 
-/** available = max(0, chainBalance − pendingBurns − escrowed). Chain balance is cached 5s. */
-export async function availableGd(player: PlayerRow): Promise<bigint> {
+/**
+ * available = chain − pending burns − escrow + settling.
+ * spendable = chain − pending burns − escrow.
+ * Chain balance is cached 5s. settling is credited GD that is not minted yet.
+ */
+export async function balanceParts(player: PlayerRow): Promise<BalanceParts> {
   if (!player.account_id) throw new AuthError('Player has no account', 503);
   const chain = BigInt(await getGDBalanceCached(player.account_id));
-  const pending = sumAmounts('pending_burns', player.id);
-  const escrowed = sumAmounts('escrow', player.id);
-  const available = chain - pending - escrowed;
-  return available < 0n ? 0n : available;
+  const { pending, escrowed, settling } = ledgerTotals(player.id);
+  const rawSpend = chain - pending - escrowed;
+  const spendable = rawSpend < 0n ? 0n : rawSpend;
+  const rawAvail = rawSpend + settling;
+  const available = rawAvail < 0n ? 0n : rawAvail;
+  return { chain, pending, escrowed, settling, spendable, available };
 }
 
-/** available = max(0, chainBalance − pendingBurns − escrowed). Chain balance is cached 5s. */
+/** HUD and stake checks. Includes unminted credits so the number does not drop when a mint lands. */
+export async function availableGd(player: PlayerRow): Promise<bigint> {
+  return (await balanceParts(player)).available;
+}
+
+/** On-chain spends. Unminted credits are not included. */
+export async function spendableGd(player: PlayerRow): Promise<bigint> {
+  return (await balanceParts(player)).spendable;
+}
+
+export async function fundsView(player: PlayerRow): Promise<{ available: string; settling: string }> {
+  const parts = await balanceParts(player);
+  return { available: parts.available.toString(), settling: parts.settling.toString() };
+}
+
+/**
+ * On-chain purchase or rent. Refuses when only unminted credits would cover the cost.
+ */
+export async function assertCanSpend(player: PlayerRow, amount: bigint): Promise<void> {
+  const parts = await balanceParts(player);
+  if ((await spendableGd(player)) >= amount) return;
+  if (parts.spendable + parts.settling >= amount) {
+    throw new AuthError('Winnings are still landing on chain. Wait and try again.', 400);
+  }
+  throw new AuthError('Not enough GD', 400);
+}
+
+/** available includes settling. Chain balance is cached 5s. */
 export async function meForPlayer(player: PlayerRow): Promise<MePayload> {
   if (!player.account_id) throw new AuthError('Player has no account', 503);
-  const [available, items] = await Promise.all([availableGd(player), getItemBalances(player.account_id)]);
+  const [parts, items] = await Promise.all([balanceParts(player), getItemBalances(player.account_id)]);
   return {
     name: player.name,
     accountId: player.account_id,
-    available: available.toString(),
+    available: parts.available.toString(),
+    settling: parts.settling.toString(),
     items,
     xp: parseXp(player.xp_json),
     needs: parseNeeds(player.needs_json),

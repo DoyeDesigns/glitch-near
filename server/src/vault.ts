@@ -2,7 +2,10 @@ import { randomBytes } from 'node:crypto';
 import {
   faucetCredit,
   payCapFor,
+  VAULT_MAX_AGE_MS,
+  VAULT_MAX_SKEW_MS,
   VAULT_PAUSE_MS,
+  VAULT_START_GAP_MS,
   VAULT_TOLERANCE_MS,
   vaultGross,
   vaultHit,
@@ -13,12 +16,14 @@ import {
   type SkillXp,
   type VaultLock,
 } from '@glitch/shared';
-import { AuthError, availableGd } from './auth';
+import { AuthError, fundsView } from './auth';
+import { config } from './config';
 import { randomId } from './crypto';
 import { db } from './db';
 import { getPlayerById, type PlayerRow } from './near';
-import { mintGD } from './near/gd';
-import { createToken, getItemBalances, getToken, mintItem } from './near/items';
+import { invalidateGdCache, readGdBalanceForLog } from './near/gd';
+import { createToken, getItemBalances, getToken } from './near/items';
+import { resumeOrSend } from './near/mintTx';
 
 const minting = new Set<string>();
 let retryTimer: ReturnType<typeof setInterval> | null = null;
@@ -39,6 +44,14 @@ type VaultRow = {
   gd_minted: number;
   shards_minted: number;
   status: string;
+  chain_before: string | null;
+  mint_tx_hash: string | null;
+  mint_tx_at: number | null;
+  mint_attempts: number;
+  shards_before: string | null;
+  shard_tx_hash: string | null;
+  shard_tx_at: number | null;
+  shard_attempts: number;
 };
 
 export type VaultStart = {
@@ -59,6 +72,7 @@ export type VaultFinish = {
   shardsMinted: number;
   shardBalance: string | null;
   available: string;
+  settling: string;
   xp: SkillXp;
   payUsed: number;
 };
@@ -129,23 +143,31 @@ function openVault(playerId: string): VaultRow | undefined {
     .get(playerId) as VaultRow | undefined;
 }
 
-async function accountView(player: PlayerRow): Promise<{ available: string; xp: SkillXp; payUsed: number }> {
+async function accountView(player: PlayerRow): Promise<{ available: string; settling: string; xp: SkillXp; payUsed: number }> {
   const fresh = getPlayerById(player.id) ?? player;
   const today = dayKey();
+  const funds = await fundsView(fresh);
   return {
-    available: (await availableGd(fresh)).toString(),
+    available: funds.available,
+    settling: funds.settling,
     xp: parseXp(fresh.xp_json),
     payUsed: fresh.pay_day === today ? fresh.pay_used : 0,
   };
 }
 
 async function shardBalanceOf(accountId: string): Promise<string | null> {
+  if (process.env.VITEST) return null;
   try {
     const items = await getItemBalances(accountId);
     return items.shard ?? '0';
   } catch {
     return null;
   }
+}
+
+async function shardsBefore(accountId: string | null): Promise<string | null> {
+  if (!accountId || process.env.VITEST) return null;
+  return shardBalanceOf(accountId);
 }
 
 async function viewOf(player: PlayerRow, row: VaultRow, hit: boolean): Promise<VaultFinish> {
@@ -173,12 +195,18 @@ export async function startVault(player: PlayerRow): Promise<VaultStart> {
       .prepare(`SELECT id FROM vaults WHERE player_id = ? AND status = 'open'`)
       .get(player.id) as { id: string } | undefined;
     if (open) throw new AuthError('A vault is already open', 409);
+    const last = db
+      .prepare(`SELECT started_at FROM vaults WHERE player_id = ? ORDER BY started_at DESC LIMIT 1`)
+      .get(player.id) as { started_at: number } | undefined;
+    if (last && startedAt - last.started_at < VAULT_START_GAP_MS) {
+      throw new AuthError('Wait before the next vault', 429);
+    }
     db.prepare(
       `INSERT INTO vaults (id, player_id, seed, started_at, status) VALUES (?, ?, ?, ?, 'open')`,
     ).run(id, player.id, seed, startedAt);
   });
   try {
-    insert();
+    insert.immediate();
   } catch (err) {
     if (err instanceof AuthError) throw err;
     const message = err instanceof Error ? err.message : '';
@@ -216,7 +244,7 @@ export async function finishVault(player: PlayerRow, stops: number[]): Promise<V
   const index = stops.length - 1;
   const stop = stops[index]!;
   const serverElapsed = Date.now() - row.started_at;
-  if (Math.abs(serverElapsed - stop) > VAULT_TOLERANCE_MS) {
+  if (stop > serverElapsed + VAULT_MAX_SKEW_MS || stop < serverElapsed - VAULT_MAX_AGE_MS) {
     throw new AuthError('The server clock missed that stop. Try again.', 400);
   }
   const lockStart = vaultLockStart(stops, index);
@@ -225,6 +253,8 @@ export async function finishVault(player: PlayerRow, stops: number[]): Promise<V
   const hit = scoreStop(row.seed, stops, index);
   const hits = hitCount(row.seed, stops);
   const done = stops.length === 3;
+  const chainBefore = done ? await readGdBalanceForLog(player.account_id) : null;
+  const shardBefore = done ? await shardsBefore(player.account_id) : null;
 
   const saved = db.transaction(() => {
     const fresh = db.prepare(`SELECT * FROM vaults WHERE id = ?`).get(row.id) as VaultRow | undefined;
@@ -236,18 +266,24 @@ export async function finishVault(player: PlayerRow, stops: number[]): Promise<V
       return db.prepare(`SELECT * FROM vaults WHERE id = ?`).get(row.id) as VaultRow;
     }
 
+    const progress = db
+      .prepare(`SELECT xp_json, needs_json, pay_day, pay_used FROM players WHERE id = ?`)
+      .get(player.id) as
+      | { xp_json: string; needs_json: string; pay_day: string; pay_used: number }
+      | undefined;
+    if (!progress) return null;
     const now = Date.now();
     const today = dayKey(now);
-    const xp = parseXp(player.xp_json);
+    const xp = parseXp(progress.xp_json);
     xp.sec += vaultXp(hits);
-    const payUsed0 = player.pay_day === today ? player.pay_used : 0;
+    const payUsed0 = progress.pay_day === today ? progress.pay_used : 0;
     const gross = vaultGross(hits);
     const shards = vaultShards(hits);
     let credited = 0;
     let capped = false;
     let payUsed = payUsed0;
     if (gross > 0) {
-      const next = faucetCredit(gross, isWeak(player.needs_json), payCapFor(xp), payUsed0);
+      const next = faucetCredit(gross, isWeak(progress.needs_json), payCapFor(xp), payUsed0);
       credited = next.credited;
       capped = next.capped;
       payUsed = next.payUsed;
@@ -259,7 +295,7 @@ export async function finishVault(player: PlayerRow, stops: number[]): Promise<V
       player.id,
     );
     db.prepare(
-      `UPDATE vaults SET ${column} = ?, hits = ?, gross = ?, credited = ?, capped = ?, shards = ?, gd_minted = ?, shards_minted = ?, status = 'settled' WHERE id = ?`,
+      `UPDATE vaults SET ${column} = ?, hits = ?, gross = ?, credited = ?, capped = ?, shards = ?, gd_minted = ?, shards_minted = ?, status = 'settled', chain_before = ?, shards_before = ? WHERE id = ?`,
     ).run(
       stop,
       hits,
@@ -269,22 +305,29 @@ export async function finishVault(player: PlayerRow, stops: number[]): Promise<V
       shards,
       credited > 0 ? 0 : 1,
       shards > 0 ? 0 : 1,
+      chainBefore,
+      shardBefore,
       row.id,
     );
     return db.prepare(`SELECT * FROM vaults WHERE id = ?`).get(row.id) as VaultRow;
   });
 
-  const next = saved();
+  const next = saved.immediate();
   if (!next) throw new AuthError('That vault is already finished', 409);
   if (next.status === 'settled') await mintVault(next);
   const paid = db.prepare(`SELECT * FROM vaults WHERE id = ?`).get(row.id) as VaultRow;
   return viewOf(player, paid, hit);
 }
 
-async function ensureShardToken(): Promise<void> {
-  const existing = await getToken('shard');
-  if (existing) return;
-  await createToken('shard', 'shard', 'Shard', null);
+/** Boot check. A vault finish does not call getToken or createToken. */
+export async function ensureShardToken(): Promise<void> {
+  try {
+    const existing = await getToken('shard');
+    if (existing) return;
+    await createToken('shard', 'shard', 'Shard', null);
+  } catch {
+    console.error('[vault] shard token is missing');
+  }
 }
 
 async function mintVault(row: VaultRow): Promise<void> {
@@ -297,27 +340,71 @@ async function mintVault(row: VaultRow): Promise<void> {
     if (!fresh || fresh.status !== 'settled') return;
     const player = getPlayerById(fresh.player_id);
     if (!player?.account_id) return;
+    const accountId = player.account_id;
     if (fresh.gd_minted !== 1) {
       const credited = BigInt(fresh.credited ?? '0');
       if (credited <= 0n) {
         db.prepare(`UPDATE vaults SET gd_minted = 1 WHERE id = ?`).run(fresh.id);
       } else {
         try {
-          await mintGD(player.account_id, credited);
-          db.prepare(`UPDATE vaults SET gd_minted = 1 WHERE id = ? AND gd_minted = 0`).run(fresh.id);
+          await resumeOrSend(
+            {
+              flag: fresh.gd_minted,
+              hash: fresh.mint_tx_hash,
+              txAt: fresh.mint_tx_at,
+              attempts: fresh.mint_attempts ?? 0,
+            },
+            {
+              mark: () => {
+                db.prepare(`UPDATE vaults SET gd_minted = 1 WHERE id = ? AND gd_minted = 0`).run(fresh.id);
+                invalidateGdCache(accountId);
+              },
+              persist: (hash, at, attempts) => {
+                db.prepare(
+                  `UPDATE vaults SET mint_tx_hash = ?, mint_tx_at = ?, mint_attempts = ? WHERE id = ?`,
+                ).run(hash, at, attempts, fresh.id);
+              },
+              call: {
+                contractId: config.gdContract,
+                methodName: 'mint',
+                args: { account_id: accountId, amount: String(credited) },
+              },
+            },
+          );
         } catch {
           console.error('[vault] gd mint failed');
         }
       }
     }
-    if (fresh.shards_minted !== 1) {
-      if (fresh.shards <= 0) {
+    const afterGd = db.prepare(`SELECT * FROM vaults WHERE id = ?`).get(fresh.id) as VaultRow;
+    if (afterGd.shards_minted !== 1) {
+      if (afterGd.shards <= 0) {
         db.prepare(`UPDATE vaults SET shards_minted = 1 WHERE id = ?`).run(fresh.id);
       } else {
         try {
-          await ensureShardToken();
-          await mintItem(player.account_id, 'shard', fresh.shards);
-          db.prepare(`UPDATE vaults SET shards_minted = 1 WHERE id = ? AND shards_minted = 0`).run(fresh.id);
+          await resumeOrSend(
+            {
+              flag: afterGd.shards_minted,
+              hash: afterGd.shard_tx_hash,
+              txAt: afterGd.shard_tx_at,
+              attempts: afterGd.shard_attempts ?? 0,
+            },
+            {
+              mark: () => {
+                db.prepare(`UPDATE vaults SET shards_minted = 1 WHERE id = ? AND shards_minted = 0`).run(fresh.id);
+              },
+              persist: (hash, at, attempts) => {
+                db.prepare(
+                  `UPDATE vaults SET shard_tx_hash = ?, shard_tx_at = ?, shard_attempts = ? WHERE id = ?`,
+                ).run(hash, at, attempts, fresh.id);
+              },
+              call: {
+                contractId: config.itemsContract,
+                methodName: 'mint',
+                args: { account_id: accountId, token_id: 'shard', amount: String(afterGd.shards) },
+              },
+            },
+          );
         } catch {
           console.error('[vault] shard mint failed');
         }
@@ -335,7 +422,14 @@ async function retryPendingMints(): Promise<void> {
   for (const row of due) await mintVault(row);
 }
 
-export function resumeVaults(): void {
-  if (!retryTimer) retryTimer = setInterval(() => void retryPendingMints(), 20_000);
-  void retryPendingMints();
+/**
+ * Stored mint_tx_hash and shard_tx_hash are looked up for the treasury signer.
+ * Success only sets that flag. Failure may sign one fresh transaction.
+ * Unknown waits 3 minutes, then signs a fresh transaction.
+ * Signed bytes are not stored, so a sent transaction is never broadcast again.
+ * chain_before and shards_before are diagnostic only.
+ */
+export function resumeVaults(): Promise<void> {
+  if (!retryTimer && !process.env.VITEST) retryTimer = setInterval(() => void retryPendingMints(), 20_000);
+  return retryPendingMints();
 }

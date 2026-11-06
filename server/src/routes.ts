@@ -7,6 +7,7 @@ import { AuthError, SESSION_COOKIE, SESSION_MAX_AGE_S, chainProofFor, loginPlaye
 import { config } from './config';
 import { getHealth, getStreamPayload } from './sim';
 import { openTrade, parseTradeDir, parseTradeStake, tradeSnapshot } from './trade';
+import { parsePostTake, publishPost } from './post';
 import { cancelVault, finishVault, parseVaultStops, startVault } from './vault';
 
 function clientIp(headers: Headers): string {
@@ -171,6 +172,26 @@ export function createApp() {
       if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
       console.error('[vault] cancel failed');
       return c.json({ error: 'Could not leave the vault' }, 502);
+    }
+  });
+
+  app.post('/post', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { sym?: unknown; take?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    const take = parsePostTake(body.take);
+    if (typeof body.sym !== 'string' || !take) return c.json({ error: 'Bad post' }, 400);
+    try {
+      return c.json(await publishPost(player, { sym: body.sym, take }));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[post] publish failed');
+      return c.json({ error: 'Could not post' }, 502);
     }
   });
 

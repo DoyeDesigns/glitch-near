@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": ["shared", "web", "server"],
   "scripts": {
-    "test": "npm run test -w @glitch/shared",
+    "test": "npm run test -w @glitch/shared && npm run test -w @glitch/server",
     "dev": "npm run dev -w web",
     "dev:server": "npm run dev -w @glitch/server",
     "dev:web": "npm run dev -w web",

@@ -13,9 +13,9 @@ describe('trade pnl', () => {
     expect(tradePnl(5000, -1, 10, 1000)).toBe(-5000);
   });
 
-  it('takes a 1% fee rounded down', () => {
+  it('takes a 1% fee to the nearest GD', () => {
     expect(tradeFee(1000)).toBe(10);
-    expect(tradeFee(1999)).toBe(19);
+    expect(tradeFee(1999)).toBe(20);
   });
 
   it('applies the daily cap and the weak cut before minting', () => {

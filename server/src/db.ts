@@ -80,6 +80,14 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS merchants (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL UNIQUE,
+    enc_private_key TEXT NOT NULL,
+    floated INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS signup_log (
     id TEXT PRIMARY KEY,
     ip TEXT NOT NULL,
@@ -129,6 +137,20 @@ db.exec(`
     shards_minted INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'open'
   );
+
+  CREATE TABLE IF NOT EXISTS posts (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL REFERENCES players(id),
+    sym TEXT NOT NULL,
+    take TEXT NOT NULL,
+    reach TEXT NOT NULL,
+    followers INTEGER NOT NULL,
+    pnl TEXT NOT NULL,
+    credited TEXT NOT NULL,
+    capped INTEGER NOT NULL DEFAULT 0,
+    minted INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 function columnNames(table: string): Set<string> {
@@ -159,6 +181,7 @@ function migrate(): void {
   if (!cols.has('pin_salt')) db.exec(`ALTER TABLE players ADD COLUMN pin_salt TEXT`);
   if (!cols.has('pay_day')) db.exec(`ALTER TABLE players ADD COLUMN pay_day TEXT NOT NULL DEFAULT ''`);
   if (!cols.has('pay_used')) db.exec(`ALTER TABLE players ADD COLUMN pay_used REAL NOT NULL DEFAULT 0`);
+  if (!cols.has('followers')) db.exec(`ALTER TABLE players ADD COLUMN followers INTEGER NOT NULL DEFAULT 0`);
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_name ON players(name);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_account_id ON players(account_id)
@@ -201,7 +224,46 @@ function migrate(): void {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_vaults_one_open ON vaults(player_id)
       WHERE status = 'open';
+    CREATE TABLE IF NOT EXISTS posts (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      sym TEXT NOT NULL,
+      take TEXT NOT NULL,
+      reach TEXT NOT NULL,
+      followers INTEGER NOT NULL,
+      pnl TEXT NOT NULL,
+      credited TEXT NOT NULL,
+      capped INTEGER NOT NULL DEFAULT 0,
+      minted INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
   `);
+  addMintColumns();
+}
+
+function addColumn(table: string, name: string, ddl: string): void {
+  if (!columnNames(table).has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+/** Tx hashes for mint resume. chain_before is diagnostic only. */
+function addMintColumns(): void {
+  for (const table of ['trades', 'posts'] as const) {
+    addColumn(table, 'chain_before', 'chain_before TEXT');
+    addColumn(table, 'mint_tx_hash', 'mint_tx_hash TEXT');
+    addColumn(table, 'mint_tx_at', 'mint_tx_at INTEGER');
+    addColumn(table, 'mint_attempts', 'mint_attempts INTEGER NOT NULL DEFAULT 0');
+  }
+  addColumn('vaults', 'chain_before', 'chain_before TEXT');
+  addColumn('vaults', 'mint_tx_hash', 'mint_tx_hash TEXT');
+  addColumn('vaults', 'mint_tx_at', 'mint_tx_at INTEGER');
+  addColumn('vaults', 'mint_attempts', 'mint_attempts INTEGER NOT NULL DEFAULT 0');
+  addColumn('vaults', 'shards_before', 'shards_before TEXT');
+  addColumn('vaults', 'shard_tx_hash', 'shard_tx_hash TEXT');
+  addColumn('vaults', 'shard_tx_at', 'shard_tx_at INTEGER');
+  addColumn('vaults', 'shard_attempts', 'shard_attempts INTEGER NOT NULL DEFAULT 0');
+  addColumn('outbox', 'tx_hash', 'tx_hash TEXT');
+  addColumn('outbox', 'tx_at', 'tx_at INTEGER');
+  addColumn('outbox', 'attempts', 'attempts INTEGER NOT NULL DEFAULT 0');
 }
 
 migrate();

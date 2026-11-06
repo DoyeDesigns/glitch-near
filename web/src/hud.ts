@@ -10,6 +10,12 @@ export const setHudAvailable = (n: number | null) => {
   hudAvailable = n;
 };
 
+/** Unminted credits included in `available`. Hidden when zero. */
+export let hudSettling = 0;
+export const setHudSettling = (n: number) => {
+  hudSettling = Number.isFinite(n) ? Math.max(0, n) : 0;
+};
+
 let mePoll: ReturnType<typeof setInterval> | 0 = 0;
 export function startMePoll() {
   if (mePoll) return;
@@ -17,6 +23,7 @@ export function startMePoll() {
     refreshMe()
       .then(m => {
         hudAvailable = Number(m.available);
+        hudSettling = Number(m.settling) || 0;
         updateHud();
       })
       .catch(() => {});
@@ -190,6 +197,14 @@ export function drawScreens() {
 export function updateHud() {
   ($('#pname') as HTMLElement).textContent = S.name;
   ($('#bal') as HTMLElement).textContent = fmtN(hudAvailable ?? S.bal);
+  const settling = $('#settling') as HTMLElement;
+  if (hudSettling > 0) {
+    settling.hidden = false;
+    settling.textContent = `settling ${fmtN(hudSettling)}`;
+  } else {
+    settling.hidden = true;
+    settling.textContent = '';
+  }
   const r = $('#role') as HTMLElement,
     rn = roleName();
   r.textContent = rn;

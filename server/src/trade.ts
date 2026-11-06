@@ -5,14 +5,17 @@ import {
   TRADE_MIN_STAKE,
   TRADE_OPENS_PER_MIN,
   TRADE_SECS,
+  applyFlow,
   tradeFee,
   tradePnl,
 } from '@glitch/shared';
-import { AuthError, availableGd } from './auth';
+import { AuthError, fundsView, ledgerTotals } from './auth';
+import { config } from './config';
 import { randomId } from './crypto';
 import { db } from './db';
 import { getPlayerById, type PlayerRow } from './near';
-import { mintGD } from './near/gd';
+import { getGDBalanceCached, invalidateGdCache, readGdBalanceForLog } from './near/gd';
+import { resumeOrSend } from './near/mintTx';
 import { world } from './sim';
 
 const MINUTE_MS = 60_000;
@@ -37,6 +40,10 @@ type TradeRow = {
   credited: string | null;
   capped: number;
   minted: number;
+  chain_before: string | null;
+  mint_tx_hash: string | null;
+  mint_tx_at: number | null;
+  mint_attempts: number;
 };
 
 export type TradeView = {
@@ -86,10 +93,10 @@ function tokenPrice(sym: string): number | null {
   return token && token.price > 0 ? token.price : null;
 }
 
-function applyFlow(sym: string, dir: 1 | -1, stake: number): void {
+function nudgeCoin(sym: string, dir: 1 | -1, stake: number): void {
   const token = world.tokens.find(t => t.sym === sym);
   if (!token) return;
-  token.flow += dir * Math.min(0.5, stake / 2e6);
+  applyFlow(token, dir, stake);
 }
 
 export function parseTradeDir(dir: unknown): 1 | -1 | null {
@@ -151,30 +158,41 @@ function schedule(id: string, resolvesAt: number): void {
     timers.delete(id);
     void resolveTrade(id);
   }, delay);
+  timer.unref();
   timers.set(id, timer);
 }
 
-export function resumeTrades(): void {
+/**
+ * A stored mint_tx_hash is looked up for the treasury signer.
+ * Success only sets minted. Failure may sign one fresh transaction.
+ * Unknown waits 3 minutes, then signs a fresh transaction.
+ * Signed bytes are not stored, so a sent transaction is never broadcast again.
+ * chain_before is diagnostic only.
+ */
+export function resumeTrades(): Promise<void> {
   const open = db.prepare(`SELECT id, resolves_at FROM trades WHERE status = 'open'`).all() as {
     id: string;
     resolves_at: number;
   }[];
   for (const row of open) schedule(row.id, row.resolves_at);
-  if (!retryTimer) retryTimer = setInterval(() => void retryPendingMints(), 20_000);
-  void retryPendingMints();
+  if (!retryTimer && !process.env.VITEST) retryTimer = setInterval(() => void retryPendingMints(), 20_000);
+  return retryPendingMints();
 }
 
 export async function tradeSnapshot(player: PlayerRow): Promise<{
   bet: TradeView | null;
   available: string;
+  settling: string;
   xp: Xp;
   payUsed: number;
 }> {
   const fresh = getPlayerById(player.id) ?? player;
   const today = dayKey();
+  const funds = await fundsView(fresh);
   return {
     bet: tradeViewFor(fresh.id),
-    available: (await availableGd(fresh)).toString(),
+    available: funds.available,
+    settling: funds.settling,
     xp: parseXp(fresh.xp_json),
     payUsed: fresh.pay_day === today ? fresh.pay_used : 0,
   };
@@ -183,7 +201,7 @@ export async function tradeSnapshot(player: PlayerRow): Promise<{
 export async function openTrade(
   player: PlayerRow,
   input: { sym: string; dir: 1 | -1; stake: number },
-): Promise<{ bet: TradeView; available: string; xp: Xp; payUsed: number }> {
+): Promise<{ bet: TradeView; available: string; settling: string; xp: Xp; payUsed: number }> {
   const sym = input.sym.trim().toUpperCase();
   const price = tokenPrice(sym);
   if (!price) throw new AuthError('Unknown coin', 400);
@@ -192,8 +210,8 @@ export async function openTrade(
     throw new AuthError(`Stake must be ${TRADE_MIN_STAKE} to ${TRADE_MAX_STAKE} GD`, 400);
   }
   const fee = tradeFee(stake);
-  const available = await availableGd(player);
-  if (available < BigInt(stake + fee)) throw new AuthError('Not enough GD', 400);
+  if (!player.account_id) throw new AuthError('Player has no account', 503);
+  const chain = BigInt(await getGDBalanceCached(player.account_id));
 
   const id = randomId();
   const now = Date.now();
@@ -207,6 +225,9 @@ export async function openTrade(
       .prepare(`SELECT COUNT(*) AS n FROM trades WHERE player_id = ? AND opened_at > ?`)
       .get(player.id, now - MINUTE_MS) as { n: number };
     if (recent.n >= TRADE_OPENS_PER_MIN) throw new AuthError('Too many bets. Wait a moment.', 429);
+    const held = ledgerTotals(player.id);
+    const available = chain - held.pending - held.escrowed + held.settling;
+    if (available < BigInt(stake + fee)) throw new AuthError('Not enough GD', 400);
     db.prepare(
       `INSERT INTO trades (id, player_id, sym, dir, stake, fee, p0, opened_at, resolves_at, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')`,
@@ -221,7 +242,7 @@ export async function openTrade(
     }
   });
   try {
-    insert();
+    insert.immediate();
   } catch (err) {
     if (err instanceof AuthError) throw err;
     const message = err instanceof Error ? err.message : '';
@@ -229,7 +250,7 @@ export async function openTrade(
     throw err;
   }
 
-  applyFlow(sym, dir, stake);
+  nudgeCoin(sym, dir, stake);
   schedule(id, resolvesAt);
   const snap = await tradeSnapshot(player);
   if (!snap.bet) throw new AuthError('Bet was not recorded', 503);
@@ -246,12 +267,38 @@ async function mintProfit(row: TradeRow): Promise<void> {
   if (minting.has(row.id)) return;
   minting.add(row.id);
   try {
-    const fresh = db.prepare(`SELECT minted FROM trades WHERE id = ?`).get(row.id) as { minted: number } | undefined;
+    const fresh = db.prepare(`SELECT * FROM trades WHERE id = ?`).get(row.id) as TradeRow | undefined;
     if (!fresh || fresh.minted === 1) return;
-    const player = getPlayerById(row.player_id);
+    const player = getPlayerById(fresh.player_id);
     if (!player?.account_id) return;
-    await mintGD(player.account_id, credited);
-    db.prepare(`UPDATE trades SET minted = 1 WHERE id = ? AND minted = 0`).run(row.id);
+    const accountId = player.account_id;
+    await resumeOrSend(
+      {
+        flag: fresh.minted,
+        hash: fresh.mint_tx_hash,
+        txAt: fresh.mint_tx_at,
+        attempts: fresh.mint_attempts ?? 0,
+      },
+      {
+        mark: () => {
+          db.prepare(`UPDATE trades SET minted = 1 WHERE id = ? AND minted = 0`).run(fresh.id);
+          invalidateGdCache(accountId);
+        },
+        persist: (hash, at, attempts) => {
+          db.prepare(`UPDATE trades SET mint_tx_hash = ?, mint_tx_at = ?, mint_attempts = ? WHERE id = ?`).run(
+            hash,
+            at,
+            attempts,
+            fresh.id,
+          );
+        },
+        call: {
+          contractId: config.gdContract,
+          methodName: 'mint',
+          args: { account_id: accountId, amount: String(credited) },
+        },
+      },
+    );
   } catch {
     console.error('[trade] profit mint failed');
   } finally {
@@ -281,39 +328,50 @@ export async function resolveTrade(id: string): Promise<void> {
 
     const now = Date.now();
     const today = dayKey(now);
-    const xp = parseXp(player.xp_json);
-    const payUsed0 = player.pay_day === today ? player.pay_used : 0;
-    let credited = 0;
-    let capped = false;
-    let payUsed = payUsed0;
-    if (pnl > 0) {
-      const next = faucetCredit(pnl, isWeak(player.needs_json), payCapFor(xp), payUsed0);
-      credited = next.credited;
-      capped = next.capped;
-      payUsed = next.payUsed;
-      xp.trade += 20;
-    } else {
-      xp.trade += 12;
-    }
+    const chainBefore = await readGdBalanceForLog(player.account_id);
 
     const settled = db.transaction(() => {
       const fresh = db.prepare(`SELECT status FROM trades WHERE id = ?`).get(id) as { status: string } | undefined;
-      if (!fresh || fresh.status !== 'open') return false;
+      if (!fresh || fresh.status !== 'open') return null;
+      const progress = db
+        .prepare(`SELECT xp_json, needs_json, pay_day, pay_used FROM players WHERE id = ?`)
+        .get(row.player_id) as
+        | { xp_json: string; needs_json: string; pay_day: string; pay_used: number }
+        | undefined;
+      if (!progress) return null;
+      const xp = parseXp(progress.xp_json);
+      const payUsed0 = progress.pay_day === today ? progress.pay_used : 0;
+      let credited = 0;
+      let capped = false;
+      let payUsed = payUsed0;
+      if (pnl > 0) {
+        const next = faucetCredit(pnl, isWeak(progress.needs_json), payCapFor(xp), payUsed0);
+        credited = next.credited;
+        capped = next.capped;
+        payUsed = next.payUsed;
+        xp.trade += 20;
+      } else {
+        xp.trade += 12;
+      }
       db.prepare(`DELETE FROM escrow WHERE id = ?`).run(id);
       if (pnl < 0) {
         db.prepare(
           `INSERT INTO pending_burns (id, player_id, amount, reason, created_at) VALUES (?, ?, ?, ?, ?)`,
         ).run(`tl-${id}`, row.player_id, String(-pnl), 'trade-loss', now);
       }
+      db.prepare(`UPDATE players SET xp_json = ?, pay_day = ?, pay_used = ? WHERE id = ?`).run(
+        JSON.stringify(xp),
+        today,
+        payUsed,
+        row.player_id,
+      );
       db.prepare(
-        `UPDATE players SET xp_json = ?, pay_day = ?, pay_used = ? WHERE id = ?`,
-      ).run(JSON.stringify(xp), today, payUsed, row.player_id);
-      db.prepare(
-        `UPDATE trades SET status = 'settled', price_out = ?, pnl = ?, credited = ?, capped = ?, minted = ? WHERE id = ?`,
-      ).run(String(price), String(pnl), String(credited), capped ? 1 : 0, credited > 0 ? 0 : 1, id);
-      return true;
+        `UPDATE trades SET status = 'settled', price_out = ?, pnl = ?, credited = ?, capped = ?, minted = ?, chain_before = ? WHERE id = ?`,
+      ).run(String(price), String(pnl), String(credited), capped ? 1 : 0, credited > 0 ? 0 : 1, chainBefore, id);
+      return credited;
     });
-    if (!settled()) return;
+    const credited = settled.immediate();
+    if (credited == null) return;
     if (credited > 0) {
       const paid = db.prepare(`SELECT * FROM trades WHERE id = ?`).get(id) as TradeRow;
       await mintProfit(paid);

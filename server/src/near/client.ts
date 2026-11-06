@@ -31,6 +31,22 @@ export function enqueueTreasuryWrite<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** One nonce queue per signer account. The treasury queue above is separate. */
+const signerTails = new Map<string, Promise<unknown>>();
+
+export function enqueueSignerWrite<T>(accountId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = signerTails.get(accountId) ?? Promise.resolve();
+  const run = prev.then(() => fn(), () => fn());
+  signerTails.set(
+    accountId,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
 export function getProvider(): JsonRpcProvider {
   if (!provider) provider = new JsonRpcProvider({ url: config.nearRpcUrl });
   return provider;

@@ -7,9 +7,11 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "near:smoke": "tsx scripts/near-smoke.ts",
     "smoke": "tsx scripts/near-smoke.ts",
-    "items:seed": "tsx scripts/items-seed.ts"
+    "items:seed": "tsx scripts/items-seed.ts",
+    "merchants:setup": "tsx scripts/merchants-setup.ts"
   },
   "dependencies": {
     "@glitch/shared": "*",
@@ -24,6 +26,7 @@
     "@types/dotenv": "^6.1.1",
     "@types/node": "^26.6.6",
     "tsx": "^4.20.3",
-    "typescript": "~5.9.0"
+    "typescript": "~5.9.0",
+    "vitest": "^3.2.4"
   }
 }

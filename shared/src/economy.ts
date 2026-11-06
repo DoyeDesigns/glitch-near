@@ -3,7 +3,7 @@
  * Tuned from docs/ECONOMY.md proposals — applied values live here.
  */
 
-import { mulberry32, rnd } from './rng';
+import { clamp, mulberry32, randn, rnd, type Rng } from './rng';
 
 /** Prototype swap desk rate (legacy `RATE`). Used only to convert old USDG prices. */
 export const USDG_TO_GD = 500;
@@ -71,6 +71,18 @@ export function tradePnl(stake: number, dir: 1 | -1, p0: number, price: number):
 }
 
 /**
+ * Flow added to the bet coin when the bet opens, in the bet's direction.
+ * Was `stake / 2e6` (cap 0.5). A 100,000 GD bet moved its own price about
+ * 0.13% in the bettor's favour and the mean pnl was positive, so the nudge is 0.
+ */
+export const TRADE_FLOW_PER_STAKE = 0;
+export const TRADE_FLOW_CAP = 0.5;
+
+export function applyFlow(token: { flow: number }, dir: 1 | -1, stake: number): void {
+  token.flow += dir * Math.min(TRADE_FLOW_CAP, stake * TRADE_FLOW_PER_STAKE);
+}
+
+/**
  * Daily faucet: weak cuts 40%, then the cap, then 20% of the overflow.
  * `payUsed` grows by the full-rate portion only (same as the client earn()).
  */
@@ -94,7 +106,14 @@ export const VAULT_WIDTHS = [0.24, 0.18, 0.13] as const;
 export const VAULT_SPEEDS = [0.75, 1.0, 1.3] as const;
 export const VAULT_HIT_GD = 15_000;
 export const VAULT_PERFECT_GD = 30_000;
+/** Needle sweep only. A stop is a hit when this look-back overlaps the zone. */
 export const VAULT_TOLERANCE_MS = 150;
+/** A stop may be this far ahead of the server clock. */
+export const VAULT_MAX_SKEW_MS = 50;
+/** A stop older than this is rejected. The sweep stays at 150 ms. */
+export const VAULT_MAX_AGE_MS = 700;
+/** Minimum gap between vault starts for one player. */
+export const VAULT_START_GAP_MS = 8_000;
 export const VAULT_PAUSE_MS = 600;
 
 export type VaultLock = { zoneStart: number; zoneWidth: number; speed: number };
@@ -163,4 +182,54 @@ export function vaultShards(hits: number): number {
 /** Security XP for a finished vault. Same as the old client: 8 + 6 per hit. */
 export function vaultXp(hits: number): number {
   return 8 + hits * 6;
+}
+
+/** Attention Booth. Half the cost is burned, half is escrowed and settled against the payout. */
+export const POST_COST = 10_000;
+export const POST_BURN = 5_000;
+export const POST_ESCROW = 5_000;
+export const POST_PER_MIN = 6;
+export const POST_XP = 14;
+/** A player cannot post again until this long after their last post. */
+export const POST_COOLDOWN_MS = 30_000;
+/**
+ * Added to every post's reach. Was 0.25 (hype mean about +4,259 GD at
+ * community level 1). -0.282 brings that hype mean to about 0.
+ */
+export const POST_REACH_FLOOR = -0.282;
+
+export type PostTake = 'hype' | 'warn' | 'meme';
+
+/** How well this take fits the server mood and heat. */
+export function postFit(take: PostTake, mood: number, heat: number): number {
+  if (take === 'hype') return clamp(0.5 + mood * 0.5 - heat, 0, 1);
+  if (take === 'warn') return clamp(0.3 + heat * 2 - mood * 0.3, 0, 1);
+  return 0.45;
+}
+
+/**
+ * Reach for one post. `luck` is `exp(randn * 0.6)` from the given rng.
+ * Community level is the level before this post's XP.
+ */
+export function postReach(take: PostTake, mood: number, heat: number, commLevel: number, rng: Rng): number {
+  const luck = Math.exp(randn(rng) * 0.6);
+  return postFit(take, mood, heat) * luck * (1 + 0.1 * (commLevel - 1)) + POST_REACH_FLOOR;
+}
+
+/** GD the escrow half is settled against, before the daily faucet. */
+export function postPay(reach: number): number {
+  return POST_ESCROW * (0.5 + reach * 1.6);
+}
+
+/** Profit after the escrow half is released. Negative means part of the escrow is lost. */
+export function postProfit(reach: number): number {
+  return postPay(reach) - POST_ESCROW;
+}
+
+export function postFollowers(reach: number, commLevel: number): number {
+  return Math.floor(reach * 40 * (1 + commLevel * 0.1));
+}
+
+export function postViral(reach: number): boolean {
+  return reach > 1.5;
 }

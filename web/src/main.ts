@@ -14,7 +14,7 @@ import {
   stations,
   worldUpdate,
 } from './world';
-import { closeModal, drawScreens, introOpen, modalOpen, setHudAvailable, startMePoll, updateHud } from './hud';
+import { closeModal, drawScreens, introOpen, modalOpen, setHudAvailable, setHudSettling, startMePoll, updateHud } from './hud';
 import { loginRequest } from './session';
 import {
   commGame,
@@ -65,6 +65,7 @@ async function enterCity(body: { name?: string; pin?: string; guest?: boolean; s
     S.xp = profile.xp;
     S.needs = profile.needs;
     setHudAvailable(Number(profile.available));
+    setHudSettling(Number(profile.settling) || 0);
     const intro = $('#intro') as HTMLElement;
     intro.hidden = true;
     intro.style.display = 'none';

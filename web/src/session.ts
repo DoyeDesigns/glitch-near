@@ -4,6 +4,7 @@ export type Me = {
   name: string;
   accountId: string;
   available: string;
+  settling: string;
   items: Record<string, string>;
   xp: { trade: number; sec: number; comm: number };
   needs: { energy: number; hunger: number };

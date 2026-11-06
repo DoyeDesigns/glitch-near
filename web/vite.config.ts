@@ -15,6 +15,7 @@ export default defineConfig({
       '/me': { target: 'http://localhost:8787', changeOrigin: true },
       '/trade': { target: 'http://localhost:8787', changeOrigin: true },
       '/vault': { target: 'http://localhost:8787', changeOrigin: true },
+      '/post': { target: 'http://localhost:8787', changeOrigin: true },
       '/admin/health': { target: 'http://localhost:8787', changeOrigin: true },
     },
   },

@@ -3,12 +3,17 @@ import { config } from './config';
 import './db';
 import { createApp } from './routes';
 import { startSimLoop } from './sim';
+import { resumePosts } from './post';
 import { resumeTrades } from './trade';
-import { resumeVaults } from './vault';
+import { resumeTransfers } from './near/gd';
+import { ensureShardToken, resumeVaults } from './vault';
 
 startSimLoop();
 resumeTrades();
 resumeVaults();
+resumePosts();
+void resumeTransfers();
+void ensureShardToken();
 
 const app = createApp();
 

@@ -29,6 +29,7 @@ button[disabled]{opacity:.4;cursor:not-allowed}
 #tl{position:absolute;left:10px;top:var(--top);padding:10px 12px;min-width:190px}
 #tl .row{display:flex;gap:8px;align-items:center;justify-content:space-between}
 .bal{font:700 26px var(--mono);margin:4px 0 0}.bal small{margin-left:6px}
+.settle{display:block;margin-top:2px;font:500 11px var(--mono);color:var(--amber);letter-spacing:.04em;text-transform:none}
 .sub{display:flex;gap:12px;font:500 12px var(--mono);color:var(--mute)}
 #ret.up{color:var(--lime)} #ret.dn{color:var(--pink)}
 .meter{height:5px;border-radius:3px;background:var(--panel2);margin-top:8px;overflow:hidden}.meter i{display:block;height:100%;width:0;background:var(--cyan);transition:width .4s}
