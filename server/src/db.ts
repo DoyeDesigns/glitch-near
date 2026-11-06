@@ -93,6 +93,42 @@ db.exec(`
     locked_until INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (scope, key)
   );
+
+  CREATE TABLE IF NOT EXISTS trades (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL REFERENCES players(id),
+    sym TEXT NOT NULL,
+    dir INTEGER NOT NULL,
+    stake TEXT NOT NULL,
+    fee TEXT NOT NULL,
+    p0 TEXT NOT NULL,
+    opened_at INTEGER NOT NULL,
+    resolves_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    price_out TEXT,
+    pnl TEXT,
+    credited TEXT,
+    capped INTEGER NOT NULL DEFAULT 0,
+    minted INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS vaults (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL REFERENCES players(id),
+    seed INTEGER NOT NULL,
+    started_at INTEGER NOT NULL,
+    stop0 INTEGER,
+    stop1 INTEGER,
+    stop2 INTEGER,
+    hits INTEGER NOT NULL DEFAULT 0,
+    gross TEXT,
+    credited TEXT,
+    capped INTEGER NOT NULL DEFAULT 0,
+    shards INTEGER NOT NULL DEFAULT 0,
+    gd_minted INTEGER NOT NULL DEFAULT 0,
+    shards_minted INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'open'
+  );
 `);
 
 function columnNames(table: string): Set<string> {
@@ -121,10 +157,50 @@ function migrate(): void {
   }
   if (!cols.has('pin_hash')) db.exec(`ALTER TABLE players ADD COLUMN pin_hash TEXT`);
   if (!cols.has('pin_salt')) db.exec(`ALTER TABLE players ADD COLUMN pin_salt TEXT`);
+  if (!cols.has('pay_day')) db.exec(`ALTER TABLE players ADD COLUMN pay_day TEXT NOT NULL DEFAULT ''`);
+  if (!cols.has('pay_used')) db.exec(`ALTER TABLE players ADD COLUMN pay_used REAL NOT NULL DEFAULT 0`);
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_name ON players(name);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_account_id ON players(account_id)
       WHERE account_id IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS trades (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      sym TEXT NOT NULL,
+      dir INTEGER NOT NULL,
+      stake TEXT NOT NULL,
+      fee TEXT NOT NULL,
+      p0 TEXT NOT NULL,
+      opened_at INTEGER NOT NULL,
+      resolves_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      price_out TEXT,
+      pnl TEXT,
+      credited TEXT,
+      capped INTEGER NOT NULL DEFAULT 0,
+      minted INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_one_open ON trades(player_id)
+      WHERE status = 'open';
+    CREATE TABLE IF NOT EXISTS vaults (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      seed INTEGER NOT NULL,
+      started_at INTEGER NOT NULL,
+      stop0 INTEGER,
+      stop1 INTEGER,
+      stop2 INTEGER,
+      hits INTEGER NOT NULL DEFAULT 0,
+      gross TEXT,
+      credited TEXT,
+      capped INTEGER NOT NULL DEFAULT 0,
+      shards INTEGER NOT NULL DEFAULT 0,
+      gd_minted INTEGER NOT NULL DEFAULT 0,
+      shards_minted INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'open'
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_vaults_one_open ON vaults(player_id)
+      WHERE status = 'open';
   `);
 }
 

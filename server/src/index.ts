@@ -3,8 +3,12 @@ import { config } from './config';
 import './db';
 import { createApp } from './routes';
 import { startSimLoop } from './sim';
+import { resumeTrades } from './trade';
+import { resumeVaults } from './vault';
 
 startSimLoop();
+resumeTrades();
+resumeVaults();
 
 const app = createApp();
 

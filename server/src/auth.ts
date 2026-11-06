@@ -38,7 +38,7 @@ const MIN_ROOT_NEAR = nearToYocto('0.2');
 export class AuthError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 401 | 403 | 429 | 503 = 400,
+    readonly status: 400 | 401 | 403 | 409 | 429 | 503 = 400,
   ) {
     super(message);
     this.name = 'AuthError';
@@ -315,17 +315,19 @@ export async function loginPlayer(opts: {
 }
 
 /** available = max(0, chainBalance − pendingBurns − escrowed). Chain balance is cached 5s. */
-export async function meForPlayer(player: PlayerRow): Promise<MePayload> {
+export async function availableGd(player: PlayerRow): Promise<bigint> {
   if (!player.account_id) throw new AuthError('Player has no account', 503);
-  const [chainRaw, items] = await Promise.all([
-    getGDBalanceCached(player.account_id),
-    getItemBalances(player.account_id),
-  ]);
-  const chain = BigInt(chainRaw);
+  const chain = BigInt(await getGDBalanceCached(player.account_id));
   const pending = sumAmounts('pending_burns', player.id);
   const escrowed = sumAmounts('escrow', player.id);
-  let available = chain - pending - escrowed;
-  if (available < 0n) available = 0n;
+  const available = chain - pending - escrowed;
+  return available < 0n ? 0n : available;
+}
+
+/** available = max(0, chainBalance − pendingBurns − escrowed). Chain balance is cached 5s. */
+export async function meForPlayer(player: PlayerRow): Promise<MePayload> {
+  if (!player.account_id) throw new AuthError('Player has no account', 503);
+  const [available, items] = await Promise.all([availableGd(player), getItemBalances(player.account_id)]);
   return {
     name: player.name,
     accountId: player.account_id,

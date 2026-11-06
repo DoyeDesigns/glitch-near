@@ -1,4 +1,4 @@
-import { PAY_CAP_BASE, PAY_CAP_PER_LEVEL, START_GD } from '@glitch/shared';
+import { payCapFor, skillLevel, START_GD } from '@glitch/shared';
 import { DEFAULT_LOOK, type S as PlayerState, type TxEntry } from './types';
 
 export const START = START_GD;
@@ -65,7 +65,7 @@ export const setBannerT = (t: number) => {
 };
 
 export const SK: Record<string, string> = { trade: 'Trade', sec: 'Security', comm: 'Community' };
-export const lvl = (xp: number) => 1 + Math.floor(Math.sqrt(xp / 40));
+export const lvl = skillLevel;
 export const L = (k: keyof PlayerState['xp']) => lvl(S.xp[k]);
 
 export function addXp(k: keyof PlayerState['xp'], n: number) {
@@ -75,7 +75,7 @@ export function addXp(k: keyof PlayerState['xp'], n: number) {
 }
 
 export const dayKey = () => new Date().toISOString().slice(0, 10);
-export const payCap = () => PAY_CAP_BASE + PAY_CAP_PER_LEVEL * (L('trade') + L('sec') + L('comm') - 3);
+export const payCap = () => payCapFor(S.xp);
 export const txlog: TxEntry[] = [];
 export function logTx(kind: string, amt: number, note: string) {
   txlog.unshift({

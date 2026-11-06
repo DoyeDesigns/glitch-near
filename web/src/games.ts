@@ -1,7 +1,16 @@
 import * as THREE from 'three';
-import { HOMEP_GD, RENT_GD, RENT_MS as RENT_PERIOD_MS } from '@glitch/shared';
+import {
+  HOMEP_GD,
+  RENT_GD,
+  RENT_MS as RENT_PERIOD_MS,
+  TRADE_MAX_STAKE,
+  TRADE_MIN_STAKE,
+  vaultLockStart,
+  vaultNeedle,
+  type VaultLock,
+} from '@glitch/shared';
 import { $, clamp, esc, fmt, fmtN, pick, randn, rnd } from './util';
-import { addXp, burn, earn, escrow, L, logTx, save, settle, S, weak } from './state';
+import { addXp, burn, escrow, L, logTx, save, settle, S, weak } from './state';
 import { banner, market, post, px, TOK } from './market';
 import {
   BOTC,
@@ -28,11 +37,13 @@ import {
 } from './world';
 import {
   closeModal,
+  hudAvailable,
   modalEl,
   modalOpen,
   modalTimer,
   openModal,
   resultCard,
+  setHudAvailable,
   setModalTimer,
   sheet,
   updateHud,
@@ -112,11 +123,44 @@ const STAKES = [1000, 5000, 10000, 50000, 100000];
 const ARROW = (d: number) =>
   `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="${d ? 'M12 3 4 13h5v8h6v-8h5z' : 'M12 21 4 11h5V3h6v8h5z'}" fill="currentColor"/></svg>`;
 
+type ServerBet = {
+  id: string;
+  sym: string;
+  dir: 1 | -1;
+  stake: string;
+  p0: string;
+  resolvesAt: number;
+  status: 'open' | 'settled';
+  price: string;
+  markPnl: string;
+  pnl: string | null;
+  credited: string | null;
+  capped: boolean;
+};
+
+type TradeState = {
+  bet: ServerBet | null;
+  available: string;
+  xp: { trade: number; sec: number; comm: number };
+  payUsed: number;
+  error?: string;
+};
+
+async function tradeRequest(path: string, init?: RequestInit): Promise<TradeState> {
+  const res = await fetch(path, { credentials: 'include', ...init });
+  const data = (await res.json()) as TradeState;
+  if (!res.ok) throw new Error(data.error || 'Bet failed');
+  return data;
+}
+
 export function tradeGame() {
   let tk = TOK[0]!,
     snap = tk.hist.slice(-120),
     stake = 5000,
-    pos: { d: number; amt: number; p0: number; t: number; trail: number[] } | null = null;
+    funds = hudAvailable ?? S.bal,
+    busy = false,
+    settled = false,
+    pos: { bet: ServerBet; trail: number[] } | null = null;
   const R = (l: string, d: string, v: number, col: string) =>
     `<span>${l}<em>${d}</em></span><div class="bar"><i style="width:${Math.round(clamp(v, 0, 1) * 100)}%;background:${col}"></i></div>`;
   const sigs = (t: (typeof TOK)[0]) => {
@@ -129,10 +173,26 @@ export function tradeGame() {
       (n < 4 ? '<small style="grid-column:1/3;text-transform:none">Level up Trade to unlock more clues.</small>' : '')
     );
   };
+  function applyAccount(state: TradeState) {
+    const before = L('trade');
+    const today = new Date().toISOString().slice(0, 10);
+    funds = Number(state.available);
+    setHudAvailable(funds);
+    S.xp.trade = state.xp.trade;
+    if (S.payDay !== today) {
+      S.payDay = today;
+      S.payUsed = 0;
+    }
+    S.payUsed = Math.max(S.payUsed, state.payUsed);
+    if (L('trade') > before) banner(`Trade skill up: level ${L('trade')}`, 'good');
+    save();
+    updateHud();
+  }
   function render() {
     sheet.dataset.lock = pos ? '1' : '';
     const fr = snap[snap.length - 1]!,
-      c0 = fr / snap[0]! - 1;
+      c0 = fr / snap[0]! - 1,
+      entry = pos ? Number(pos.bet.p0) : null;
     sheet.innerHTML = `<h2>Trade Terminal</h2><p>Pick a coin and guess if its price will go up or down in 10 seconds. Guess right and you win GD. Guess wrong and you lose some.</p>
     <div class="chips">${TOK.map(t => `<button data-t="${t.sym}" class="${t === tk ? 'on' : ''}" ${pos ? 'disabled' : ''}>${t.sym}</button>`).join('')}</div>
     <div class="tk"><span><b>${tk.name}</b> <small style="text-transform:none">${TOKINFO[tk.sym]}</small></span></div>
@@ -145,7 +205,7 @@ export function tradeGame() {
         ? `<div class="live"><svg class="ring" viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" class="bg"/><circle cx="50" cy="50" r="42" class="fg" id="rfg"/></svg><b id="rnum">10</b><div><small>Your bet is running</small><div id="tpnl" class="big">0</div><div class="hint" id="tdesc"></div></div></div>`
         : `
     <small>How much do you want to bet?</small>
-    <div class="chips" id="stk">${STAKES.map(v => `<button data-s="${v}" class="${v === stake ? 'on' : ''}" ${v > S.bal ? 'disabled' : ''}>${fmtN(v)}</button>`).join('')}</div>
+    <div class="chips" id="stk">${STAKES.map(v => `<button data-s="${v}" class="${v === stake ? 'on' : ''}" ${v > funds ? 'disabled' : ''}>${fmtN(v)}</button>`).join('')}</div>
     <input id="cust" type="text" inputmode="numeric" placeholder="Or type your own amount" autocomplete="off">
     <div class="hint" id="mult"></div>
     <div class="acts"><button class="bet up" id="tlong"><span class="ico"><i class="ar">${ARROW(1)}</i></span><span class="bt"><b>Bet UP</b><small>Win if the price is higher in 10 seconds</small></span></button>
@@ -170,69 +230,105 @@ export function tradeGame() {
       ci.oninput = () => {
         const v = parseInt(ci.value.replace(/\D/g, ''), 10);
         if (v) {
-          stake = clamp(v, 100, Math.max(100, Math.floor(S.bal)));
+          stake = clamp(v, TRADE_MIN_STAKE, TRADE_MAX_STAKE);
           sheet.querySelectorAll('[data-s]').forEach(b => b.classList.remove('on'));
         }
         note();
       };
       note();
-      ($('#tlong') as HTMLButtonElement).onclick = () => start(1);
-      ($('#tshort') as HTMLButtonElement).onclick = () => start(-1);
+      ($('#tlong') as HTMLButtonElement).onclick = () => void start(1);
+      ($('#tshort') as HTMLButtonElement).onclick = () => void start(-1);
       ($('#tx') as HTMLButtonElement).onclick = closeModal;
     }
-    drawChart($('#tcv') as HTMLCanvasElement, pos ? tk.hist.slice(-60) : snap, pos ? pos.p0 : null);
+    drawChart($('#tcv') as HTMLCanvasElement, pos ? tk.hist.slice(-60) : snap, entry);
   }
   function note() {
     const m = $('#mult');
     if (m)
       m.innerHTML = `Betting <b>${fmtN(stake)} GD</b> (1% fee). Moves are multiplied by 20: if the price changes 1%, you win or lose about <b>${fmtN(stake * .2)} GD</b>. You can never lose more than your bet.`;
   }
-  function start(d: number) {
-    const amt = Math.min(stake, Math.floor(S.bal));
-    if (amt < 100) return banner('Not enough GD', 'bad');
-    escrow(amt);
-    burn(amt * 0.01);
-    tk.flow += d * Math.min(.5, amt / 2e6);
-    pos = { d, amt: amt * 0.99, p0: tk.price, t: 10, trail: [tk.price] };
-    render();
+  function paint(mark: number, left: number) {
+    const el = $('#tpnl');
+    if (!el || !pos) return;
+    el.textContent = (mark >= 0 ? '+' : '') + fmtN(mark) + ' GD';
+    el.className = 'big ' + (mark >= 0 ? 'pos' : 'neg');
+    ($('#rnum') as HTMLElement).textContent = String(Math.max(0, Math.ceil(left)));
+    const C = 2 * Math.PI * 42;
+    const ring = $('#rfg') as HTMLElement;
+    ring.style.strokeDasharray = String(C);
+    ring.style.strokeDashoffset = String(C * (1 - Math.max(0, Math.min(1, left / 10))));
+    const c = $('#tcv') as HTMLCanvasElement | null;
+    if (c) drawChart(c, tk.hist.slice(-60), Number(pos.bet.p0));
+  }
+  function watch() {
     const C = 2 * Math.PI * 42;
     ($('#rfg') as HTMLElement).style.strokeDasharray = String(C);
-    ($('#rfg') as HTMLElement).style.strokeDashoffset = '0';
-    ($('#tdesc') as HTMLElement).textContent = `You bet ${d > 0 ? 'UP' : 'DOWN'} on ${tk.sym}. The dashed line is where you started.`;
+    ($('#tdesc') as HTMLElement).textContent = `You bet ${pos!.bet.dir > 0 ? 'UP' : 'DOWN'} on ${pos!.bet.sym}. The dashed line is where you started.`;
     setModalTimer(
       setInterval(() => {
-        pos!.t -= 0.25;
-        pos!.trail.push(tk.price);
-        const pnl = Math.max(-pos!.amt, pos!.amt * 20 * pos!.d * (tk.price / pos!.p0 - 1));
-        const el = $('#tpnl');
-        if (el) {
-          el.textContent = (pnl >= 0 ? '+' : '') + fmtN(pnl) + ' GD';
-          el.className = 'big ' + (pnl >= 0 ? 'pos' : 'neg');
-          ($('#rnum') as HTMLElement).textContent = String(Math.max(0, Math.ceil(pos!.t)));
-          ($('#rfg') as HTMLElement).style.strokeDashoffset = String(C * (1 - pos!.t / 10));
-        }
-        const c = $('#tcv') as HTMLCanvasElement | null;
-        if (c) drawChart(c, tk.hist.slice(-60), pos!.p0);
-        if (pos!.t <= 0) {
-          clearInterval(modalTimer as number);
-          setModalTimer(0);
-          finish(pnl);
-        }
-      }, 250),
+        if (!pos || pos.bet.status === 'settled') return;
+        pos.trail.push(tk.price);
+        const left = Math.max(0, (pos.bet.resolvesAt - Date.now()) / 1000);
+        paint(Number(pos.bet.markPnl), left);
+        void tradeRequest('/trade')
+          .then(state => {
+            if (!pos || !state.bet || state.bet.id !== pos.bet.id) return;
+            pos.bet = state.bet;
+            if (state.bet.status === 'settled') {
+              if (settled) return;
+              settled = true;
+              clearInterval(modalTimer as number);
+              setModalTimer(0);
+              applyAccount(state);
+              finish(state.bet);
+            }
+          })
+          .catch(() => {});
+      }, 500),
     );
   }
-  function finish(pnl: number) {
-    const r = settle(pos!.amt, pnl);
+  function showOpen(bet: ServerBet) {
+    const found = TOK.find(t => t.sym === bet.sym);
+    if (found) tk = found;
+    pos = { bet, trail: [Number(bet.p0), tk.price] };
+    render();
+    watch();
+  }
+  async function start(d: 1 | -1) {
+    if (busy || pos) return;
+    if (stake < TRADE_MIN_STAKE || stake > TRADE_MAX_STAKE || stake + Math.round(stake * 0.01) > funds) {
+      banner('Not enough GD', 'bad');
+      return;
+    }
+    busy = true;
+    try {
+      const state = await tradeRequest('/trade/open', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sym: tk.sym, dir: d, stake }),
+      });
+      applyAccount(state);
+      if (state.bet?.status === 'open') showOpen(state.bet);
+    } catch (err) {
+      banner(err instanceof Error ? err.message : 'Bet failed', 'bad');
+    } finally {
+      busy = false;
+    }
+  }
+  function finish(bet: ServerBet) {
+    const pnl = Number(bet.pnl ?? bet.markPnl);
+    const credited = Number(bet.credited ?? '0');
+    const stakeN = Number(bet.stake);
     S.stats.trades++;
     if (pnl > 0) S.stats.wins++;
-    addXp('trade', 12 + (pnl > 0 ? 8 : 0));
     crowdTo('trade', 12);
-    const side = pos!.d > 0 ? 'UP' : 'DOWN',
-      pct = (pnl / pos!.amt) * 100,
-      mv = (tk.price / pos!.p0 - 1) * 100,
-      trail = pos!.trail.slice(),
-      p0 = pos!.p0,
-      sym = tk.sym,
+    const side = bet.dir > 0 ? 'UP' : 'DOWN',
+      pct = stakeN ? (pnl / stakeN) * 100 : 0,
+      end = Number(bet.price),
+      p0 = Number(bet.p0),
+      mv = p0 ? (end / p0 - 1) * 100 : 0,
+      trail = pos?.trail.slice() ?? [p0, end],
+      sym = bet.sym,
       nm = tk.name,
       win = pnl >= 0,
       col = win ? '#b8ff3d' : '#ff3d9a';
@@ -244,7 +340,7 @@ export function tradeGame() {
       x.strokeRect(6, 6, w - 12, h - 12);
       x.fillStyle = '#e9eefc';
       x.font = '700 40px "Chakra Petch",sans-serif';
-      x.fillText(sym + '  ' + (pos!.d > 0 ? '▲ UP' : '▼ DOWN'), 28, 62);
+      x.fillText(sym + '  ' + (bet.dir > 0 ? '▲ UP' : '▼ DOWN'), 28, 62);
       x.fillStyle = '#8b97b8';
       x.font = '500 20px "Chakra Petch",sans-serif';
       x.fillText(nm + ' · price moved ' + (mv >= 0 ? '+' : '') + mv.toFixed(2) + '%', 28, 92);
@@ -258,10 +354,11 @@ export function tradeGame() {
       x.font = '500 18px "Chakra Petch",sans-serif';
       x.fillText('GLITCH · 10 second trade', 28, h - 20);
     };
+    const shown = win ? credited : pnl;
     resultCard(
       win,
-      (pnl >= 0 ? '+' : '') + fmtN(r.credited) + ' GD',
-      `${pct >= 0 ? 'You won' : 'You lost'} ${Math.abs(pct).toFixed(0)}% of your bet${r.capped ? ' (daily skill pay cap hit)' : ''}`,
+      (shown > 0 ? '+' : '') + fmtN(shown) + ' GD',
+      `${pct >= 0 ? 'You won' : 'You lost'} ${Math.abs(pct).toFixed(0)}% of your bet${bet.capped ? ' (daily skill pay cap hit)' : ''}`,
       `I bet ${side} on ${sym} in Glitch: ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% in 10 seconds.`,
       draw,
     );
@@ -272,102 +369,208 @@ export function tradeGame() {
   }
   openModal('');
   render();
+  void tradeRequest('/trade')
+    .then(state => {
+      applyAccount(state);
+      if (state.bet?.status === 'open') showOpen(state.bet);
+      else if (!pos) render();
+    })
+    .catch(() => {});
+}
+
+type VaultStart = {
+  id: string;
+  seed: number;
+  startedAt: number;
+  locks: VaultLock[];
+  pauseMs: number;
+};
+
+type VaultFinish = {
+  status: 'open' | 'settled';
+  hit: boolean;
+  hits: number;
+  stops: number[];
+  credited: string | null;
+  capped: boolean;
+  shardsMinted: number;
+  shardBalance: string | null;
+  available: string;
+  xp: { trade: number; sec: number; comm: number };
+  payUsed: number;
+  error?: string;
+};
+
+async function vaultRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    credentials: 'include',
+    ...init,
+    headers: init?.body ? { 'content-type': 'application/json' } : undefined,
+  });
+  const data = (await res.json()) as T & { error?: string };
+  if (!res.ok) throw new Error(data.error || 'Vault failed');
+  return data;
 }
 
 export function secGame() {
-  let round = 0,
-    hits = 0,
-    p = 0,
-    dir = 1,
+  let attempt: VaultStart | null = null,
+    stops: number[] = [],
+    results: boolean[] = [],
+    round = 0,
     done = false,
-    zone = [0, 0],
-    last = performance.now(),
-    busy = false;
-  const ZW = [.24, .18, .13],
-    SP = [.75, 1.0, 1.3];
+    busy = false,
+    ticking = false;
   const onKey = (e: KeyboardEvent) => {
     if ((e.key === ' ' || e.key === 'Enter') && !done) {
       e.preventDefault();
-      stop();
+      void stop();
     }
   };
   addEventListener('keydown', onKey);
   openModal('', () => {
     removeEventListener('keydown', onKey);
+    if (!done) void vaultRequest('/vault/cancel', { method: 'POST' }).catch(() => {});
   });
-  function setup() {
-    zone = [rnd(.08, .92 - ZW[round]!), ZW[round]!];
-    busy = false;
-    p = 0;
-    dir = 1;
-    render();
-  }
-  function render() {
-    sheet.dataset.lock = '1';
-    sheet.innerHTML = `<h2>Vault Cracker</h2><p>A rich NPC left a vault open. Tap STOP (or press Space) when the glowing needle is inside the green zone.</p>
-    <div class="locks">${[0, 1, 2].map(i => `<span class="lk2 ${i < round ? 'ok' : i === round ? 'now' : ''}">${i < round ? 'OPEN' : 'LOCK ' + (i + 1)}</span>`).join('')}</div>
-    <div class="vbar"><i class="zone" style="left:${zone[0]! * 100}%;width:${zone[1]! * 100}%"></i><i class="needle" id="ndl"></i></div>
-    <div class="hint">Each lock is faster and the green zone is smaller. Each open lock pays GD.</div>
-    <div class="acts"><button class="pri" id="stopb" style="font-size:18px;padding:14px">STOP</button><button id="vx">Leave</button></div>`;
-    ($('#stopb') as HTMLButtonElement).onclick = stop;
-    ($('#vx') as HTMLButtonElement).onclick = () => {
-      done = true;
-      sheet.dataset.lock = '';
-      closeModal();
-    };
-  }
-  function stop() {
-    if (done || busy) return;
-    busy = true;
-    const ok = p >= zone[0]! && p <= zone[0]! + zone[1]!;
-    if (ok) hits++;
-    const n = $('#ndl') as HTMLElement | null;
-    if (n) n.style.background = ok ? '#b8ff3d' : '#ff3d9a';
-    round++;
-    setTimeout(() => {
-      if (done) return;
-      if (round >= 3) end();
-      else setup();
-    }, 600);
-  }
-  function end() {
-    done = true;
-    clearInterval(modalTimer as number);
-    const pay = hits * 15000 + (hits === 3 ? 30000 : 0),
-      shd = hits + (hits === 3 ? 1 : 0);
-    S.shards += shd;
-    addXp('sec', 8 + hits * 6);
-    const r = pay ? earn(pay) : { credited: 0, capped: false };
-    if (hits === 3) post('good', S.name, 'cracked a whole vault. smooth.');
+  sheet.dataset.lock = '1';
+  sheet.innerHTML = `<h2>Vault Cracker</h2><p>Opening the vault…</p>`;
+
+  function applyAccount(state: VaultFinish) {
+    const before = L('sec');
+    const today = new Date().toISOString().slice(0, 10);
+    setHudAvailable(Number(state.available));
+    S.xp.sec = state.xp.sec;
+    if (S.payDay !== today) {
+      S.payDay = today;
+      S.payUsed = 0;
+    }
+    S.payUsed = Math.max(S.payUsed, state.payUsed);
+    if (state.shardBalance != null) S.shards = Number(state.shardBalance) || 0;
+    if (L('sec') > before) banner(`Security skill up: level ${L('sec')}`, 'good');
     save();
     updateHud();
+  }
+  function paintNeedle() {
+    if (busy || done || !attempt) return;
+    const lock = attempt.locks[round];
+    if (!lock) return;
+    const elapsed = Date.now() - attempt.startedAt - vaultLockStart(stops, round);
+    const p = vaultNeedle(elapsed, lock.speed);
+    const n = $('#ndl') as HTMLElement | null;
+    if (n) n.style.left = `calc(${p * 100}% - 3px)`;
+  }
+  function render() {
+    if (!attempt) return;
+    const lock = attempt.locks[round];
+    if (!lock) return;
+    sheet.dataset.lock = '1';
+    sheet.innerHTML = `<h2>Vault Cracker</h2><p>A rich NPC left a vault open. Tap STOP (or press Space) when the glowing needle is inside the green zone.</p>
+    <div class="locks">${[0, 1, 2]
+      .map(i => {
+        const past = i < round;
+        const cls = i === round ? 'now' : past && results[i] ? 'ok' : '';
+        const label = past ? (results[i] ? 'OPEN' : 'MISS') : 'LOCK ' + (i + 1);
+        return `<span class="lk2 ${cls}">${label}</span>`;
+      })
+      .join('')}</div>
+    <div class="vbar"><i class="zone" style="left:${lock.zoneStart * 100}%;width:${lock.zoneWidth * 100}%"></i><i class="needle" id="ndl"></i></div>
+    <div class="hint">Each lock is faster and the green zone is smaller. Each open lock pays GD.</div>
+    <div class="acts"><button class="pri" id="stopb" style="font-size:18px;padding:14px">STOP</button><button id="vx">Leave</button></div>`;
+    ($('#stopb') as HTMLButtonElement).onclick = () => void stop();
+    ($('#vx') as HTMLButtonElement).onclick = () => void leave();
+    paintNeedle();
+    if (!ticking) {
+      ticking = true;
+      setModalTimer(setInterval(paintNeedle, 16));
+    }
+  }
+  function showResult(state: VaultFinish) {
+    done = true;
+    clearInterval(modalTimer as number);
+    setModalTimer(0);
+    applyAccount(state);
+    const hits = state.hits;
+    const credited = Number(state.credited ?? '0');
+    const shd = state.shardsMinted;
+    if (hits === 3) post('good', S.name, 'cracked a whole vault. smooth.');
     resultCard(
       hits >= 2,
-      hits ? '+' + fmtN(r.credited) + ' GD' : 'Locked out',
-      `${hits} of 3 locks opened${hits === 3 ? '. PERFECT!' : ''}${shd ? ` · +${shd} shards` : ''}`,
+      hits ? '+' + fmtN(credited) + ' GD' : 'Locked out',
+      `${hits} of 3 locks opened${hits === 3 ? '. PERFECT!' : ''}${shd ? ` · +${shd} shards` : ''}${state.capped ? ' (daily skill pay cap hit)' : ''}`,
       `I opened ${hits}/3 locks in the Glitch vault game.`,
     );
   }
-  setModalTimer(
-    setInterval(() => {
-      const now = performance.now(),
-        dt = (now - last) / 1000;
-      last = now;
-      if (busy || done) return;
-      p += dir * SP[Math.min(round, 2)]! * dt;
-      if (p > 1) {
-        p = 1;
-        dir = -1;
-      }
-      if (p < 0) {
-        p = 0;
-        dir = 1;
-      }
+  async function leave() {
+    if (done) {
+      closeModal();
+      return;
+    }
+    done = true;
+    sheet.dataset.lock = '';
+    try {
+      await vaultRequest('/vault/cancel', { method: 'POST' });
+    } catch {
+      /* already closed */
+    }
+    closeModal();
+  }
+  async function stop() {
+    if (done || busy || !attempt) return;
+    const elapsed = Math.round(Date.now() - attempt.startedAt);
+    if (elapsed < vaultLockStart(stops, round)) return;
+    busy = true;
+    try {
+      const state = await vaultRequest<VaultFinish>('/vault/finish', {
+        method: 'POST',
+        body: JSON.stringify({ stops: [...stops, elapsed] }),
+      });
+      stops = state.stops;
+      results[round] = state.hit;
       const n = $('#ndl') as HTMLElement | null;
-      if (n) n.style.left = `calc(${p * 100}% - 3px)`;
-    }, 16),
-  );
-  setup();
+      if (n) n.style.background = state.hit ? '#b8ff3d' : '#ff3d9a';
+      if (state.status === 'settled') {
+        window.setTimeout(() => {
+          if (!done) showResult(state);
+        }, attempt.pauseMs);
+        return;
+      }
+      const nextIndex = stops.length;
+      const startAt = vaultLockStart(stops, nextIndex);
+      const wait = Math.max(0, startAt - (Date.now() - attempt.startedAt));
+      window.setTimeout(() => {
+        if (done) return;
+        round = nextIndex;
+        busy = false;
+        render();
+      }, wait);
+    } catch (err) {
+      busy = false;
+      banner(err instanceof Error ? err.message : 'Vault failed', 'bad');
+    }
+  }
+  async function openAttempt(): Promise<VaultStart> {
+    try {
+      return await vaultRequest<VaultStart>('/vault/start', { method: 'POST' });
+    } catch (err) {
+      if (!(err instanceof Error) || !/already open/i.test(err.message)) throw err;
+      await vaultRequest('/vault/cancel', { method: 'POST' });
+      return await vaultRequest<VaultStart>('/vault/start', { method: 'POST' });
+    }
+  }
+  void (async () => {
+    try {
+      attempt = await openAttempt();
+      if (done) {
+        await vaultRequest('/vault/cancel', { method: 'POST' }).catch(() => {});
+        return;
+      }
+      render();
+    } catch (err) {
+      if (done) return;
+      sheet.dataset.lock = '';
+      sheet.innerHTML = `<h2>Vault Cracker</h2><p>${esc(err instanceof Error ? err.message : 'Could not open the vault')}</p><div class="acts"><button id="vx">Leave</button></div>`;
+      ($('#vx') as HTMLButtonElement).onclick = () => closeModal();
+    }
+  })();
 }
 
 export const FREEGEAR = [0, 2];

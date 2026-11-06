@@ -13,6 +13,8 @@ export default defineConfig({
       '/health': { target: 'http://localhost:8787', changeOrigin: true },
       '/auth': { target: 'http://localhost:8787', changeOrigin: true },
       '/me': { target: 'http://localhost:8787', changeOrigin: true },
+      '/trade': { target: 'http://localhost:8787', changeOrigin: true },
+      '/vault': { target: 'http://localhost:8787', changeOrigin: true },
       '/admin/health': { target: 'http://localhost:8787', changeOrigin: true },
     },
   },

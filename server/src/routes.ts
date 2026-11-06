@@ -6,6 +6,8 @@ import { adminAuth, adminHealth } from './admin';
 import { AuthError, SESSION_COOKIE, SESSION_MAX_AGE_S, chainProofFor, loginPlayer, meForPlayer, playerFromSessionToken } from './auth';
 import { config } from './config';
 import { getHealth, getStreamPayload } from './sim';
+import { openTrade, parseTradeDir, parseTradeStake, tradeSnapshot } from './trade';
+import { cancelVault, finishVault, parseVaultStops, startVault } from './vault';
 
 function clientIp(headers: Headers): string {
   const fwd = headers.get('x-forwarded-for');
@@ -89,6 +91,86 @@ export function createApp() {
     } catch {
       console.error('[admin] health failed');
       return c.json({ error: 'Health check failed' }, 502);
+    }
+  });
+
+  app.post('/trade/open', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { sym?: string; dir?: unknown; stake?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    const dir = parseTradeDir(body.dir);
+    const stake = parseTradeStake(body.stake);
+    if (typeof body.sym !== 'string' || !dir || stake == null) {
+      return c.json({ error: 'Bad bet' }, 400);
+    }
+    try {
+      return c.json(await openTrade(player, { sym: body.sym, dir, stake }));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[trade] open failed');
+      return c.json({ error: 'Could not open bet' }, 502);
+    }
+  });
+
+  /** Latest bet. While open, `markPnl` follows the server price. */
+  app.get('/trade', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(await tradeSnapshot(player));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[trade] read failed');
+      return c.json({ error: 'Could not load bet' }, 502);
+    }
+  });
+
+  app.post('/vault/start', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(await startVault(player));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[vault] start failed');
+      return c.json({ error: 'Could not open the vault' }, 502);
+    }
+  });
+
+  app.post('/vault/finish', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: unknown = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    const stops = parseVaultStops(body);
+    if (!stops) return c.json({ error: 'Bad vault stop' }, 400);
+    try {
+      return c.json(await finishVault(player, stops));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[vault] finish failed');
+      return c.json({ error: 'Could not score that stop' }, 502);
+    }
+  });
+
+  app.post('/vault/cancel', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(await cancelVault(player));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[vault] cancel failed');
+      return c.json({ error: 'Could not leave the vault' }, 502);
     }
   });
 
