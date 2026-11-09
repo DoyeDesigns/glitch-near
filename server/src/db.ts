@@ -88,6 +88,21 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS purchases (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL REFERENCES players(id),
+    merchant_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    outbox_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'paying',
+    delivered INTEGER NOT NULL DEFAULT 0,
+    deliver_tx_hash TEXT,
+    deliver_tx_at INTEGER,
+    deliver_attempts INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS signup_log (
     id TEXT PRIMARY KEY,
     ip TEXT NOT NULL,
@@ -264,6 +279,10 @@ function addMintColumns(): void {
   addColumn('outbox', 'tx_hash', 'tx_hash TEXT');
   addColumn('outbox', 'tx_at', 'tx_at INTEGER');
   addColumn('outbox', 'attempts', 'attempts INTEGER NOT NULL DEFAULT 0');
+  addColumn('purchases', 'delivered', 'delivered INTEGER NOT NULL DEFAULT 0');
+  addColumn('purchases', 'deliver_tx_hash', 'deliver_tx_hash TEXT');
+  addColumn('purchases', 'deliver_tx_at', 'deliver_tx_at INTEGER');
+  addColumn('purchases', 'deliver_attempts', 'deliver_attempts INTEGER NOT NULL DEFAULT 0');
 }
 
 migrate();

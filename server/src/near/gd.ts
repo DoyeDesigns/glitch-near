@@ -3,9 +3,17 @@ import { config, requireNearConfig } from '../config';
 import { randomId } from '../crypto';
 import { db } from '../db';
 import { getPlayerById } from './accounts';
-import { DEFAULT_GAS, ONE_YOCTO, enqueueSignerWrite, getProvider, getTreasuryAccount, parseU128 } from './client';
+import {
+  DEFAULT_GAS,
+  ONE_YOCTO,
+  ensurePlayerNear,
+  enqueueSignerWrite,
+  getProvider,
+  getTreasuryAccount,
+  parseU128,
+} from './client';
 import { decryptPrivateKey } from './keys';
-import { deliverSigned, lookupSignedTx, nextMintStep, signAccountCall } from './mintTx';
+import { deliverSigned, lookupSignedTx, signAccountCall } from './mintTx';
 import { ChainWriteError, recordChainFailure, withChainRetry } from './retry';
 
 const GD_CACHE_MS = 5_000;
@@ -124,6 +132,8 @@ export async function readGdBalanceForLog(accountId: string | null): Promise<str
 
 const TRANSFER_MEMO = 'glitch';
 
+export type TransferOutcome = 'success' | 'failure' | 'unknown';
+
 type OutboxRow = {
   id: string;
   player_id: string;
@@ -151,31 +161,39 @@ function markTransferLanded(id: string, fromAccount: string, toAccount: string, 
   })();
 }
 
+function markTransferFailed(id: string): void {
+  db.prepare(`UPDATE outbox SET status = 'failed' WHERE id = ? AND status = 'pending'`).run(id);
+}
+
 /**
  * Player-signed ft_transfer. One attempt. The hash is stored on the outbox
  * row before broadcast. Writes for one signer account run one at a time.
+ * Pass outboxId when the caller already reserved the spend.
  */
 export async function ftTransfer(
   fromPlayerId: string,
   toAccountId: string,
   amount: bigint | number | string,
-): Promise<void> {
+  opts?: { outboxId?: string },
+): Promise<TransferOutcome> {
   const amt = BigInt(amount);
   if (amt <= 0n) throw new Error('Amount must be positive');
   const player = getPlayerById(fromPlayerId);
   if (!player?.account_id || !player.enc_private_key) throw new Error('Player has no key');
   decryptPrivateKey(player.enc_private_key);
-  const id = randomId();
-  db.prepare(
-    `INSERT INTO outbox (id, player_id, kind, payload, status, created_at, attempts)
-     VALUES (?, ?, 'ft_transfer', ?, 'pending', ?, 0)`,
-  ).run(
-    id,
-    fromPlayerId,
-    JSON.stringify({ to: toAccountId, amount: amt.toString(), memo: TRANSFER_MEMO }),
-    Date.now(),
-  );
-  await pushTransfer(id, true);
+  const id = opts?.outboxId ?? randomId();
+  if (!opts?.outboxId) {
+    db.prepare(
+      `INSERT INTO outbox (id, player_id, kind, payload, status, created_at, attempts)
+       VALUES (?, ?, 'ft_transfer', ?, 'pending', ?, 0)`,
+    ).run(
+      id,
+      fromPlayerId,
+      JSON.stringify({ to: toAccountId, amount: amt.toString(), memo: TRANSFER_MEMO }),
+      Date.now(),
+    );
+  }
+  return pushTransfer(id);
 }
 
 /** Finish pending player transfers. A stored hash is looked up; it is never rebroadcast. */
@@ -185,7 +203,7 @@ export async function resumeTransfers(): Promise<void> {
     .all() as { id: string }[];
   for (const row of rows) {
     try {
-      await pushTransfer(row.id, false);
+      await pushTransfer(row.id);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[gd] resume transfer ${row.id} failed: ${msg}`);
@@ -193,31 +211,34 @@ export async function resumeTransfers(): Promise<void> {
   }
 }
 
-async function pushTransfer(id: string, requireLanded: boolean): Promise<void> {
+/** Push one outbox transfer. success / failure / unknown — never retries a failed send. */
+export async function pushTransfer(id: string): Promise<TransferOutcome> {
   const row = outboxRow(id);
-  if (!row || row.status === 'landed') return;
+  if (!row) return 'failure';
+  if (row.status === 'landed') return 'success';
+  if (row.status === 'failed') return 'failure';
   const player = getPlayerById(row.player_id);
   if (!player?.account_id || !player.enc_private_key) throw new Error('Player has no key');
   const accountId = player.account_id;
   const secret = decryptPrivateKey(player.enc_private_key) as KeyPairString;
   const payload = JSON.parse(row.payload) as { to: string; amount: string; memo: string };
-  await enqueueSignerWrite(accountId, async () => {
+  return enqueueSignerWrite(accountId, async () => {
     const fresh = outboxRow(id);
-    if (!fresh || fresh.status === 'landed') return;
+    if (!fresh) return 'failure';
+    if (fresh.status === 'landed') return 'success';
+    if (fresh.status === 'failed') return 'failure';
+    await ensurePlayerNear(accountId);
     const looked = fresh.tx_hash ? await lookupSignedTx(fresh.tx_hash, accountId) : null;
-    const step = nextMintStep({
-      flag: 0,
-      hash: fresh.tx_hash,
-      txAt: fresh.tx_at,
-      attempts: fresh.attempts,
-      status: looked,
-      now: Date.now(),
-    });
-    if (step === 'mark') {
-      await markTransferLanded(id, accountId, payload.to, BigInt(payload.amount));
-      return;
+    if (looked === 'failure') {
+      markTransferFailed(id);
+      return 'failure';
     }
-    if (step !== 'fresh') return;
+    if (looked === 'success') {
+      await markTransferLanded(id, accountId, payload.to, BigInt(payload.amount));
+      return 'success';
+    }
+    // Player transfers never resign. A stored hash that is still unseen stays unknown.
+    if (fresh.tx_hash) return 'unknown';
     const attempts = fresh.attempts + 1;
     let outcome: Awaited<ReturnType<typeof deliverSigned>>;
     try {
@@ -255,21 +276,24 @@ async function pushTransfer(id: string, requireLanded: boolean): Promise<void> {
               cause: err,
             });
       if (!(err instanceof ChainWriteError)) recordChainFailure(cwe);
-      throw cwe;
+      // Hash may already be stored; treat as ambiguous so resume can look it up.
+      return 'unknown';
     }
-    if (outcome !== 'success') {
+    if (outcome === 'success') {
+      await markTransferLanded(id, accountId, payload.to, BigInt(payload.amount));
+      return 'success';
+    }
+    if (outcome === 'failure') {
+      markTransferFailed(id);
       const cwe = new ChainWriteError({
         label: 'gd.ft_transfer',
         account: accountId,
         amount: payload.amount,
-        cause: new Error(outcome),
+        cause: new Error('failure'),
       });
       recordChainFailure(cwe);
-      throw cwe;
+      return 'failure';
     }
-    await markTransferLanded(id, accountId, payload.to, BigInt(payload.amount));
+    return 'unknown';
   });
-  if (!requireLanded) return;
-  const done = outboxRow(id);
-  if (done?.status !== 'landed') throw new Error('Transfer has not landed');
 }

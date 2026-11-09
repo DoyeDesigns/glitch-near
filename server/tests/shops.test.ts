@@ -1,31 +1,40 @@
 import { randomBytes } from 'node:crypto';
-import { KeyPair } from 'near-api-js';
+import { KeyPair, nearToYocto } from 'near-api-js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { availableGd, spendableGd } from '../src/auth';
 import { config } from '../src/config';
 import { db } from '../src/db';
-import { purchase } from '../src/purchase';
-import { enqueueTreasuryWrite } from '../src/near/client';
+import { purchase, resumePurchases } from '../src/purchase';
+import {
+  PLAYER_FUND_NEAR,
+  PLAYER_NEAR_TOPUP_FLOOR,
+  enqueueTreasuryWrite,
+  setNearFundingForTests,
+} from '../src/near/client';
 import { getGDBalanceCached, resumeTransfers, setGdChainForTests, ftTransfer } from '../src/near/gd';
 import { encryptPrivateKey } from '../src/near/keys';
 import { lastSignedCall, setMintTxTestHooks } from '../src/near/mintTx';
 import { MERCHANT_FLOAT, merchantAccountId, setMerchantChainForTests, setupMerchants } from '../src/near/merchants';
 import { ChainWriteError, recordChainFailure } from '../src/near/retry';
 import { getPlayerById, type PlayerRow } from '../src/near/accounts';
+import { openTrade } from '../src/trade';
 
 if (!config.dbPath || config.dbPath.includes('glitch.sqlite')) {
   throw new Error(`refusing to run tests against ${config.dbPath || 'the default database'}`);
 }
 
 const balances = new Map<string, bigint>();
+const nearBalances = new Map<string, bigint>();
 const exists = new Set<string>();
 const created: { id: string; near: bigint }[] = [];
 const mints: { id: string; amount: bigint }[] = [];
 const burns: { id: string; amount: bigint }[] = [];
+const topUps: { id: string; amount: bigint }[] = [];
 
 let signs = 0;
 let burnFails = false;
-let broadcastImpl: () => Promise<'success' | 'failure'> = async () => 'success';
+let broadcastImpl: () => Promise<'success' | 'failure' | 'unknown'> = async () => 'success';
+let lookupImpl: (hash: string) => Promise<'success' | 'failure' | 'unknown'> = async () => 'success';
 let inFlight = 0;
 let maxInFlight = 0;
 let holdBroadcast = false;
@@ -52,6 +61,7 @@ function player(tag: string): PlayerRow {
     12,
     9,
   );
+  nearBalances.set(accountId, PLAYER_FUND_NEAR);
   const row = getPlayerById(id);
   if (!row) throw new Error('player missing');
   return row;
@@ -75,6 +85,26 @@ function insertMerchant(id: 'chef' | 'smith' | 'dealer'): string {
   return accountId;
 }
 
+function purchaseRow(playerId: string): {
+  id: string;
+  status: string;
+  delivered: number;
+  outbox_id: string;
+  amount: string;
+} {
+  return db
+    .prepare(
+      `SELECT id, status, delivered, outbox_id, amount FROM purchases WHERE player_id = ? ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(playerId) as {
+    id: string;
+    status: string;
+    delivered: number;
+    outbox_id: string;
+    amount: string;
+  };
+}
+
 beforeEach(() => {
   signs = 0;
   burnFails = false;
@@ -82,14 +112,20 @@ beforeEach(() => {
   maxInFlight = 0;
   holdBroadcast = false;
   broadcastImpl = async () => 'success';
+  lookupImpl = async () => 'success';
   balances.clear();
+  nearBalances.clear();
   exists.clear();
   created.length = 0;
   mints.length = 0;
   burns.length = 0;
+  topUps.length = 0;
   db.prepare(`DELETE FROM outbox`).run();
   db.prepare(`DELETE FROM merchants`).run();
   db.prepare(`DELETE FROM pending_burns`).run();
+  db.prepare(`DELETE FROM escrow`).run();
+  db.prepare(`DELETE FROM purchases`).run();
+  db.prepare(`DELETE FROM trades`).run();
   setMintTxTestHooks({
     sign: async () => {
       signs += 1;
@@ -103,7 +139,7 @@ beforeEach(() => {
       inFlight -= 1;
       return outcome;
     },
-    lookup: async () => 'success',
+    lookup: async hash => lookupImpl(hash),
   });
   setGdChainForTests({
     read: async accountId => balances.get(accountId) ?? 0n,
@@ -123,6 +159,13 @@ beforeEach(() => {
       balances.set(to, (balances.get(to) ?? 0n) + amount);
     },
   });
+  setNearFundingForTests({
+    read: async accountId => nearBalances.get(accountId) ?? PLAYER_FUND_NEAR,
+    topUp: async (accountId, amount) => {
+      topUps.push({ id: accountId, amount });
+      nearBalances.set(accountId, (nearBalances.get(accountId) ?? 0n) + amount);
+    },
+  });
   setMerchantChainForTests({
     exists: async accountId => exists.has(accountId),
     create: async (accountId, near) => {
@@ -135,6 +178,7 @@ beforeEach(() => {
 afterAll(() => {
   setMintTxTestHooks(null);
   setGdChainForTests(null);
+  setNearFundingForTests(null);
   setMerchantChainForTests(null);
 });
 
@@ -176,7 +220,7 @@ describe('ftTransfer', () => {
     broadcastImpl = async () => {
       throw new Error('rpc down');
     };
-    await expect(ftTransfer(row.id, 'chef.test', 500n)).rejects.toThrow(/rpc down/);
+    expect(await ftTransfer(row.id, 'chef.test', 500n)).toBe('unknown');
     expect(signs).toBe(1);
     const pending = db.prepare(`SELECT status, tx_hash, attempts FROM outbox WHERE player_id = ?`).get(row.id) as {
       status: string;
@@ -227,6 +271,21 @@ describe('ftTransfer', () => {
     expect(maxInFlight).toBe(1);
     expect(balances.get(row.account_id!)).toBe(4_800n);
   });
+
+  it('tops up NEAR from the players account when the balance is below 0.02', async () => {
+    const row = player('gas');
+    fund(row.account_id!, 1_000n);
+    nearBalances.set(row.account_id!, nearToYocto('0.01'));
+    expect(await ftTransfer(row.id, 'chef.test', 100n)).toBe('success');
+    expect(topUps).toEqual([{ id: row.account_id, amount: PLAYER_FUND_NEAR - nearToYocto('0.01') }]);
+    expect(nearBalances.get(row.account_id!)).toBe(PLAYER_FUND_NEAR);
+    topUps.length = 0;
+    expect(await ftTransfer(row.id, 'chef.test', 100n)).toBe('success');
+    expect(topUps).toEqual([]);
+    nearBalances.set(row.account_id!, PLAYER_NEAR_TOPUP_FLOOR);
+    expect(await ftTransfer(row.id, 'chef.test', 100n)).toBe('success');
+    expect(topUps).toEqual([]);
+  });
 });
 
 describe('spendable', () => {
@@ -242,12 +301,13 @@ describe('spendable', () => {
     expect(await availableGd(row)).toBe(6_000n);
     insertMerchant('chef');
     const before = state(row.id);
-    await expect(purchase(row.id, 'chef', 2_000n)).rejects.toThrow(/still landing on chain/);
+    await expect(purchase(row.id, 'suya-skewer')).rejects.toThrow(/still landing on chain/);
     expect(state(row.id)).toEqual(before);
     expect(db.prepare(`SELECT COUNT(*) AS n FROM outbox`).get() as { n: number }).toEqual({ n: 0 });
-    await purchase(row.id, 'chef', 500n);
-    expect(balances.get(row.account_id!)).toBe(500n);
-    expect(balances.get(merchantAccountId('chef'))).toBe(500n);
+    const result = await purchase(row.id, 'zobo-drink');
+    expect(result).toEqual({ ok: true, purchaseId: expect.any(String), status: 'delivered' });
+    expect(balances.get(row.account_id!)).toBe(0n);
+    expect(balances.get(merchantAccountId('chef'))).toBe(1_000n);
   });
 });
 
@@ -332,7 +392,7 @@ describe('chain write errors', () => {
 });
 
 describe('purchase', () => {
-  it('flushes pending burns, then transfers, and returns only after the transfer lands', async () => {
+  it('flushes pending burns, reserves escrow, then delivers after the transfer lands', async () => {
     const row = player('buy');
     const chef = insertMerchant('chef');
     fund(row.account_id!, 2_000n);
@@ -341,19 +401,108 @@ describe('purchase', () => {
       row.id,
       Date.now(),
     );
-    const result = await purchase(row.id, 'chef', 500n);
-    expect(result).toEqual({ ok: true });
+    const result = await purchase(row.id, 'zobo-drink');
+    expect(result).toEqual({ ok: true, purchaseId: expect.any(String), status: 'delivered' });
     expect(burns).toEqual([{ id: row.account_id, amount: 400n }]);
     expect(db.prepare(`SELECT COUNT(*) AS n FROM pending_burns WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
-    expect(balances.get(row.account_id!)).toBe(1_100n);
-    expect(balances.get(chef)).toBe(500n);
-    const out = db.prepare(`SELECT status FROM outbox WHERE player_id = ?`).get(row.id) as { status: string };
-    expect(out.status).toBe('landed');
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM escrow WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
+    expect(balances.get(row.account_id!)).toBe(600n);
+    expect(balances.get(chef)).toBe(1_000n);
+    const bought = purchaseRow(row.id);
+    expect(bought.status).toBe('delivered');
+    expect(bought.delivered).toBe(1);
+    expect(state(row.id).needs_json).toBe('{"energy":82,"hunger":68}');
   });
 
-  it('leaves the player row alone when the burn or the transfer fails', async () => {
-    const row = player('fail');
-    insertMerchant('smith');
+  it('lets only one of two concurrent purchases reserve the balance', async () => {
+    const row = player('race');
+    insertMerchant('dealer');
+    fund(row.account_id!, 10_000n);
+    const results = await Promise.allSettled([purchase(row.id, 'plant'), purchase(row.id, 'plant')]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM purchases WHERE player_id = ?`).get(row.id)).toEqual({ n: 1 });
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM escrow WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
+    expect(balances.get(row.account_id!)).toBe(2_000n);
+  });
+
+  it('lets only one of a purchase and a trade open reserve the balance', async () => {
+    const row = player('vs-trade');
+    insertMerchant('dealer');
+    fund(row.account_id!, 10_000n);
+    const results = await Promise.allSettled([
+      purchase(row.id, 'plant'),
+      openTrade(row, { sym: 'BTX', dir: 1, stake: 6000 }),
+    ]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+    const purchases = db.prepare(`SELECT COUNT(*) AS n FROM purchases WHERE player_id = ?`).get(row.id) as {
+      n: number;
+    };
+    const trades = db.prepare(`SELECT COUNT(*) AS n FROM trades WHERE player_id = ? AND status = 'open'`).get(row.id) as {
+      n: number;
+    };
+    expect(purchases.n + trades.n).toBe(1);
+    if (purchases.n === 1) {
+      expect(purchaseRow(row.id).status).toBe('delivered');
+      expect(balances.get(row.account_id!)).toBe(2_000n);
+      expect(db.prepare(`SELECT COUNT(*) AS n FROM escrow WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
+    } else {
+      expect(db.prepare(`SELECT reason FROM escrow WHERE player_id = ?`).all(row.id)).toEqual([{ reason: 'trade' }]);
+    }
+  });
+
+  it('keeps escrow on an ambiguous transfer and delivers once when it lands later', async () => {
+    const row = player('ambig');
+    insertMerchant('dealer');
+    fund(row.account_id!, 10_000n);
+    broadcastImpl = async () => 'unknown';
+    const first = await purchase(row.id, 'plant');
+    expect(first).toEqual({ settling: true, purchaseId: expect.any(String) });
+    const paying = purchaseRow(row.id);
+    expect(paying.status).toBe('paying');
+    expect(paying.delivered).toBe(0);
+    expect(db.prepare(`SELECT amount, reason FROM escrow WHERE id = ?`).get(paying.id)).toEqual({
+      amount: '8000',
+      reason: 'purchase',
+    });
+    expect(balances.get(row.account_id!)).toBe(10_000n);
+    const transferSigns = signs;
+    lookupImpl = async () => 'success';
+    // Transfer resume only looks up the stored hash. Item mint may broadcast once.
+    broadcastImpl = async () => 'success';
+    await resumePurchases();
+    const done = purchaseRow(row.id);
+    expect(done.status).toBe('delivered');
+    expect(done.delivered).toBe(1);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM escrow WHERE id = ?`).get(paying.id)).toEqual({ n: 0 });
+    expect(balances.get(row.account_id!)).toBe(2_000n);
+    expect(balances.get(merchantAccountId('dealer'))).toBe(8_000n);
+    // One transfer sign earlier, then one item-mint sign on resume.
+    expect(signs).toBe(transferSigns + 1);
+    const mintSigns = signs;
+    await resumePurchases();
+    expect(signs).toBe(mintSigns);
+    expect(purchaseRow(row.id).delivered).toBe(1);
+  });
+
+  it('releases escrow on a definite transfer failure', async () => {
+    const row = player('fail-tx');
+    insertMerchant('chef');
+    fund(row.account_id!, 3_000n);
+    const before = state(row.id);
+    broadcastImpl = async () => 'failure';
+    await expect(purchase(row.id, 'zobo-drink')).rejects.toThrow(/Purchase failed on chain/);
+    expect(state(row.id)).toEqual(before);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM escrow WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
+    expect(purchaseRow(row.id).status).toBe('failed');
+    expect(balances.get(row.account_id!)).toBe(3_000n);
+    expect(balances.get(merchantAccountId('chef')) ?? 0n).toBe(0n);
+  });
+
+  it('leaves the player row alone when the burn fails before reserve', async () => {
+    const row = player('fail-burn');
+    insertMerchant('chef');
     fund(row.account_id!, 3_000n);
     db.prepare(`INSERT INTO pending_burns (id, player_id, amount, reason, created_at) VALUES (?, ?, '250', 'loss', ?)`).run(
       `burn-${row.id}`,
@@ -362,22 +511,11 @@ describe('purchase', () => {
     );
     const before = state(row.id);
     burnFails = true;
-    await expect(purchase(row.id, 'smith', 100n)).rejects.toThrow(/burn failed/);
+    await expect(purchase(row.id, 'zobo-drink')).rejects.toThrow(/burn failed/);
     expect(state(row.id)).toEqual(before);
     expect(db.prepare(`SELECT amount FROM pending_burns WHERE player_id = ?`).get(row.id)).toEqual({ amount: '250' });
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM purchases`).get()).toEqual({ n: 0 });
     expect(db.prepare(`SELECT COUNT(*) AS n FROM outbox`).get()).toEqual({ n: 0 });
     expect(balances.get(row.account_id!)).toBe(3_000n);
-
-    burnFails = false;
-    broadcastImpl = async () => {
-      throw new Error('transfer failed');
-    };
-    await expect(purchase(row.id, 'smith', 100n)).rejects.toThrow(/transfer failed/);
-    expect(state(row.id)).toEqual(before);
-    expect(db.prepare(`SELECT COUNT(*) AS n FROM pending_burns WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
-    expect(balances.get(row.account_id!)).toBe(2_750n);
-    expect(balances.get(merchantAccountId('smith')) ?? 0n).toBe(0n);
-    const out = db.prepare(`SELECT status FROM outbox WHERE player_id = ?`).get(row.id) as { status: string };
-    expect(out.status).toBe('pending');
   });
 });

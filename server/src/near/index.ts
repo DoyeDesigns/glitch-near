@@ -10,13 +10,17 @@ export {
 export type { PlayerRow } from './accounts';
 export {
   ONE_YOCTO,
+  PLAYER_FUND_NEAR,
+  PLAYER_NEAR_TOPUP_FLOOR,
   enqueueTreasuryWrite,
+  ensurePlayerNear,
   formatNear,
   getNearBalanceCached,
   getProvider,
   getTreasuryAccount,
+  setNearFundingForTests,
 } from './client';
-export { burnGD, getGDBalance, getGDBalanceCached, mintGD } from './gd';
+export { burnGD, ftTransfer, getGDBalance, getGDBalanceCached, mintGD, pushTransfer, resumeTransfers } from './gd';
 export { adminTransfer, createToken, getItemBalances, getToken, mintItem } from './items';
 export type { TokenView } from './items';
 export { decryptPrivateKey, encryptPrivateKey } from './keys';

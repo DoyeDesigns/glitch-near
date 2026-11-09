@@ -15,9 +15,29 @@ import { config, requireNearConfig } from '../config';
 export const ONE_YOCTO = 1n;
 export const DEFAULT_GAS = teraToGas('30');
 export const PLAYER_FUND_NEAR = nearToYocto('0.05');
+/** Top up a player before a signed transfer when their NEAR is below this. */
+export const PLAYER_NEAR_TOPUP_FLOOR = nearToYocto('0.02');
 
 let provider: JsonRpcProvider | null = null;
 let treasury: Account | null = null;
+
+const NEAR_CACHE_MS = 5_000;
+const nearCache = new Map<string, { yocto: bigint | null; until: number }>();
+
+let nearReader: ((accountId: string) => Promise<bigint | null>) | null = null;
+let nearTopUp: ((accountId: string, amount: bigint) => Promise<void>) | null = null;
+
+/** Test seam for player NEAR gas top-ups. */
+export function setNearFundingForTests(
+  hooks: {
+    read: (accountId: string) => Promise<bigint | null>;
+    topUp: (accountId: string, amount: bigint) => Promise<void>;
+  } | null,
+): void {
+  nearReader = hooks?.read ?? null;
+  nearTopUp = hooks?.topUp ?? null;
+  nearCache.clear();
+}
 
 /** Single-flight queue: every treasury-signed write runs one at a time. */
 let writeTail: Promise<unknown> = Promise.resolve();
@@ -71,11 +91,9 @@ export function parseU128(raw: unknown): bigint {
   return 0n;
 }
 
-const NEAR_CACHE_MS = 5_000;
-const nearCache = new Map<string, { yocto: bigint | null; until: number }>();
-
 /** NEAR balance in yocto, or null if the account is missing. Cached 5s. One RPC attempt. */
 export async function getNearBalanceCached(accountId: string): Promise<bigint | null> {
+  if (nearReader) return nearReader(accountId);
   const now = Date.now();
   const hit = nearCache.get(accountId);
   if (hit && hit.until > now) return hit.yocto;
@@ -88,6 +106,28 @@ export async function getNearBalanceCached(accountId: string): Promise<bigint | 
   }
   nearCache.set(accountId, { yocto, until: now + NEAR_CACHE_MS });
   return yocto;
+}
+
+/**
+ * Fund a player to PLAYER_FUND_NEAR when their balance is below 0.02 NEAR.
+ * One treasury transfer, never retried. Runs on the treasury write queue.
+ */
+export async function ensurePlayerNear(accountId: string): Promise<void> {
+  const bal = await getNearBalanceCached(accountId);
+  if (bal == null) throw new Error(`Account ${accountId} is missing`);
+  if (bal >= PLAYER_NEAR_TOPUP_FLOOR) return;
+  const amount = PLAYER_FUND_NEAR - bal;
+  if (amount <= 0n) return;
+  if (nearTopUp) {
+    await nearTopUp(accountId, amount);
+    nearCache.delete(accountId);
+    return;
+  }
+  requireNearConfig();
+  await enqueueTreasuryWrite(async () => {
+    await getTreasuryAccount().transfer({ receiverId: accountId, amount });
+  });
+  nearCache.delete(accountId);
 }
 
 /** Up to 4 decimal places, trailing zeros trimmed. */

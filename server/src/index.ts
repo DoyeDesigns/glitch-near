@@ -6,13 +6,14 @@ import { startSimLoop } from './sim';
 import { resumePosts } from './post';
 import { resumeTrades } from './trade';
 import { resumeTransfers } from './near/gd';
+import { resumePurchases } from './purchase';
 import { ensureShardToken, resumeVaults } from './vault';
 
 startSimLoop();
 resumeTrades();
 resumeVaults();
 resumePosts();
-void resumeTransfers();
+void resumeTransfers().then(() => resumePurchases());
 void ensureShardToken();
 
 const app = createApp();
