@@ -61,11 +61,18 @@ export function classifyTxStatus(status: unknown): TxLookup {
  * which is what `viewTransactionStatus` looks up. Signed bytes are returned
  * to the caller and are not stored.
  */
+/** Last treasury-signed call, so tests can see burn/create/mint args. */
+export let lastTreasuryCall: {
+  methodName: string;
+  args: Record<string, unknown>;
+} | null = null;
+
 export async function signTreasuryCall(
   contractId: string,
   methodName: string,
   args: Record<string, unknown>,
 ): Promise<SignedCall> {
+  lastTreasuryCall = { methodName, args };
   if (testSign) return testSign();
   requireNearConfig();
   const signer = KeyPairSigner.fromSecretKey(config.treasuryKey as KeyPairString);
@@ -122,6 +129,7 @@ export async function signAccountCall(opts: {
   deposit: bigint;
 }): Promise<SignedCall> {
   lastSignedCall = { methodName: opts.methodName, deposit: opts.deposit, args: opts.args };
+  lastTreasuryCall = null;
   if (testSign) return testSign();
   requireNearConfig();
   const signer = KeyPairSigner.fromSecretKey(opts.secretKey);

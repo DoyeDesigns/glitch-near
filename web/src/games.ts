@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import {
+  catalogById,
+  catalogByKind,
   HOMEP_GD,
-  RENT_GD,
-  RENT_MS as RENT_PERIOD_MS,
+  MAINTENANCE_GD,
+  MAINTENANCE_MS as MAINTENANCE_PERIOD_MS,
   POST_COST,
   TRADE_MAX_STAKE,
   TRADE_MIN_STAKE,
@@ -10,8 +12,9 @@ import {
   vaultNeedle,
   type VaultLock,
 } from '@glitch/shared';
-import { $, clamp, esc, fmt, fmtN, pick, rnd } from './util';
-import { burn, L, logTx, save, S, weak } from './state';
+import { $, clamp, esc, fmt, fmtN, pick } from './util';
+import { applyChainItems, forgeItemIdForGear } from './itemsSync';
+import { L, save, S, weak } from './state';
 import { banner, post, px, TOK } from './market';
 import {
   BOTC,
@@ -30,7 +33,7 @@ import {
   overdue,
   player,
   rain,
-  rentLeft,
+  maintenanceLeft,
   setCustomizing,
   SKINS,
   TOPC,
@@ -50,7 +53,7 @@ import {
   sheet,
   updateHud,
 } from './hud';
-import { here, LOCS } from './phone';
+import { LOCS } from './phone';
 
 export function useStation() {
   if (!nearStation || nearStation.locked || modalOpen()) return;
@@ -580,13 +583,14 @@ export function secGame() {
 }
 
 export const FREEGEAR = [0, 2];
-export const GEARINFO: Record<number, { shd: number; usdg: number; rar: string }> = {
-  1: { shd: 3, usdg: 2, rar: 'Common' },
-  3: { shd: 8, usdg: 10, rar: 'Rare' },
-  4: { shd: 5, usdg: 5, rar: 'Common' },
-  5: { shd: 15, usdg: 20, rar: 'Epic' },
-  6: { shd: 30, usdg: 40, rar: 'Legendary' },
+export const GEARINFO: Record<number, { shd: number; gd: number; rar: string }> = {
+  1: { shd: 3, gd: 1000, rar: 'Common' },
+  3: { shd: 8, gd: 5000, rar: 'Rare' },
+  4: { shd: 5, gd: 2500, rar: 'Common' },
+  5: { shd: 15, gd: 10000, rar: 'Epic' },
+  6: { shd: 30, gd: 20000, rar: 'Legendary' },
 };
+
 export const gearOwned = (g: number) => FREEGEAR.includes(g) || S.nfts.some(n => n.g === g);
 
 export function openCustomizer() {
@@ -747,26 +751,47 @@ export function commGame() {
   render();
 }
 
-/** @deprecated MVP has no USDG; kept for swap UI until removed. */
-export const RATE = 500,
-  RENT = RENT_GD,
-  RENT_MS = RENT_PERIOD_MS,
+export const MAINTENANCE = MAINTENANCE_GD,
+  MAINTENANCE_MS = MAINTENANCE_PERIOD_MS,
   HOMEP = HOMEP_GD;
-const clampN = () => {
-  S.needs.energy = clamp(S.needs.energy, 0, 100);
-  S.needs.hunger = clamp(S.needs.hunger, 0, 100);
-};
+
+function fundsNow(): number {
+  return hudAvailable ?? S.bal;
+}
+
+function applyFunds(available: string, settling?: string): void {
+  const n = Number(available);
+  setHudAvailable(n);
+  if (settling != null) setHudSettling(Number(settling) || 0);
+  S.bal = n;
+}
+
+function applyNeeds(needs: { energy: number; hunger: number }): void {
+  S.needs.energy = needs.energy;
+  S.needs.hunger = needs.hunger;
+}
+
+async function lifeRequest<T>(path: string, body?: Record<string, unknown>): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = (await res.json()) as T & { error?: string };
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
 let warnT = 0;
+/** Warnings and pose only. Hunger and energy come from the server. */
 export function lifeUpdate(dt: number) {
   const n = S.needs,
     home = player.position.x > 100;
-  n.hunger -= dt * 0.2;
-  n.energy -= dt * (n.hunger <= 0 ? 0.5 : 0.25) * (home ? .5 : 1);
-  clampN();
   warnT -= dt;
   if (warnT <= 0) {
     if (n.hunger < 10) {
-      banner('You are starving. Eat at the Neon Diner (it takes USDG).', 'bad');
+      banner('You are starving. Eat at the Neon Diner.', 'bad');
       warnT = 60;
     } else if (n.energy < 15) {
       banner('You are exhausted. Rest on a bench or sleep at home.', 'bad');
@@ -801,125 +826,154 @@ export function progressModal(title: string, line: string, secs: number, done: (
 export const meters = () =>
   `<div class="needs" style="margin:6px 0"><div><span>Energy ${Math.round(S.needs.energy)}</span><i><b style="width:${S.needs.energy}%;background:var(--amber)"></b></i></div><div><span>Hunger ${Math.round(S.needs.hunger)}</span><i><b style="width:${S.needs.hunger}%;background:var(--lime)"></b></i></div></div>`;
 
-export function swap(dir: string, amt: number) {
-  if (here().id !== 'wall') return { ok: 0, msg: 'Go to Wall Street to swap.' };
-  const gd = amt * RATE,
-    fee = gd * 0.01;
-  if (dir === 'buy') {
-    if (S.bal < gd + fee) return { ok: 0, msg: 'Not enough GD.' };
-    S.bal -= gd + fee;
-    S.burned += fee;
-    S.usdg += amt;
-    logTx('out', gd + fee, `Swap for ${amt} USDG`);
-  } else {
-    if (S.usdg < amt) return { ok: 0, msg: 'Not enough USDG.' };
-    S.usdg -= amt;
-    S.bal += gd - fee;
-    S.burned += fee;
-    logTx('in', gd - fee, `Sold ${amt} USDG`);
-  }
-  save();
-  updateHud();
-  return { ok: 1, msg: dir === 'buy' ? `Bought ${amt} USDG` : `Sold ${amt} USDG` };
-}
-export function swapHtml() {
-  if (here().id !== 'wall')
-    return `<div class="hint">USDG is a stablecoin: it is always worth about ${RATE} GD. Restaurants and rent only take USDG. Swap it at <b>Wall Street</b> (open the Map).</div>`;
-  return `<div class="hint"><b>Swap desk.</b> 1 USDG = ${RATE} GD, 1% fee.</div><div class="chips">${[5, 10, 25].map(n => `<button data-a="swap" data-d="buy" data-n="${n}">Buy ${n} USDG<br><small style="text-transform:none">${fmtN(n * RATE * 1.01)} GD</small></button>`).join('')}</div><div class="chips">${[5, 25].map(n => `<button data-a="swap" data-d="sell" data-n="${n}">Sell ${n} USDG</button>`).join('')}</div>`;
-}
+type ChefMenuDish = {
+  itemId: string;
+  title: string;
+  stock: number;
+  price: number;
+  reasoning: { stockFactor: number; demandFactor: number; clamp: string; finalPrice: number };
+};
 
-const MENU = [
-  { n: 'Jollof and chicken', h: 45, e: 0, p: 8, d: 'A full meal' },
-  { n: 'Suya skewer', h: 25, e: 0, p: 4, d: 'Quick bite' },
-  { n: 'Zobo drink', h: 8, e: 12, p: 2, d: 'Cold and refreshing' },
-];
 export function dinerGame() {
   openModal('');
+  let busy = false;
+  let menu: ChefMenuDish[] = [];
+  const reasonHint = (d: ChefMenuDish) => {
+    const r = d.reasoning;
+    const bits = [
+      `stock ×${r.stockFactor.toFixed(2)}`,
+      `demand ×${r.demandFactor.toFixed(2)}`,
+      r.clamp !== 'none' ? `clamp ${r.clamp}` : null,
+      `left ${d.stock.toFixed(1)}`,
+    ].filter(Boolean);
+    return bits.join(' · ');
+  };
+  const loadMenu = async () => {
+    const res = await fetch('/merchants', { credentials: 'include' });
+    const data = (await res.json()) as {
+      error?: string;
+      chef?: { menu: ChefMenuDish[] };
+    };
+    if (!res.ok) throw new Error(data.error || 'Could not load menu');
+    menu = data.chef?.menu ?? [];
+  };
   const r = () => {
-    sheet.innerHTML = `<h2>Neon Diner</h2><p>We only take <b>USDG</b>. You have <b>${S.usdg} USDG</b>.${S.usdg < 4 ? ' Swap some at Wall Street (Balance app) first.' : ''}</p>${meters()}${MENU.map((m, i) => `<div class="loc"><div><b>${m.n}</b><div class="hint">${m.d}: +${m.h} hunger${m.e ? `, +${m.e} energy` : ''}</div></div><button class="pri" data-m="${i}" ${S.usdg < m.p ? 'disabled' : ''}>${m.p} USDG</button></div>`).join('')}<div class="acts"><button id="dx">Leave</button></div>`;
-    sheet.querySelectorAll('[data-m]').forEach(b => {
+    const funds = fundsNow();
+    sheet.innerHTML = `<h2>Neon Diner</h2><p>Paid in <b>GD</b>. Prices move with stock and demand. You have <b>${fmtN(funds)} GD</b>.</p>${meters()}${
+      menu.length === 0
+        ? '<p class="hint">Loading menu…</p>'
+        : menu
+            .map(d => {
+              const item = catalogById(d.itemId);
+              const h = item?.effect.hunger ?? 0;
+              const e = item?.effect.energy ?? 0;
+              const soldOut = d.stock < 1;
+              return `<div class="loc"><div><b>${esc(d.title)}</b><div class="hint">${esc(item?.effect.description ?? '')}${h ? `: +${h} hunger` : ''}${e ? `, +${e} energy` : ''}</div><div class="hint">${esc(reasonHint(d))}</div></div><button class="pri" data-id="${d.itemId}" ${soldOut || funds < d.price || busy ? 'disabled' : ''}>${soldOut ? 'Sold out' : `${fmtN(d.price)} GD`}</button></div>`;
+            })
+            .join('')
+    }<div class="acts"><button id="dx">Leave</button></div>`;
+    sheet.querySelectorAll('[data-id]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
-        const m = MENU[+(b as HTMLElement).dataset.m!]!;
-        if (S.usdg < m.p) return;
-        S.usdg -= m.p;
-        S.needs.hunger += m.h;
-        S.needs.energy += m.e;
-        clampN();
-        banner(`Ate ${m.n}. Hunger +${m.h}`, 'good');
-        crowdTo('eat', 8);
-        save();
-        updateHud();
-        r();
+        void (async () => {
+          if (busy) return;
+          busy = true;
+          r();
+          try {
+            const res = await lifeRequest<{
+              status: 'delivered' | 'settling';
+              available: string;
+              settling: string;
+              needs: { energy: number; hunger: number };
+              price?: number;
+              stock?: number;
+              demandEma?: number;
+              reasoning?: ChefMenuDish['reasoning'];
+            }>('/shop/buy', { itemId: (b as HTMLElement).dataset.id });
+            applyFunds(res.available, res.settling);
+            applyNeeds(res.needs);
+            const item = catalogById((b as HTMLElement).dataset.id!);
+            if (res.status === 'settling') banner('Payment is still landing on chain…', 'info');
+            else banner(`Ate ${item?.title ?? 'food'}${res.price != null ? ` for ${fmtN(res.price)} GD` : ''}.`, 'good');
+            crowdTo('eat', 8);
+            await loadMenu();
+            save();
+            updateHud();
+          } catch (err) {
+            banner(err instanceof Error ? err.message : 'Could not buy', 'bad');
+            try {
+              await loadMenu();
+            } catch {
+              /* keep last menu */
+            }
+          } finally {
+            busy = false;
+            r();
+          }
+        })();
       };
     });
     ($('#dx') as HTMLButtonElement).onclick = closeModal;
   };
+  void loadMenu()
+    .then(() => r())
+    .catch(err => {
+      banner(err instanceof Error ? err.message : 'Could not load menu', 'bad');
+      r();
+    });
   r();
 }
+
 export function benchRest() {
   openModal('');
   progressModal('Resting on the bench', 'Slow, but free. Sleeping at home is much better.', 8, () => {
-    S.needs.energy += 25;
-    S.needs.hunger -= 3;
-    clampN();
-    resultCard(true, 'Energy +25', 'You feel a bit better', 'Took a nap on a park bench in Glitch.');
-    updateHud();
-    save();
+    void lifeRequest<{ needs: { energy: number; hunger: number }; available: string; settling: string }>(
+      '/rest',
+      { kind: 'bench' },
+    )
+      .then(res => {
+        applyFunds(res.available, res.settling);
+        applyNeeds(res.needs);
+        resultCard(true, 'Energy +25', 'You feel a bit better', 'Took a nap on a park bench in Glitch.');
+        updateHud();
+        save();
+      })
+      .catch(err => {
+        banner(err instanceof Error ? err.message : 'Could not rest', 'bad');
+        closeModal();
+      });
   });
 }
+
 const SLEEPLINES = ['Zzz...', 'Dreaming of green candles...', 'Zzz... MOON... Zzz...'];
 
 export const mmss = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 };
+
 export function homeHtml(hdr: (title: string, back: string) => string) {
   const H = S.home;
+  const funds = fundsNow();
   if (!H.owned)
     return (
       hdr('My Home', 'home') +
-      `<div class="loc"><div><b>Studio apartment</b><div class="hint">Your own space. Sleep here to recover energy fast, and decorate it. Costs ${fmtN(HOMEP)} GD to buy, plus ${fmtN(RENT)} GD rent every hour.</div></div></div><div class="acts"><button class="pri" data-a="buyhome">Buy: ${fmtN(HOMEP)} GD + ${fmtN(RENT)} GD rent</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(S.bal)} GD.</p>`
+      `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Costs ${fmtN(HOMEP)} GD to buy. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div></div></div><div class="acts"><button class="pri" data-a="buyhome">Buy: ${fmtN(HOMEP)} GD + ${fmtN(MAINTENANCE)} GD maintenance</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
     );
   return (
     hdr('My Home', 'home') +
-    `<div class="loc"><div><b>Studio apartment</b><div class="hint">${overdue() ? '<span class="neg">RENT OVERDUE. Your bed is locked until you pay.</span>' : 'Rent paid for ' + mmss(rentLeft())} · Comfort ${comfort()}</div></div></div>
-  <div class="acts"><button class="pri" data-a="gohome">Go home (free)</button><button data-a="payrent" ${S.bal < RENT || rentLeft() > RENT_MS * 2 ? 'disabled' : ''}>Pay rent ${fmtN(RENT)} GD</button></div>
+    `<div class="loc"><div><b>Studio apartment</b><div class="hint">${overdue() ? '<span class="neg">MAINTENANCE OVERDUE. Your bed is locked until you pay.</span>' : 'Maintenance paid for ' + mmss(maintenanceLeft())} · Comfort ${comfort()}</div></div></div>
+  <div class="acts"><button class="pri" data-a="gohome">Go home (free)</button><button data-a="paymaintenance" ${funds < MAINTENANCE || maintenanceLeft() > MAINTENANCE_MS * 2 ? 'disabled' : ''}>Pay maintenance ${fmtN(MAINTENANCE)} GD</button></div>
   <small style="display:block;margin-top:10px">Furniture (paid in GD)</small>` +
-    FURN.map(
-      f =>
-        `<div class="loc"><div><b>${f.name}</b><div class="hint">${f.d} · +${f.pts} comfort</div></div>${hasF(f.id) ? '<span class="tag">Owned</span>' : `<button data-a="furn" data-v="${f.id}" ${S.bal < f.price ? 'disabled' : ''}>${fmtN(f.price)}</button>`}</div>`,
-    ).join('')
+    FURN.map(f => {
+      const price = catalogById(f.id)?.priceGD ?? f.price;
+      return `<div class="loc"><div><b>${f.name}</b><div class="hint">${f.d} · +${f.pts} comfort</div></div>${hasF(f.id) ? '<span class="tag">Owned</span>' : `<button data-a="furn" data-v="${f.id}" ${funds < price ? 'disabled' : ''}>${fmtN(price)}</button>`}</div>`;
+    }).join('')
   );
 }
 
-export function homeAct(a: string, v?: string) {
+export function homeAct(a: string, v?: string): boolean | void {
   const H = S.home;
-  if (a === 'buyhome') {
-    if (S.bal < HOMEP + RENT) return banner(`You need ${fmtN(HOMEP + RENT)} GD`, 'bad');
-    burn(HOMEP);
-    logTx('out', HOMEP, 'Bought Studio');
-    burn(RENT);
-    logTx('out', RENT, 'First rent');
-    H.owned = true;
-    H.paidUntil = Date.now() + RENT_MS;
-    buildFurn();
-    banner('You bought a Studio! Tap Go home.', 'good');
-    post('sys', 'NEWS', `${S.name} bought a Studio apartment.`);
-  } else if (a === 'payrent') {
-    if (S.bal < RENT) return;
-    burn(RENT);
-    logTx('out', RENT, 'Rent');
-    H.paidUntil = Math.max(H.paidUntil, Date.now()) + RENT_MS;
-    banner('Rent paid', 'good');
-  } else if (a === 'furn') {
-    const f = FURN.find(x => x.id === v);
-    if (!f || S.bal < f.price || hasF(v!)) return;
-    burn(f.price);
-    logTx('out', f.price, 'Furniture: ' + f.name);
-    H.items.push(v!);
-    buildFurn();
-    banner(`${f.name} placed in your home`, 'good');
-  } else if (a === 'gohome') {
+  if (a === 'gohome') {
     if (!H.owned) return;
     closeModal();
     player.position.set(140, 0, 4);
@@ -927,12 +981,82 @@ export function homeAct(a: string, v?: string) {
     cam.tx = 140;
     cam.tz = 4;
     cam.yaw = 0;
-    if (overdue()) banner('Rent is overdue. Pay it in the My Home app.', 'bad');
+    if (overdue()) banner('Maintenance is overdue. Pay it in the My Home app.', 'bad');
     return true;
   }
-  save();
-  updateHud();
+  if (a === 'buyhome') {
+    void lifeRequest<{
+      studioStatus?: 'delivered' | 'settling';
+      maintenanceStatus?: 'delivered' | 'settling';
+      homePaidUntil: number;
+      available: string;
+      settling: string;
+      needs: { energy: number; hunger: number };
+    }>('/home/buy')
+      .then(res => {
+        applyFunds(res.available, res.settling);
+        applyNeeds(res.needs);
+        H.owned = true;
+        H.paidUntil = res.homePaidUntil;
+        buildFurn();
+        if (res.studioStatus === 'settling') banner('Studio payment is still landing…', 'info');
+        else if (res.maintenanceStatus === 'settling') banner('Studio bought. Maintenance is still landing…', 'info');
+        else if ((res.homePaidUntil ?? 0) <= Date.now()) banner('Studio bought. Pay maintenance to unlock your bed.', 'info');
+        else {
+          banner('You bought a Studio! Tap Go home.', 'good');
+          post('sys', 'NEWS', `${S.name} bought a Studio apartment.`);
+        }
+        save();
+        updateHud();
+      })
+      .catch(err => banner(err instanceof Error ? err.message : 'Could not buy home', 'bad'));
+    return;
+  }
+  if (a === 'paymaintenance') {
+    void lifeRequest<{
+      homePaidUntil: number;
+      available: string;
+      settling: string;
+      needs: { energy: number; hunger: number };
+      maintenanceStatus?: 'delivered' | 'settling';
+    }>('/home/pay-rent')
+      .then(res => {
+        applyFunds(res.available, res.settling);
+        applyNeeds(res.needs);
+        H.paidUntil = res.homePaidUntil;
+        if (res.maintenanceStatus === 'settling') banner('Maintenance is still landing on chain…', 'info');
+        else banner('Maintenance paid', 'good');
+        save();
+        updateHud();
+      })
+      .catch(err => banner(err instanceof Error ? err.message : 'Could not pay', 'bad'));
+    return;
+  }
+  if (a === 'furn') {
+    if (!v || hasF(v)) return;
+    void lifeRequest<{
+      status: 'delivered' | 'settling';
+      available: string;
+      settling: string;
+      needs: { energy: number; hunger: number };
+    }>('/shop/buy', { itemId: v })
+      .then(res => {
+        applyFunds(res.available, res.settling);
+        applyNeeds(res.needs);
+        if (res.status === 'settling') banner('Payment is still landing on chain…', 'info');
+        else {
+          if (!H.items.includes(v)) H.items.push(v);
+          buildFurn();
+          const f = FURN.find(x => x.id === v);
+          banner(`${f?.name ?? v} placed in your home`, 'good');
+        }
+        save();
+        updateHud();
+      })
+      .catch(err => banner(err instanceof Error ? err.message : 'Could not buy', 'bad'));
+  }
 }
+
 export function exitHome() {
   const l = LOCS[0]!;
   player.position.set(l.sp[0], 0, l.sp[1]);
@@ -941,18 +1065,28 @@ export function exitHome() {
   cam.tz = l.sp[1];
   banner('Back in the city', 'info');
 }
+
 export function sleepGame() {
   if (!S.home.owned) return;
-  if (overdue()) return banner('Your bed is locked: pay rent in the My Home app', 'bad');
+  if (overdue()) return banner('Your bed is locked: pay maintenance in the My Home app', 'bad');
   openModal('');
-  const secs = Math.max(3, Math.round(8 - comfort() * .5));
+  const secs = Math.max(3, Math.round(8 - comfort() * 0.5));
   progressModal('Sleeping', pick(SLEEPLINES), secs, () => {
-    S.needs.energy = 100;
-    S.needs.hunger -= 10;
-    clampN();
-    resultCard(true, 'Fully rested', `Comfort ${comfort()}: slept in ${secs}s`, 'Slept in my Glitch apartment.');
-    updateHud();
-    save();
+    void lifeRequest<{ needs: { energy: number; hunger: number }; available: string; settling: string }>(
+      '/rest',
+      { kind: 'sleep' },
+    )
+      .then(res => {
+        applyFunds(res.available, res.settling);
+        applyNeeds(res.needs);
+        resultCard(true, 'Fully rested', `Comfort ${comfort()}: slept in ${secs}s`, 'Slept in my Glitch apartment.');
+        updateHud();
+        save();
+      })
+      .catch(err => {
+        banner(err instanceof Error ? err.message : 'Could not sleep', 'bad');
+        closeModal();
+      });
   });
 }
 
@@ -960,20 +1094,17 @@ export function forgeGame() {
   openModal('');
   const r = () => {
     sheet.innerHTML =
-      `<h2>Gear Forge</h2><p>Gear is an <b>NFT</b>: a one-of-a-kind item with its own number that only you own. Collect <b>Shards</b> from the Vault Cracker, get <b>USDG</b> at Wall Street, then mint.</p><div class="hint">You have <b>${S.shards}</b> shards and <b>${S.usdg}</b> USDG.</div>` +
+      `<h2>Gear Forge</h2><p>Gear is an <b>NFT</b>: a one-of-a-kind item with its own number that only you own. Collect <b>Shards</b> from the Vault Cracker, then mint here.</p><div class="hint">You have <b>${S.shards}</b> shards and <b>${fmtN(fundsNow())}</b> GD.</div>` +
       Object.keys(GEARINFO)
         .map(k => {
           const g = +k,
             i = GEARINFO[g]!,
             own = S.nfts.find(n => n.g === g),
-            ok = S.shards >= i.shd && S.usdg >= i.usdg;
-          return `<div class="loc"><div><b>${GEARS[g]}</b> <span class="tag">${i.rar}</span><div class="hint">${own ? 'Owned: NFT #' + own.id : `${i.shd} shards + ${i.usdg} USDG`}</div></div>${own ? `<button data-e="${g}">${S.look.gear === g ? 'Wearing' : 'Wear'}</button>` : `<button class="pri" data-g="${g}" ${ok ? '' : 'disabled'}>Mint</button>`}</div>`;
+            tip = own ? `Owned: ${own.id.slice(-8)}` : `${i.shd} shards + ${fmtN(i.gd)} GD`;
+          return `<div class="loc"><div><b>${GEARS[g]}</b> <span class="tag">${i.rar}</span><div class="hint">${tip}</div></div>${own ? `<button data-e="${g}">${S.look.gear === g ? 'Wearing' : 'Wear'}</button>` : `<button class="pri" data-mint="${g}">Mint</button>`}</div>`;
         })
         .join('') +
       '<div class="acts"><button id="fx2">Leave</button></div>';
-    sheet.querySelectorAll('[data-g]').forEach(b => {
-      (b as HTMLButtonElement).onclick = () => mint(+(b as HTMLElement).dataset.g!);
-    });
     sheet.querySelectorAll('[data-e]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         S.look.gear = +(b as HTMLElement).dataset.e!;
@@ -982,39 +1113,36 @@ export function forgeGame() {
         r();
       };
     });
+    sheet.querySelectorAll('[data-mint]').forEach(b => {
+      (b as HTMLButtonElement).onclick = () => {
+        const g = +(b as HTMLElement).dataset.mint!;
+        const itemId = forgeItemIdForGear(g);
+        if (!itemId) return;
+        (b as HTMLButtonElement).disabled = true;
+        void lifeRequest<{
+          status: 'delivered' | 'settling';
+          tokenId: string;
+          itemId: string;
+          available: string;
+          settling: string;
+          items: Record<string, string>;
+        }>('/forge/mint', { itemId })
+          .then(res => {
+            applyFunds(res.available, res.settling);
+            applyChainItems(res.items);
+            if (res.status === 'settling') banner('Mint is still landing on chain…', 'info');
+            else banner(`${GEARS[g]} forged`, 'good');
+            save();
+            updateHud();
+            r();
+          })
+          .catch(err => {
+            banner(err instanceof Error ? err.message : 'Could not mint', 'bad');
+            (b as HTMLButtonElement).disabled = false;
+          });
+      };
+    });
     ($('#fx2') as HTMLButtonElement).onclick = closeModal;
   };
-  function mint(g: number) {
-    const i = GEARINFO[g]!;
-    if (S.shards < i.shd || S.usdg < i.usdg) return;
-    S.shards -= i.shd;
-    S.usdg -= i.usdg;
-    const id = 1000 + Math.floor(rnd(0, 9000));
-    S.nfts.push({ g, id, rar: i.rar });
-    S.look.gear = g;
-    buildLook(player, S.look);
-    save();
-    updateHud();
-    post('sys', 'NEWS', `${S.name} minted ${GEARS[g]} (${i.rar}) NFT #${id}.`);
-    const col = ({ Common: '#8b97b8', Rare: '#2ee6ff', Epic: '#ff3d9a', Legendary: '#ffb12e' } as Record<string, string>)[i.rar]!;
-    resultCard(true, `NFT #${id}`, `${GEARS[g]} minted. Only you own it.`, `I minted a ${i.rar} ${GEARS[g]} NFT #${id} in Glitch.`, (x, w, h) => {
-      x.fillStyle = '#070910';
-      x.fillRect(0, 0, w, h);
-      x.strokeStyle = col;
-      x.lineWidth = 6;
-      x.strokeRect(8, 8, w - 16, h - 16);
-      x.textAlign = 'center';
-      x.fillStyle = col;
-      x.font = '700 28px "Chakra Petch",sans-serif';
-      x.fillText(i.rar.toUpperCase(), w / 2, 70);
-      x.fillStyle = '#e9eefc';
-      x.font = '700 72px "Chakra Petch",sans-serif';
-      x.fillText(GEARS[g]!, w / 2, 190);
-      x.fillStyle = '#8b97b8';
-      x.font = '500 26px "JetBrains Mono",monospace';
-      x.fillText('NFT #' + id + ' · owner ' + S.name, w / 2, 250);
-      x.fillText('GLITCH', w / 2, 320);
-    });
-  }
   r();
 }

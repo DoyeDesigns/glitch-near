@@ -6,8 +6,8 @@ Constants: [`shared/src/economy.ts`](../shared/src/economy.ts). Catalog: [`share
 
 See [`ONCHAIN.md`](./ONCHAIN.md) for the full map. Short rules that affect economy design:
 
-1. **Purchases ≠ burns.** Food, furniture, studio, rent, and forge `gdCost` are player-signed **`ft_transfer` → merchant** (`chef` / `dealer` / `smith`). Burns are only for sinks (upkeep, fees, trade loss, post cost, fines) and merchant COGS on restock.
-2. **`available = chainBalance − pendingBurns − escrowed`.** Every spend, stake, and rent checks `available`. `/me` returns `available`. Lazy `burn_from` flushes are capped at real chain balance.
+1. **Purchases ≠ burns.** Food, furniture, studio, maintenance, and forge `gdCost` are player-signed **`ft_transfer` → merchant** (`chef` / `dealer` / `smith`). Burns are only for sinks (holding tax / upkeep, fees, trade loss, post cost, fines) and merchant COGS on restock.
+2. **`available = chainBalance − pendingBurns − escrowed`.** Every spend, stake, and maintenance payment checks `available`. `/me` returns `available`. Lazy `burn_from` flushes are capped at real chain balance.
 3. **Food is instant.** Pay chef, apply hunger server-side, **no food token mint** (catalog food rows are price/effect only).
 4. **Pay-then-deliver** for furniture / studio / gear with `pending_delivery` + reconcile; refund from merchant is last resort.
 5. **Signup protection:** per-IP limit, hourly global cap, optional `INVITE_CODE`, refuse if root/`players` NEAR &lt; 0.2.
@@ -18,10 +18,10 @@ See [`ONCHAIN.md`](./ONCHAIN.md) for the full map. Short rules that affect econo
 | --- | ---: | ---: |
 | START | 250,000 | **60,000** (`START_GD`) |
 | studio-apartment | 200,000 | **90,000** (`HOMEP_GD`) |
-| studio rent | 7,500 / 10 min | **1,000 GD / 3,600,000 ms (1 h)** (`RENT_GD` / `RENT_MS`) |
+| studio maintenance | 7,500 / 10 min | **1,000 GD / 3,600,000 ms (1 h)** (`MAINTENANCE_GD` / `MAINTENANCE_MS`) |
 | bed2 | 150,000 | **70,000** |
 | trophy | 120,000 | **60,000** |
-| Passive upkeep | 0.04% / 10s | **0.01% / 10s** (`UPKEEP_RATE = 0.0001`) |
+| Passive upkeep (holding tax) | 0.04% / 10s | **0.01% / 10s** (`UPKEEP_RATE = 0.0001`) |
 
 ## GD ↔ USDG (prototype legacy)
 
@@ -93,11 +93,11 @@ Starter balance: **START_GD = 60,000** (not skill pay).
 | Trade loss | up to stake | **burn** accrued **(b)** |
 | Post half-burn | 5,000 of 10,000 | **burn** accrued **(b)** |
 | Fast travel gas | **200** GD | **burn** `GAS_GD` **(b)** |
-| Passive upkeep | **0.01%** / **10s** | **burn** `UPKEEP_RATE` **(b)** |
+| Passive upkeep (holding tax) | **0.01%** / **10s** | **burn** `UPKEEP_RATE` **(b)** |
 | CIA fine (guilty) | `min(bal, loot * 1.25)` | **burn** **(b)** |
 | Furniture | catalog `priceGD` | **`ft_transfer` → dealer** **(a)** |
 | Studio buy | **90,000** GD | **`ft_transfer` → dealer** **(a)** |
-| Studio rent | **1,000** GD / **1 h** | **`ft_transfer` → dealer** **(a)** |
+| Studio maintenance | **1,000** GD / **1 h** | **`ft_transfer` → dealer** **(a)** |
 | Food | 1,000–4,000 GD | **`ft_transfer` → chef** **(a)**; no item mint |
 | Gear mint GD leg | `gdCost` | **`ft_transfer` → smith** **(a)** (+ shard burn) |
 
@@ -126,8 +126,8 @@ Earn-only days = `priceGD / rate`. Flag if **&gt; 3 days** or **&lt; 2 minutes**
 | tv | 60,000 | 0.40 | 1.2 | — |
 | bed2 | **70,000** | 0.47 | 1.4 | — |
 | pc | 90,000 | 0.60 | 1.8 | — |
-| studio-apartment | **90,000** | 0.60 | 1.8 | — (+ first rent 1,000) |
-| studio rent / period | **1,000** / 1 h | n/a | n/a | OK vs cap |
+| studio-apartment | **90,000** | 0.60 | 1.8 | — (+ first maintenance 1,000) |
+| studio maintenance / period | **1,000** / 1 h | n/a | n/a | OK vs cap |
 
 ### Starter balance (START = 60,000)
 

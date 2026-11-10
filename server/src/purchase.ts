@@ -1,4 +1,4 @@
-import { catalogById } from '@glitch/shared';
+import { catalogById, MAINTENANCE_GD, MAINTENANCE_MS } from '@glitch/shared';
 import { AuthError, ledgerTotals } from './auth';
 import { config } from './config';
 import { randomId } from './crypto';
@@ -6,8 +6,11 @@ import { db } from './db';
 import { getPlayerById } from './near/accounts';
 import { flushPlayer } from './near/flush';
 import { getGDBalanceCached, pushTransfer, type TransferOutcome } from './near/gd';
+import { getItemBalances } from './near/items';
 import { getMerchant } from './near/merchants';
 import { resumeOrSend } from './near/mintTx';
+import { recordChefFoodSale } from './chef';
+import { parseNeeds, syncNeedsDecay, writeNeeds } from './needs';
 
 export type PurchaseRow = {
   id: string;
@@ -31,17 +34,10 @@ export type PurchaseResult =
 const PURCHASE_COLS =
   'id, player_id, merchant_id, item_id, amount, outbox_id, status, delivered, deliver_tx_hash, deliver_tx_at, deliver_attempts, created_at';
 
+const MAINTENANCE_ITEM = 'maintenance';
+
 function getPurchase(id: string): PurchaseRow | undefined {
   return db.prepare(`SELECT ${PURCHASE_COLS} FROM purchases WHERE id = ?`).get(id) as PurchaseRow | undefined;
-}
-
-function parseNeeds(raw: string): { energy: number; hunger: number } {
-  try {
-    const j = JSON.parse(raw) as { energy?: number; hunger?: number };
-    return { energy: Number(j.energy) || 0, hunger: Number(j.hunger) || 0 };
-  } catch {
-    return { energy: 100, hunger: 80 };
-  }
 }
 
 function markFailed(purchaseId: string): void {
@@ -62,10 +58,36 @@ function markPaid(purchaseId: string): void {
   apply.immediate();
 }
 
+function extendHomePaidUntil(playerId: string, now = Date.now()): void {
+  const row = getPlayerById(playerId);
+  const paidUntil = row?.home_paid_until ?? 0;
+  const next = Math.max(now, paidUntil) + MAINTENANCE_MS;
+  db.prepare(`UPDATE players SET home_paid_until = ? WHERE id = ?`).run(next, playerId);
+}
+
+/** Studio deed on chain or a delivered studio purchase. */
+export async function ownsStudio(playerId: string): Promise<boolean> {
+  const delivered = db
+    .prepare(
+      `SELECT id FROM purchases
+       WHERE player_id = ? AND item_id = 'studio-apartment' AND delivered = 1
+       LIMIT 1`,
+    )
+    .get(playerId) as { id: string } | undefined;
+  if (delivered) return true;
+  const player = getPlayerById(playerId);
+  if (!player?.account_id) return false;
+  try {
+    const items = await getItemBalances(player.account_id);
+    return BigInt(items['studio-apartment'] ?? '0') > 0n;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Deliver a paid purchase once. Food updates needs. Furniture/house mints the item.
- * The delivered flag is set in the same SQLite write that records the mint outcome
- * (or the needs update), and mint uses the existing tx-hash resume path.
+ * Maintenance extends home_paid_until. Mint uses the existing tx-hash resume path.
  */
 async function deliverPurchase(purchaseId: string): Promise<boolean> {
   const row = getPurchase(purchaseId);
@@ -78,15 +100,30 @@ async function deliverPurchase(purchaseId: string): Promise<boolean> {
     return getPurchase(purchaseId)?.delivered === 1;
   }
 
-  const item = catalogById(paid.item_id);
-  if (!item) throw new Error(`Unknown item ${paid.item_id}`);
   const player = getPlayerById(paid.player_id);
   if (!player?.account_id) throw new Error('Player has no account');
+
+  if (paid.item_id === MAINTENANCE_ITEM) {
+    const apply = db.transaction(() => {
+      const fresh = getPurchase(purchaseId);
+      if (!fresh || fresh.delivered === 1) return;
+      extendHomePaidUntil(paid.player_id);
+      db.prepare(
+        `UPDATE purchases SET delivered = 1, status = 'delivered' WHERE id = ? AND delivered = 0`,
+      ).run(purchaseId);
+    });
+    apply.immediate();
+    return getPurchase(purchaseId)?.delivered === 1;
+  }
+
+  const item = catalogById(paid.item_id);
+  if (!item) throw new Error(`Unknown item ${paid.item_id}`);
 
   if (item.kind === 'food') {
     const apply = db.transaction(() => {
       const fresh = getPurchase(purchaseId);
       if (!fresh || fresh.delivered === 1) return;
+      syncNeedsDecay(paid.player_id);
       const needs = parseNeeds(
         (
           db.prepare(`SELECT needs_json FROM players WHERE id = ?`).get(paid.player_id) as
@@ -96,10 +133,8 @@ async function deliverPurchase(purchaseId: string): Promise<boolean> {
       );
       const hunger = Math.min(100, needs.hunger + (item.effect.hunger ?? 0));
       const energy = Math.min(100, needs.energy + (item.effect.energy ?? 0));
-      db.prepare(`UPDATE players SET needs_json = ? WHERE id = ?`).run(
-        JSON.stringify({ energy, hunger }),
-        paid.player_id,
-      );
+      writeNeeds(paid.player_id, { energy, hunger });
+      recordChefFoodSale(paid.item_id);
       db.prepare(
         `UPDATE purchases SET delivered = 1, status = 'delivered' WHERE id = ? AND delivered = 0`,
       ).run(purchaseId);
@@ -155,23 +190,14 @@ async function settleOutcome(purchaseId: string, outcome: TransferOutcome): Prom
   return { settling: true, purchaseId };
 }
 
-/**
- * Pay a catalog item. Reserves spend in one immediate SQLite transaction, then
- * transfers GD to the merchant. Success means paid and delivered. An ambiguous
- * transfer keeps the escrow and returns settling.
- */
-export async function purchase(playerId: string, itemId: string): Promise<PurchaseResult> {
-  const item = catalogById(itemId);
-  if (!item || item.priceGD == null) throw new AuthError('Unknown item', 400);
-  if (item.sellerId !== 'chef' && item.sellerId !== 'smith' && item.sellerId !== 'dealer') {
-    throw new AuthError('Item has no merchant', 400);
-  }
-  if (item.kind === 'gear' || item.kind === 'shard' || item.kind === 'consumable') {
-    throw new AuthError('Item cannot be purchased this way', 400);
-  }
-  const merchant = getMerchant(item.sellerId);
-  if (!merchant) throw new AuthError('Unknown merchant', 400);
-  const amount = BigInt(item.priceGD);
+async function reserveAndTransfer(opts: {
+  playerId: string;
+  merchantId: string;
+  merchantAccountId: string;
+  itemId: string;
+  amount: bigint;
+}): Promise<PurchaseResult> {
+  const { playerId, merchantId, merchantAccountId, itemId, amount } = opts;
   if (amount <= 0n) throw new AuthError('Amount must be positive', 400);
 
   await flushPlayer(playerId);
@@ -200,13 +226,13 @@ export async function purchase(playerId: string, itemId: string): Promise<Purcha
     ).run(
       outboxId,
       playerId,
-      JSON.stringify({ to: merchant.account_id, amount: amount.toString(), memo: 'glitch' }),
+      JSON.stringify({ to: merchantAccountId, amount: amount.toString(), memo: 'glitch' }),
       now,
     );
     db.prepare(
       `INSERT INTO purchases (id, player_id, merchant_id, item_id, amount, outbox_id, status, delivered, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 'paying', 0, ?)`,
-    ).run(purchaseId, playerId, item.sellerId, item.id, amount.toString(), outboxId, now);
+    ).run(purchaseId, playerId, merchantId, itemId, amount.toString(), outboxId, now);
   });
   try {
     reserve.immediate();
@@ -217,6 +243,52 @@ export async function purchase(playerId: string, itemId: string): Promise<Purcha
 
   const outcome = await pushTransfer(outboxId);
   return settleOutcome(purchaseId, outcome);
+}
+
+/**
+ * Pay a catalog item. Reserves spend in one immediate SQLite transaction, then
+ * transfers GD to the merchant. Success means paid and delivered. An ambiguous
+ * transfer keeps the escrow and returns settling.
+ * Food may pass `amountGd` from the chef quote; otherwise catalog `priceGD`.
+ */
+export async function purchase(
+  playerId: string,
+  itemId: string,
+  opts?: { amountGd?: bigint },
+): Promise<PurchaseResult> {
+  const item = catalogById(itemId);
+  if (!item || item.priceGD == null) throw new AuthError('Unknown item', 400);
+  if (item.sellerId !== 'chef' && item.sellerId !== 'smith' && item.sellerId !== 'dealer') {
+    throw new AuthError('Item has no merchant', 400);
+  }
+  if (item.kind === 'gear' || item.kind === 'shard' || item.kind === 'consumable') {
+    throw new AuthError('Item cannot be purchased this way', 400);
+  }
+  const amount = opts?.amountGd ?? BigInt(item.priceGD);
+  if (amount <= 0n) throw new AuthError('Amount must be positive', 400);
+  const merchant = getMerchant(item.sellerId);
+  if (!merchant) throw new AuthError('Unknown merchant', 400);
+  return reserveAndTransfer({
+    playerId,
+    merchantId: item.sellerId,
+    merchantAccountId: merchant.account_id,
+    itemId: item.id,
+    amount,
+  });
+}
+
+/** Pay MAINTENANCE_GD to the dealer. Extends home_paid_until when the transfer lands. */
+export async function payMaintenance(playerId: string): Promise<PurchaseResult> {
+  const merchant = getMerchant('dealer');
+  if (!merchant) throw new AuthError('Unknown merchant', 400);
+  if (!(await ownsStudio(playerId))) throw new AuthError('You do not own a studio', 400);
+  return reserveAndTransfer({
+    playerId,
+    merchantId: 'dealer',
+    merchantAccountId: merchant.account_id,
+    itemId: MAINTENANCE_ITEM,
+    amount: BigInt(MAINTENANCE_GD),
+  });
 }
 
 /**

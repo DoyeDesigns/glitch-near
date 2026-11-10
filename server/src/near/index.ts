@@ -21,7 +21,15 @@ export {
   setNearFundingForTests,
 } from './client';
 export { burnGD, ftTransfer, getGDBalance, getGDBalanceCached, mintGD, pushTransfer, resumeTransfers } from './gd';
-export { adminTransfer, createToken, getItemBalances, getToken, mintItem } from './items';
+export {
+  adminTransfer,
+  burnItem,
+  createToken,
+  getItemBalances,
+  getToken,
+  mintItem,
+  setItemsChainForTests,
+} from './items';
 export type { TokenView } from './items';
 export { decryptPrivateKey, encryptPrivateKey } from './keys';
 export { ChainWriteError, recordChainFailure, withChainRetry } from './retry';

@@ -5,7 +5,8 @@ import { banner, feed, post, serverTick } from './market';
 import { NPC_NAMES } from './constants';
 import { cam, npcs, player, say, vel } from './world';
 import { closeModal, introOpen, modalOpen, openModal, sheet, updateHud } from './hud';
-import { homeAct, homeHtml, openCustomizer, swap, swapHtml } from './games';
+import { homeAct, homeHtml, openCustomizer } from './games';
+import { hudAvailable } from './hud';
 import { fetchChainProof, type ChainProof } from './session';
 
 export const LOCS = [
@@ -13,7 +14,7 @@ export const LOCS = [
   { id: 'wall', name: 'Wall Street', x: -17, z: -4, r: 12, sp: [-13, -3] as [number, number], note: 'Trade coins at the Exchange.' },
   { id: 'lab', name: 'Vault Lab', x: 17, z: -4, r: 12, sp: [13, -3] as [number, number], note: 'Crack vaults and watch the bounty board.' },
   { id: 'tower', name: 'Attention Tower', x: 0, z: -24, r: 10, sp: [0, -19] as [number, number], note: 'Post, trend and gain followers.' },
-  { id: 'diner', name: 'Neon Diner', x: 30, z: 20, r: 10, sp: [27, 17] as [number, number], note: 'Eat here. Only takes USDG.' },
+  { id: 'diner', name: 'Neon Diner', x: 30, z: 20, r: 10, sp: [27, 17] as [number, number], note: 'Eat here. Paid in GD.' },
   { id: 'home', name: 'My Home', x: 140, z: 0, r: 14, sp: [140, 4] as [number, number], note: 'Your place.' },
 ];
 export const GAS = GAS_GD;
@@ -281,7 +282,7 @@ function renderPhone() {
   } else if (phoneApp === 'wallet') {
     body =
       hdr('Balance', 'home') +
-      `<div class="res win" style="padding:6px 0"><small>Balance</small><b>${fmtN(S.bal)} GD</b></div><div class="pstats"><span><b>${S.usdg}</b><small>USDG</small></span><span><b>${S.shards}</b><small>Shards</small></span><span><b>${S.nfts.length}</b><small>NFTs</small></span></div>${swapHtml()}<div class="hint">Daily skill pay: ${fmt(S.payUsed)} of ${fmt(payCap())} used. After that it pays only 20%.${weak() ? ' <b class="neg">Tired or hungry: skill pay is cut by 40%.</b>' : ''}</div><div class="meter"><i style="width:${Math.min(100, (S.payUsed / payCap()) * 100)}%"></i></div>
+      `<div class="res win" style="padding:6px 0"><small>Balance</small><b>${fmtN(hudAvailable ?? S.bal)} GD</b></div><div class="pstats"><span><b>${S.shards}</b><small>Shards</small></span><span><b>${S.nfts.length}</b><small>NFTs</small></span></div><div class="hint">Daily skill pay: ${fmt(S.payUsed)} of ${fmt(payCap())} used. After that it pays only 20%.${weak() ? ' <b class="neg">Tired or hungry: skill pay is cut by 40%.</b>' : ''}</div><div class="meter"><i style="width:${Math.min(100, (S.payUsed / payCap()) * 100)}%"></i></div>
     <small style="display:block;margin-top:10px">Activity (every move is recorded, like a block explorer)</small>` +
       (txlog
         .slice(0, 12)
@@ -369,10 +370,7 @@ function renderPhone() {
       dmIn(dmWith!, x, true);
       npcReply(dmWith!, x);
     } else if (a === 'go') return travel(v!);
-    else if (a === 'swap') {
-      const m = swap(b.dataset.d!, +b.dataset.n!);
-      banner(m.msg, m.ok ? 'good' : 'bad');
-    } else if (['buyhome', 'payrent', 'furn', 'gohome'].includes(a)) {
+    else if (['buyhome', 'paymaintenance', 'furn', 'gohome'].includes(a)) {
       if (homeAct(a, v)) return;
     } else if (a === 'copyacct') {
       const id = chainProof?.accountId;

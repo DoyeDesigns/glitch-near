@@ -1,7 +1,8 @@
 import { $, esc, fmt, fmtN } from './util';
+import { applyChainItems } from './itemsSync';
 import { lvl, payCap, roleName, S, SAVE, START, SK } from './state';
 import { board, cases, chg, feed, market, metrics, px, serverTick, TOK } from './market';
-import { adTex, exTex, keys, labTex, npcs, towTex } from './world';
+import { buildFurn, adTex, exTex, keys, labTex, npcs, towTex } from './world';
 import { refreshMe } from './session';
 
 /** Last `available` from GET /me. HUD balance uses this when set. */
@@ -24,6 +25,11 @@ export function startMePoll() {
       .then(m => {
         hudAvailable = Number(m.available);
         hudSettling = Number(m.settling) || 0;
+        S.bal = hudAvailable;
+        S.needs = m.needs;
+        S.home.paidUntil = m.homePaidUntil ?? S.home.paidUntil;
+        applyChainItems(m.items);
+        buildFurn();
         updateHud();
       })
       .catch(() => {});
@@ -287,7 +293,7 @@ export function renderSide() {
         .join('');
   } else {
     el.innerHTML = `<b>About this prototype</b><p style="color:var(--mute)">Glitch is a free multiplayer city where web3 history becomes a game. This is a one-player slice: the market, other players and visitor counts are simulated. Your GD is stored in this browser only and can never be cashed out.</p>
-    <b>Economy health</b><div class="rk"><span>Created by skill pay</span><span class="pos">${fmt(S.created)}</span></div><div class="rk"><span>Burned (fees, losses, fines, upkeep)</span><span class="neg">${fmt(S.burned)}</span></div>
+    <b>Economy health</b><div class="rk"><span>Created by skill pay</span><span class="pos">${fmt(S.created)}</span></div><div class="rk"><span>Burned (fees, losses, fines, holding tax)</span><span class="neg">${fmt(S.burned)}</span></div>
     <p style="color:var(--mute)">Profits are capped daily and every loss is destroyed, so skill cannot print unlimited money.</p><button id="resetBtn">Reset progress</button>`;
     ($('#resetBtn') as HTMLButtonElement).onclick = () => {
       try {

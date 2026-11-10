@@ -15,6 +15,7 @@ import {
   worldUpdate,
 } from './world';
 import { closeModal, drawScreens, introOpen, modalOpen, setHudAvailable, setHudSettling, startMePoll, updateHud } from './hud';
+import { applyChainItems } from './itemsSync';
 import { loginRequest } from './session';
 import {
   commGame,
@@ -64,6 +65,10 @@ async function enterCity(body: { name?: string; pin?: string; guest?: boolean; s
     S.bal = Number(profile.available);
     S.xp = profile.xp;
     S.needs = profile.needs;
+    S.home.paidUntil = profile.homePaidUntil ?? 0;
+    applyChainItems(profile.items);
+    buildFurn();
+    buildLook(player, S.look);
     setHudAvailable(Number(profile.available));
     setHudSettling(Number(profile.settling) || 0);
     const intro = $('#intro') as HTMLElement;

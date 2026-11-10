@@ -33,7 +33,8 @@ export interface Home {
 
 export interface Nft {
   g: number;
-  id: number;
+  /** On-chain token id (`gear-<type>-<uuid>`). */
+  id: string;
   rar: string;
 }
 
@@ -66,7 +67,6 @@ export interface S {
   wantedUntil: number;
   follows: string[];
   needs: Needs;
-  usdg: number;
   shards: number;
   nfts: Nft[];
   home: Home;

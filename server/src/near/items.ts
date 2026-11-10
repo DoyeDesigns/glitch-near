@@ -8,6 +8,22 @@ function requireItemsContract(): string {
   return config.itemsContract;
 }
 
+let itemBalancesReader: ((accountId: string) => Promise<Record<string, string>>) | null = null;
+let itemBurner:
+  | ((accountId: string, tokenId: string, amount: bigint) => Promise<void>)
+  | null = null;
+
+/** Test seam. Production leaves this unset and reads the chain. */
+export function setItemsChainForTests(
+  hooks: {
+    balances?: (accountId: string) => Promise<Record<string, string>>;
+    burn?: (accountId: string, tokenId: string, amount: bigint) => Promise<void>;
+  } | null,
+): void {
+  itemBalancesReader = hooks?.balances ?? null;
+  itemBurner = hooks?.burn ?? null;
+}
+
 export type TokenView = {
   token_id: string;
   kind: string;
@@ -78,6 +94,31 @@ export async function mintItem(
   );
 }
 
+/** Burn items from a player (minter-only burn_from). Never retried. */
+export async function burnItem(
+  accountId: string,
+  tokenId: string,
+  amount: bigint | number | string,
+): Promise<void> {
+  const amt = String(amount);
+  if (itemBurner) {
+    await itemBurner(accountId, tokenId, BigInt(amt));
+    return;
+  }
+  const contractId = requireItemsContract();
+  await withChainRetry(
+    () =>
+      getTreasuryAccount().callFunction({
+        contractId,
+        methodName: 'burn_from',
+        args: { account_id: accountId, token_id: tokenId, amount: amt },
+        gas: DEFAULT_GAS,
+        deposit: 0n,
+      }),
+    { idempotent: false, label: 'items.burn_from', account: accountId, amount: amt },
+  );
+}
+
 /** Server-signed move between accounts (admin_transfer). Never retried. */
 export async function adminTransfer(
   from: string,
@@ -105,6 +146,7 @@ export async function adminTransfer(
  * Returns only non-zero balances as { [tokenId]: amountString }.
  */
 export async function getItemBalances(accountId: string): Promise<Record<string, string>> {
+  if (itemBalancesReader) return itemBalancesReader(accountId);
   const contractId = requireItemsContract();
   const tokens = await withChainRetry(
     () =>

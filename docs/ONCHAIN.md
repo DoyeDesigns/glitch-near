@@ -35,7 +35,7 @@ available = chainBalance − pendingBurns − escrowed
 
 **Rules**
 
-- Every **spend**, **stake**, and **rent** payment must check `available` **before** accepting the action.
+- Every **spend**, **stake**, and **maintenance** payment must check `available` **before** accepting the action.
 - `GET /me` returns `available` (and should expose `chainBalance`, `pendingBurns`, `escrowed` for debugging).
 - Flush burns are **capped at the real chain balance** (`min(pendingBurns, chainBalance)`). Remainder stays pending (or is written down only under an explicit insolvency policy — default: keep pending).
 
@@ -83,7 +83,7 @@ Signed with the **player’s decrypted key**. Destination is the merchant accoun
 | Food (eat) | `chef` | catalog `priceGD` |
 | Furniture | `dealer` | catalog `priceGD` |
 | Studio buy | `dealer` | `HOMEP_GD` 90,000 |
-| Studio rent / first rent | `dealer` | `RENT_GD` 1,000 |
+| Studio maintenance / first maintenance | `dealer` | `MAINTENANCE_GD` 1,000 |
 | Forge GD leg | `smith` | `gdCost` |
 
 Require `available >= amount` before signing.
@@ -94,7 +94,7 @@ Burns are **not** used for player purchases.
 
 | Movement | Class | Notes |
 | --- | --- | --- |
-| Passive upkeep (`UPKEEP_RATE` / 10s) | **(b)** | Accrue → flush |
+| Passive upkeep / holding tax (`UPKEEP_RATE` / 10s) | **(b)** | Accrue → flush |
 | Trade entry fee (1%) | **(b)** | |
 | Trade loss | **(b)** | |
 | Post cost (burn half) | **(b)** | Escrow half separate |

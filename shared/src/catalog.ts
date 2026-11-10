@@ -5,7 +5,7 @@
  * prices convert via USDG_TO_GD (prototype swap RATE).
  */
 
-import { FURN_PRICE_GD, HOMEP_GD, RENT_GD, RENT_MS, USDG_TO_GD } from './economy';
+import { FURN_PRICE_GD, HOMEP_GD, MAINTENANCE_GD, MAINTENANCE_MS, USDG_TO_GD } from './economy';
 
 export { USDG_TO_GD } from './economy';
 
@@ -25,10 +25,10 @@ export type CatalogEffect = {
   gdCost?: number;
   rarity?: string;
   gearIndex?: number;
-  /** Recurring studio rent in GD (= former USDG × USDG_TO_GD). */
-  rentGD?: number;
-  /** Rent period in ms. */
-  rentMs?: number;
+  /** Recurring studio maintenance in GD (= former USDG × USDG_TO_GD). */
+  maintenanceGD?: number;
+  /** Maintenance period in ms. */
+  maintenanceMs?: number;
 };
 
 export type CatalogItem = {
@@ -319,12 +319,12 @@ export const CATALOG: readonly CatalogItem[] = [
     maxSupply: null,
     effect: {
       description:
-        'Own a home: sleep to restore energy, decorate with furniture. First rent due on purchase; then recurring rent.',
+        'Own a home: sleep to restore energy and decorate. Maintenance is billed each period; if it can’t be paid, the home is locked until it is.',
       // was 15 USDG (= 7500 GD) every 600000 ms
-      rentGD: RENT_GD,
-      rentMs: RENT_MS,
+      maintenanceGD: MAINTENANCE_GD,
+      maintenanceMs: MAINTENANCE_MS,
     },
-    source: 'legacy HOMEP/RENT/RENT_MS; ECONOMY.md applied',
+    source: 'legacy HOMEP/RENT/RENT_MS → MAINTENANCE_*; ECONOMY.md applied',
   },
   {
     id: 'penthouse',

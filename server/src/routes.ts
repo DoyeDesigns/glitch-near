@@ -8,6 +8,11 @@ import { config } from './config';
 import { getHealth, getStreamPayload } from './sim';
 import { openTrade, parseTradeDir, parseTradeStake, tradeSnapshot } from './trade';
 import { parsePostTake, publishPost } from './post';
+import { merchantsView } from './chef';
+import { forgeMint } from './forge';
+import { homeBuy, homePayRent } from './home';
+import { restPlayer } from './rest';
+import { shopBuy } from './shop';
 import { cancelVault, finishVault, parseVaultStops, startVault } from './vault';
 
 function clientIp(headers: Headers): string {
@@ -205,6 +210,99 @@ export function createApp() {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[me] chain read failed:', message);
       return c.json({ error: 'NEAR read failed', message }, 502);
+    }
+  });
+
+  app.get('/merchants', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(await merchantsView());
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[merchants] failed');
+      return c.json({ error: 'Could not load merchants' }, 502);
+    }
+  });
+
+  app.post('/shop/buy', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { itemId?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    if (typeof body.itemId !== 'string') return c.json({ error: 'Bad item' }, 400);
+    try {
+      return c.json(await shopBuy(player.id, body.itemId));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[shop] buy failed');
+      return c.json({ error: 'Could not buy' }, 502);
+    }
+  });
+
+  app.post('/home/buy', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(await homeBuy(player.id));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[home] buy failed');
+      return c.json({ error: 'Could not buy home' }, 502);
+    }
+  });
+
+  app.post('/home/pay-rent', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(await homePayRent(player.id));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[home] pay-rent failed');
+      return c.json({ error: 'Could not pay maintenance' }, 502);
+    }
+  });
+
+  app.post('/rest', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { kind?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    if (body.kind !== 'bench' && body.kind !== 'sleep') return c.json({ error: 'Bad rest kind' }, 400);
+    try {
+      return c.json(await restPlayer(player.id, body.kind));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[rest] failed');
+      return c.json({ error: 'Could not rest' }, 502);
+    }
+  });
+
+  app.post('/forge/mint', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { itemId?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    if (typeof body.itemId !== 'string') return c.json({ error: 'Bad item' }, 400);
+    try {
+      return c.json(await forgeMint(player.id, body.itemId));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[forge] mint failed');
+      return c.json({ error: 'Could not mint gear' }, 502);
     }
   });
 

@@ -8,6 +8,7 @@ export type Me = {
   items: Record<string, string>;
   xp: { trade: number; sec: number; comm: number };
   needs: { energy: number; hunger: number };
+  homePaidUntil: number;
 };
 
 export let me: Me | null = null;

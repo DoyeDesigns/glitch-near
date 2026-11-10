@@ -747,5 +747,7 @@ export function buildFurn() {
   for (const f of FURN) if (hasF(f.id)) f.b(furnG);
 }
 export const comfort = () => 1 + S.home.items.reduce((a, id) => a + FURN.find(f => f.id === id)!.pts, 0);
-export const rentLeft = () => S.home.paidUntil - Date.now();
-export const overdue = () => S.home.owned && rentLeft() < 0;
+export const maintenanceLeft = () => S.home.paidUntil - Date.now();
+/** @deprecated Use maintenanceLeft */
+export const rentLeft = maintenanceLeft;
+export const overdue = () => S.home.owned && maintenanceLeft() < 0;

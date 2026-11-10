@@ -53,7 +53,7 @@ Price/effect only for the eat path: player **`ft_transfer` → chef**, hunger ap
 
 | id | title | priceGD | sellerId | maxSupply | effect | source |
 | --- | --- | ---: | --- | ---: | --- | --- |
-| studio-apartment | Studio apartment | 90000 | dealer | — | Rent 1000 GD / 1 h | HOMEP_GD / RENT_GD |
+| studio-apartment | Studio apartment | 90000 | dealer | — | Maintenance 1000 GD / 1 h | HOMEP_GD / MAINTENANCE_GD |
 | penthouse | Penthouse | — | dealer | — | Coming later. **proposed** | homeHtml Soon |
 
 ## Consumable

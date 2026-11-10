@@ -14,17 +14,70 @@ export const START_GD = 60_000;
 /** Studio apartment purchase price (GD). Was 200_000. */
 export const HOMEP_GD = 90_000;
 
-/** Studio rent (GD per period). Was 15 USDG × 500 = 7_500. */
-export const RENT_GD = 1_000;
+/** Studio maintenance (GD per period). Was 15 USDG × 500 = 7_500. */
+export const MAINTENANCE_GD = 1_000;
 
-/** Rent period in ms (1 hour). Was 600_000 (10 min). */
-export const RENT_MS = 3_600_000;
+/** Maintenance period in ms (1 hour). Was 600_000 (10 min). */
+export const MAINTENANCE_MS = 3_600_000;
+
+/** @deprecated Use MAINTENANCE_GD */
+export const RENT_GD = MAINTENANCE_GD;
+/** @deprecated Use MAINTENANCE_MS */
+export const RENT_MS = MAINTENANCE_MS;
 
 /** Passive upkeep fraction of balance per tick. Was 0.0004 (0.04%). */
 export const UPKEEP_RATE = 0.0001;
 
 /** Seconds between upkeep ticks. */
 export const UPKEEP_INTERVAL_S = 10;
+
+/** Needs decay (per second). From the old client lifeUpdate. */
+export const HUNGER_DECAY_PER_S = 0.2;
+export const ENERGY_DECAY_PER_S = 0.25;
+export const ENERGY_DECAY_STARVING_PER_S = 0.5;
+/** At home (x > 100), energy drains at this fraction of the outdoor rate. */
+export const ENERGY_HOME_MULT = 0.5;
+
+/** Bench rest. */
+export const BENCH_ENERGY = 25;
+export const BENCH_HUNGER = -3;
+
+/** Sleep at home (energy fills; hunger drops). */
+export const SLEEP_ENERGY = 100;
+export const SLEEP_HUNGER = -10;
+
+export type NeedsState = { energy: number; hunger: number };
+
+export function clampNeeds(needs: NeedsState): NeedsState {
+  return {
+    energy: clamp(needs.energy, 0, 100),
+    hunger: clamp(needs.hunger, 0, 100),
+  };
+}
+
+/**
+ * Advance hunger and energy by elapsed seconds.
+ * Starving (hunger at 0) drains energy faster. At home, energy drains slower.
+ */
+export function applyNeedsDecay(needs: NeedsState, elapsedSec: number, atHome: boolean): NeedsState {
+  const dt = Math.max(0, elapsedSec);
+  let hunger = needs.hunger - dt * HUNGER_DECAY_PER_S;
+  const energyRate =
+    (hunger <= 0 ? ENERGY_DECAY_STARVING_PER_S : ENERGY_DECAY_PER_S) * (atHome ? ENERGY_HOME_MULT : 1);
+  let energy = needs.energy - dt * energyRate;
+  return clampNeeds({ energy, hunger });
+}
+
+/** Apply a rest or sleep effect after decay. */
+export function applyRestEffect(needs: NeedsState, kind: 'bench' | 'sleep'): NeedsState {
+  if (kind === 'sleep') {
+    return clampNeeds({ energy: SLEEP_ENERGY, hunger: needs.hunger + SLEEP_HUNGER });
+  }
+  return clampNeeds({
+    energy: needs.energy + BENCH_ENERGY,
+    hunger: needs.hunger + BENCH_HUNGER,
+  });
+}
 
 /** Daily skill-pay cap: BASE + PER_LEVEL * (sumLevels - 3). */
 export const PAY_CAP_BASE = 150_000;

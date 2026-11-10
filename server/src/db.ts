@@ -103,6 +103,37 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS forges (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL REFERENCES players(id),
+    item_id TEXT NOT NULL,
+    token_id TEXT NOT NULL,
+    shards_cost INTEGER NOT NULL,
+    amount TEXT NOT NULL,
+    outbox_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'paying',
+    shards_burned INTEGER NOT NULL DEFAULT 0,
+    burn_tx_hash TEXT,
+    burn_tx_at INTEGER,
+    burn_attempts INTEGER NOT NULL DEFAULT 0,
+    token_created INTEGER NOT NULL DEFAULT 0,
+    create_tx_hash TEXT,
+    create_tx_at INTEGER,
+    create_attempts INTEGER NOT NULL DEFAULT 0,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    mint_tx_hash TEXT,
+    mint_tx_at INTEGER,
+    mint_attempts INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS chef_inventory (
+    item_id TEXT PRIMARY KEY,
+    stock REAL NOT NULL,
+    demand_ema REAL NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS signup_log (
     id TEXT PRIMARY KEY,
     ip TEXT NOT NULL,
@@ -197,6 +228,12 @@ function migrate(): void {
   if (!cols.has('pay_day')) db.exec(`ALTER TABLE players ADD COLUMN pay_day TEXT NOT NULL DEFAULT ''`);
   if (!cols.has('pay_used')) db.exec(`ALTER TABLE players ADD COLUMN pay_used REAL NOT NULL DEFAULT 0`);
   if (!cols.has('followers')) db.exec(`ALTER TABLE players ADD COLUMN followers INTEGER NOT NULL DEFAULT 0`);
+  if (!cols.has('needs_updated_at')) {
+    db.exec(`ALTER TABLE players ADD COLUMN needs_updated_at INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!cols.has('home_paid_until')) {
+    db.exec(`ALTER TABLE players ADD COLUMN home_paid_until INTEGER NOT NULL DEFAULT 0`);
+  }
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_name ON players(name);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_account_id ON players(account_id)

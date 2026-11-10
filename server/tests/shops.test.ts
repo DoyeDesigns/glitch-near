@@ -1,10 +1,18 @@
 import { randomBytes } from 'node:crypto';
 import { KeyPair, nearToYocto } from 'near-api-js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { MAINTENANCE_MS } from '@glitch/shared';
 import { availableGd, spendableGd } from '../src/auth';
 import { config } from '../src/config';
 import { db } from '../src/db';
+import { quoteChefFood, recordChefFoodSale, syncChefInventory } from '../src/chef';
+import { forgeMint, resumeForges } from '../src/forge';
+import { homeBuy, homePayRent } from '../src/home';
+import { syncNeedsDecay } from '../src/needs';
 import { purchase, resumePurchases } from '../src/purchase';
+import { restPlayer } from '../src/rest';
+import { shopBuy } from '../src/shop';
+import { CHEF_DEMAND_BUY } from '@glitch/shared';
 import {
   PLAYER_FUND_NEAR,
   PLAYER_NEAR_TOPUP_FLOOR,
@@ -12,8 +20,9 @@ import {
   setNearFundingForTests,
 } from '../src/near/client';
 import { getGDBalanceCached, resumeTransfers, setGdChainForTests, ftTransfer } from '../src/near/gd';
+import { setItemsChainForTests } from '../src/near/items';
 import { encryptPrivateKey } from '../src/near/keys';
-import { lastSignedCall, setMintTxTestHooks } from '../src/near/mintTx';
+import { lastSignedCall, lastTreasuryCall, setMintTxTestHooks } from '../src/near/mintTx';
 import { MERCHANT_FLOAT, merchantAccountId, setMerchantChainForTests, setupMerchants } from '../src/near/merchants';
 import { ChainWriteError, recordChainFailure } from '../src/near/retry';
 import { getPlayerById, type PlayerRow } from '../src/near/accounts';
@@ -25,11 +34,13 @@ if (!config.dbPath || config.dbPath.includes('glitch.sqlite')) {
 
 const balances = new Map<string, bigint>();
 const nearBalances = new Map<string, bigint>();
+const itemBalances = new Map<string, Record<string, string>>();
 const exists = new Set<string>();
 const created: { id: string; near: bigint }[] = [];
 const mints: { id: string; amount: bigint }[] = [];
 const burns: { id: string; amount: bigint }[] = [];
 const topUps: { id: string; amount: bigint }[] = [];
+const treasuryMethods: string[] = [];
 
 let signs = 0;
 let burnFails = false;
@@ -120,11 +131,15 @@ beforeEach(() => {
   mints.length = 0;
   burns.length = 0;
   topUps.length = 0;
+  treasuryMethods.length = 0;
+  itemBalances.clear();
   db.prepare(`DELETE FROM outbox`).run();
   db.prepare(`DELETE FROM merchants`).run();
   db.prepare(`DELETE FROM pending_burns`).run();
   db.prepare(`DELETE FROM escrow`).run();
   db.prepare(`DELETE FROM purchases`).run();
+  db.prepare(`DELETE FROM forges`).run();
+  db.prepare(`DELETE FROM chef_inventory`).run();
   db.prepare(`DELETE FROM trades`).run();
   setMintTxTestHooks({
     sign: async () => {
@@ -135,7 +150,27 @@ beforeEach(() => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       if (holdBroadcast) await delay(40);
+      const call = lastTreasuryCall;
+      if (call) treasuryMethods.push(call.methodName);
       const outcome = await broadcastImpl();
+      if (outcome === 'success' && call?.methodName === 'burn_from') {
+        const accountId = String(call.args.account_id);
+        const tokenId = String(call.args.token_id);
+        const amount = BigInt(String(call.args.amount));
+        const cur = { ...(itemBalances.get(accountId) ?? {}) };
+        const have = BigInt(cur[tokenId] ?? '0');
+        cur[tokenId] = (have - amount).toString();
+        if (BigInt(cur[tokenId]!) <= 0n) delete cur[tokenId];
+        itemBalances.set(accountId, cur);
+      }
+      if (outcome === 'success' && call?.methodName === 'mint') {
+        const accountId = String(call.args.account_id);
+        const tokenId = String(call.args.token_id);
+        const amount = BigInt(String(call.args.amount));
+        const cur = { ...(itemBalances.get(accountId) ?? {}) };
+        cur[tokenId] = (BigInt(cur[tokenId] ?? '0') + amount).toString();
+        itemBalances.set(accountId, cur);
+      }
       inFlight -= 1;
       return outcome;
     },
@@ -159,6 +194,17 @@ beforeEach(() => {
       balances.set(to, (balances.get(to) ?? 0n) + amount);
     },
   });
+  setItemsChainForTests({
+    balances: async accountId => ({ ...(itemBalances.get(accountId) ?? {}) }),
+    burn: async (accountId, tokenId, amount) => {
+      const cur = { ...(itemBalances.get(accountId) ?? {}) };
+      const have = BigInt(cur[tokenId] ?? '0');
+      if (have < amount) throw new Error('Not enough balance');
+      cur[tokenId] = (have - amount).toString();
+      if (BigInt(cur[tokenId]!) <= 0n) delete cur[tokenId];
+      itemBalances.set(accountId, cur);
+    },
+  });
   setNearFundingForTests({
     read: async accountId => nearBalances.get(accountId) ?? PLAYER_FUND_NEAR,
     topUp: async (accountId, amount) => {
@@ -178,6 +224,7 @@ beforeEach(() => {
 afterAll(() => {
   setMintTxTestHooks(null);
   setGdChainForTests(null);
+  setItemsChainForTests(null);
   setNearFundingForTests(null);
   setMerchantChainForTests(null);
 });
@@ -517,5 +564,181 @@ describe('purchase', () => {
     expect(db.prepare(`SELECT COUNT(*) AS n FROM purchases`).get()).toEqual({ n: 0 });
     expect(db.prepare(`SELECT COUNT(*) AS n FROM outbox`).get()).toEqual({ n: 0 });
     expect(balances.get(row.account_id!)).toBe(3_000n);
+  });
+});
+
+describe('shop home rest', () => {
+  it('shop food updates needs and does not mint an item token', async () => {
+    const row = player('food');
+    insertMerchant('chef');
+    fund(row.account_id!, 5_000n);
+    const signsBefore = signs;
+    const res = await shopBuy(row.id, 'zobo-drink');
+    expect(res.status).toBe('delivered');
+    // zobo-drink: +2 energy, +8 hunger on the default 80/60 — tiny decay may land first.
+    expect(res.needs!.energy).toBeGreaterThanOrEqual(81.9);
+    expect(res.needs!.hunger).toBeGreaterThanOrEqual(67.9);
+    expect(JSON.parse(state(row.id).needs_json)).toEqual(res.needs);
+    // Only the player GD transfer is signed; no items.mint.
+    expect(signs).toBe(signsBefore + 1);
+    expect(lastSignedCall?.methodName).toBe('ft_transfer');
+  });
+
+  it('furniture delivers once and a second resume does not mint again', async () => {
+    const row = player('furn');
+    insertMerchant('dealer');
+    fund(row.account_id!, 20_000n);
+    const res = await shopBuy(row.id, 'plant');
+    expect(res.status).toBe('delivered');
+    expect(purchaseRow(row.id).delivered).toBe(1);
+    const after = signs;
+    await resumePurchases();
+    expect(signs).toBe(after);
+  });
+
+  it('home buy and pay-rent extend home_paid_until; sleep rejects when overdue', async () => {
+    const row = player('home');
+    insertMerchant('dealer');
+    fund(row.account_id!, 200_000n);
+    const before = Date.now();
+    const bought = await homeBuy(row.id);
+    expect(bought.studioStatus).toBe('delivered');
+    expect(bought.maintenanceStatus).toBe('delivered');
+    expect(bought.homePaidUntil).toBeGreaterThanOrEqual(before + MAINTENANCE_MS - 1000);
+    const paid = await homePayRent(row.id);
+    expect(paid.homePaidUntil).toBeGreaterThanOrEqual(bought.homePaidUntil + MAINTENANCE_MS - 1000);
+
+    db.prepare(`UPDATE players SET home_paid_until = ? WHERE id = ?`).run(Date.now() - 1, row.id);
+    await expect(restPlayer(row.id, 'sleep')).rejects.toThrow(/locked|maintenance/i);
+
+    db.prepare(`UPDATE players SET home_paid_until = ? WHERE id = ?`).run(Date.now() + MAINTENANCE_MS, row.id);
+    const slept = await restPlayer(row.id, 'sleep');
+    expect(slept.needs.energy).toBe(100);
+  });
+
+  it('decays needs across timestamps and applies bench rest', async () => {
+    const row = player('decay');
+    db.prepare(`UPDATE players SET needs_json = ?, needs_updated_at = ? WHERE id = ?`).run(
+      '{"energy":100,"hunger":80}',
+      Date.now() - 10_000,
+      row.id,
+    );
+    const after = syncNeedsDecay(row.id);
+    expect(after.hunger).toBeLessThan(80);
+    expect(after.energy).toBeLessThan(100);
+    const rested = await restPlayer(row.id, 'bench');
+    expect(rested.needs.energy).toBeGreaterThan(after.energy);
+  });
+
+  it('rejects shop gear and home when funds are short', async () => {
+    const row = player('short');
+    insertMerchant('chef');
+    insertMerchant('dealer');
+    fund(row.account_id!, 100n);
+    await expect(shopBuy(row.id, 'cap')).rejects.toThrow(/shop item|cannot/i);
+    await expect(shopBuy(row.id, 'zobo-drink')).rejects.toThrow(/Not enough GD/);
+    await expect(homeBuy(row.id)).rejects.toThrow(/Not enough GD/);
+  });
+});
+
+describe('chef prices', () => {
+  it('shopBuy food charges the quote and lowers stock on deliver', async () => {
+    const row = player('chef-q');
+    const chef = insertMerchant('chef');
+    fund(row.account_id!, 20_000n);
+    fund(chef, 0n);
+    const quote = quoteChefFood('zobo-drink');
+    expect(quote.finalPrice).toBe(1_000);
+    const res = await shopBuy(row.id, 'zobo-drink');
+    expect(res.status).toBe('delivered');
+    expect(res.price).toBe(1_000);
+    expect(balances.get(chef)).toBe(1_000n);
+    expect(purchaseRow(row.id).amount).toBe('1000');
+    expect(res.stock).toBeCloseTo(19, 3);
+    expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 5);
+    expect(res.reasoning!.finalPrice).toBeGreaterThan(1_000);
+  });
+
+  it('furniture still uses catalog priceGD', async () => {
+    const row = player('furn-cat');
+    insertMerchant('dealer');
+    fund(row.account_id!, 50_000n);
+    const res = await shopBuy(row.id, 'plant');
+    expect(res.status).toBe('delivered');
+    expect(res.price).toBeUndefined();
+    expect(purchaseRow(row.id).amount).toBe(String(catalogById('plant')!.priceGD));
+  });
+
+  it('rejects sold-out food and restocks across timestamps', async () => {
+    insertMerchant('chef');
+    syncChefInventory();
+    db.prepare(`UPDATE chef_inventory SET stock = 0.5, demand_ema = 0.4, updated_at = ? WHERE item_id = ?`).run(
+      Date.now(),
+      'suya-skewer',
+    );
+    expect(() => quoteChefFood('suya-skewer')).toThrow(/Sold out/);
+    db.prepare(`UPDATE chef_inventory SET stock = 10, demand_ema = 0.4, updated_at = ? WHERE item_id = ?`).run(
+      Date.now() - 60_000,
+      'suya-skewer',
+    );
+    syncChefInventory();
+    const snap = db
+      .prepare(`SELECT stock, demand_ema FROM chef_inventory WHERE item_id = ?`)
+      .get('suya-skewer') as { stock: number; demand_ema: number };
+    expect(snap.stock).toBeGreaterThan(10);
+    expect(snap.demand_ema).toBeLessThan(0.4);
+  });
+
+  it('recordChefFoodSale bumps demand without minting', async () => {
+    syncChefInventory();
+    const before = db
+      .prepare(`SELECT stock, demand_ema FROM chef_inventory WHERE item_id = ?`)
+      .get('jollof-and-chicken') as { stock: number; demand_ema: number };
+    recordChefFoodSale('jollof-and-chicken');
+    const after = db
+      .prepare(`SELECT stock, demand_ema FROM chef_inventory WHERE item_id = ?`)
+      .get('jollof-and-chicken') as { stock: number; demand_ema: number };
+    expect(after.stock).toBe(before.stock - 1);
+    expect(after.demand_ema).toBeCloseTo(before.demand_ema + CHEF_DEMAND_BUY, 5);
+  });
+});
+
+describe('forge', () => {
+  it('burns shards, pays smith, creates and mints gear once', async () => {
+    const row = player('forge');
+    const smith = insertMerchant('smith');
+    fund(row.account_id!, 50_000n);
+    fund(smith, 0n);
+    itemBalances.set(row.account_id!, { shard: '10' });
+    const signsBefore = signs;
+    const res = await forgeMint(row.id, 'cap');
+    expect(res.status).toBe('delivered');
+    expect(res.itemId).toBe('cap');
+    expect(res.tokenId).toMatch(/^gear-cap-[a-f0-9]+$/);
+    expect(balances.get(smith)).toBe(1_000n);
+    expect(itemBalances.get(row.account_id!)?.shard).toBe('7');
+    expect(itemBalances.get(row.account_id!)?.[res.tokenId]).toBe('1');
+    // player ft_transfer + burn_from + create_token + mint
+    expect(signs).toBe(signsBefore + 4);
+    expect(treasuryMethods.filter(m => m === 'burn_from' || m === 'create_token' || m === 'mint')).toEqual([
+      'burn_from',
+      'create_token',
+      'mint',
+    ]);
+    const after = signs;
+    await resumeForges();
+    expect(signs).toBe(after);
+  });
+
+  it('rejects forge when shards or GD are short', async () => {
+    const row = player('forge-short');
+    insertMerchant('smith');
+    fund(row.account_id!, 50_000n);
+    itemBalances.set(row.account_id!, { shard: '1' });
+    await expect(forgeMint(row.id, 'cap')).rejects.toThrow(/Not enough shards/);
+    itemBalances.set(row.account_id!, { shard: '10' });
+    fund(row.account_id!, 100n);
+    await expect(forgeMint(row.id, 'cap')).rejects.toThrow(/Not enough GD/);
+    await expect(forgeMint(row.id, 'headphones')).rejects.toThrow(/Unknown forge item/);
   });
 });

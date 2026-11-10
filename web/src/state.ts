@@ -25,7 +25,6 @@ export const S: PlayerState = {
   wantedUntil: 0,
   follows: [],
   needs: { energy: 100, hunger: 80 },
-  usdg: 0,
   shards: 0,
   nfts: [],
   home: { owned: false, paidUntil: 0, items: [] },
@@ -44,8 +43,8 @@ try {
 }
 S.follows = S.follows || [];
 S.needs = Object.assign({ energy: 100, hunger: 80 }, S.needs || {});
-S.usdg = S.usdg || 0;
 S.shards = S.shards || 0;
+delete (S as { usdg?: number }).usdg;
 S.nfts = S.nfts || [];
 S.home = Object.assign({ owned: false, paidUntil: 0, items: [] }, S.home || {});
 S.look = Object.assign({}, DEFAULT_LOOK, S.look || {});

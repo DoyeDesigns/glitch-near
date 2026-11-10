@@ -18,6 +18,7 @@ import {
   validatePlayerName,
   type PlayerRow,
 } from './near';
+import { syncNeedsDecay } from './needs';
 
 export const SESSION_COOKIE = 'glitch_session';
 export const SESSION_MAX_AGE_S = 30 * 24 * 3600;
@@ -56,6 +57,7 @@ export type MePayload = {
   items: Record<string, string>;
   xp: XpState;
   needs: NeedsState;
+  homePaidUntil: number;
 };
 
 export type BalanceParts = {
@@ -389,7 +391,7 @@ export async function fundsView(player: PlayerRow): Promise<{ available: string;
 }
 
 /**
- * On-chain purchase or rent. Refuses when only unminted credits would cover the cost.
+ * On-chain purchase or maintenance. Refuses when only unminted credits would cover the cost.
  */
 export async function assertCanSpend(player: PlayerRow, amount: bigint): Promise<void> {
   const parts = await balanceParts(player);
@@ -400,18 +402,21 @@ export async function assertCanSpend(player: PlayerRow, amount: bigint): Promise
   throw new AuthError('Not enough GD', 400);
 }
 
-/** available includes settling. Chain balance is cached 5s. */
+/** available includes settling. Chain balance is cached 5s. Needs are decayed first. */
 export async function meForPlayer(player: PlayerRow): Promise<MePayload> {
   if (!player.account_id) throw new AuthError('Player has no account', 503);
-  const [parts, items] = await Promise.all([balanceParts(player), getItemBalances(player.account_id)]);
+  const needs = syncNeedsDecay(player.id);
+  const fresh = getPlayerById(player.id) ?? player;
+  const [parts, items] = await Promise.all([balanceParts(fresh), getItemBalances(fresh.account_id!)]);
   return {
-    name: player.name,
-    accountId: player.account_id,
+    name: fresh.name,
+    accountId: fresh.account_id!,
     available: parts.available.toString(),
     settling: parts.settling.toString(),
     items,
-    xp: parseXp(player.xp_json),
-    needs: parseNeeds(player.needs_json),
+    xp: parseXp(fresh.xp_json),
+    needs,
+    homePaidUntil: fresh.home_paid_until ?? 0,
   };
 }
 
