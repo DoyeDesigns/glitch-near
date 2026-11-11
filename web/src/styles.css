@@ -147,6 +147,9 @@ input[type=text],input[type=password]{font:600 16px var(--disp);color:var(--fg);
   #080e18;border:1px solid color-mix(in srgb,var(--line) 80%,transparent)}
 .pose-card-name{font:700 11px/1.25 var(--mono);letter-spacing:.02em;display:flex;flex-direction:column;align-items:center;gap:3px;min-height:2.4em}
 .pose-badge{font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#021018;background:var(--lime);padding:1px 5px}
+.pose-chips{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:4px 0 10px}
+.pose-chip{padding:7px 4px;font:700 10px var(--mono);letter-spacing:.04em;text-transform:uppercase}
+.pose-chip.on{border-color:var(--cyan);color:var(--cyan);background:color-mix(in srgb,var(--cyan) 12%,transparent)}
 .pose-row{display:flex;flex-direction:column;gap:4px;margin:10px 0;font-size:12px}
 .pose-row input[type=range]{width:100%;accent-color:var(--cyan)}
 .pose-row small{text-transform:none;letter-spacing:0}

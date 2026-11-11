@@ -475,25 +475,36 @@ export function buildLook(g: THREE.Group, L: Look) {
     top = lam(TOPC[L.top]!),
     bot = lam(BOTC[L.bot]!, .1),
     hair = lam(HAIRC[L.hairC]!, .08);
-  const mkLeg = (x: number) => {
-    const p = new THREE.Group();
-    p.position.set(x, .85, 0);
-    p.add(bx(.3, .85, .32, bot, 0, -.425, 0), bx(.32, .12, .42, lam(0x0b0f1c, .05), 0, -.82, .05));
-    rig.add(p);
-    return p;
+  const shoe = lam(0x0b0f1c, 0.05);
+  const mkLeg = (x: number, side: 'L' | 'R') => {
+    const thigh = new THREE.Group();
+    thigh.position.set(x, 0.85, 0);
+    thigh.add(bx(0.3, 0.44, 0.32, bot, 0, -0.22, 0));
+    const knee = new THREE.Group();
+    knee.position.set(0, -0.44, 0);
+    knee.add(bx(0.28, 0.4, 0.3, bot, 0, -0.2, 0), bx(0.32, 0.12, 0.42, shoe, 0, -0.42, 0.05));
+    thigh.add(knee);
+    rig.add(thigh);
+    u[`knee${side}`] = knee;
+    return thigh;
   };
-  u.legL = mkLeg(-.17);
-  u.legR = mkLeg(.17);
-  rig.add(bx(.74, .82, .4, top, 0, 1.26, 0));
-  const mkArm = (x: number) => {
-    const p = new THREE.Group();
-    p.position.set(x, 1.6, 0);
-    p.add(bx(.2, .46, .24, top, 0, -.23, 0), bx(.17, .3, .2, skin, 0, -.61, 0));
-    rig.add(p);
-    return p;
+  u.legL = mkLeg(-0.17, 'L');
+  u.legR = mkLeg(0.17, 'R');
+  rig.add(bx(0.74, 0.82, 0.4, top, 0, 1.26, 0));
+  const mkArm = (x: number, side: 'L' | 'R') => {
+    const upper = new THREE.Group();
+    upper.position.set(x, 1.6, 0);
+    upper.add(bx(0.2, 0.4, 0.24, top, 0, -0.2, 0));
+    const elbow = new THREE.Group();
+    elbow.position.set(0, -0.4, 0);
+    elbow.add(bx(0.17, 0.28, 0.2, skin, 0, -0.14, 0), bx(0.15, 0.12, 0.16, skin, 0, -0.32, 0.02));
+    upper.add(elbow);
+    rig.add(upper);
+    u[`elbow${side}`] = elbow;
+    return upper;
   };
-  u.armL = mkArm(-.48);
-  u.armR = mkArm(.48);
+  u.armL = mkArm(-0.48, 'L');
+  u.armR = mkArm(0.48, 'R');
   rig.add(bx(.14, .12, .14, skin, 0, 1.72, 0));
   const head = new THREE.Mesh(new THREE.SphereGeometry(.28, 14, 12), skin);
   head.position.y = 1.99;
@@ -647,12 +658,32 @@ export function buildLook(g: THREE.Group, L: Look) {
   if (heldPose && g.userData.isPlayer) applyHeldPose(g);
 }
 
-/** Limb euler in radians. Large values so box avatars read clearly. */
+/** Shoulder/hip euler. `x` = face-forward raise; `z` = spread (left +out, right −out). */
 export type LimbRot = { x: number; y: number; z: number };
-export type Pose = { armL: LimbRot; armR: LimbRot; legL: LimbRot; legR: LimbRot };
+/** Elbow/knee bend is radians, 0 = straight. Elbow curls forward; knee curls back. */
+export type Pose = {
+  armL: LimbRot;
+  armR: LimbRot;
+  legL: LimbRot;
+  legR: LimbRot;
+  elbowL: number;
+  elbowR: number;
+  kneeL: number;
+  kneeR: number;
+};
 
 const NEUTRAL: LimbRot = { x: 0, y: 0, z: 0 };
 const lr = (x: number, y: number, z: number): LimbRot => ({ x, y, z });
+const pose = (
+  armL: LimbRot,
+  armR: LimbRot,
+  legL: LimbRot,
+  legR: LimbRot,
+  elbowL = 0,
+  elbowR = 0,
+  kneeL = 0,
+  kneeR = 0,
+): Pose => ({ armL, armR, legL, legR, elbowL, elbowR, kneeL, kneeR });
 
 function clonePose(p: Pose): Pose {
   return {
@@ -660,113 +691,71 @@ function clonePose(p: Pose): Pose {
     armR: { ...p.armR },
     legL: { ...p.legL },
     legR: { ...p.legR },
+    elbowL: p.elbowL,
+    elbowR: p.elbowR,
+    kneeL: p.kneeL,
+    kneeR: p.kneeR,
   };
+}
+
+export function emptyPose(): Pose {
+  return pose(NEUTRAL, NEUTRAL, NEUTRAL, NEUTRAL);
 }
 
 /**
  * Built-in poses. Limb `x` is face-forward positive (toward the head’s +Z).
- * `applyHeldPose` negates x for Three.js (positive Rx swings limbs backward).
+ * `applyHeldPose` negates shoulder/hip x for Three.js.
  */
 export const POSE_PRESETS: { id: string; name: string; pose: Pose }[] = [
   {
     id: 'crossed',
     name: 'Arms crossed',
-    pose: {
-      armL: lr(1.35, 0.35, 1.15),
-      armR: lr(1.35, -0.35, -1.15),
-      legL: NEUTRAL,
-      legR: NEUTRAL,
-    },
+    pose: pose(lr(1.1, 0.2, 0.85), lr(1.1, -0.2, -0.85), NEUTRAL, NEUTRAL, 1.55, 1.55),
   },
   {
     id: 'victory',
     name: 'Victory',
-    pose: {
-      armL: lr(2.35, 0.2, 0.95),
-      armR: lr(2.35, -0.2, -0.95),
-      legL: lr(0, 0, 0.2),
-      legR: lr(0, 0, -0.2),
-    },
+    pose: pose(lr(2.35, 0.15, 0.95), lr(2.35, -0.15, -0.95), lr(0, 0, 0.2), lr(0, 0, -0.2), 0.35, 0.35),
   },
   {
     id: 'tpose',
     name: 'T-pose',
-    pose: {
-      armL: lr(0, 0, 1.55),
-      armR: lr(0, 0, -1.55),
-      legL: NEUTRAL,
-      legR: NEUTRAL,
-    },
+    pose: pose(lr(0, 0, 1.55), lr(0, 0, -1.55), NEUTRAL, NEUTRAL),
   },
   {
     id: 'wave',
     name: 'Wave hello',
-    pose: {
-      armL: lr(-0.15, 0, 0.15),
-      armR: lr(2.2, -0.45, -1.05),
-      legL: NEUTRAL,
-      legR: lr(0.15, 0, -0.1),
-    },
+    pose: pose(lr(-0.1, 0, 0.15), lr(2.05, -0.35, -1.05), NEUTRAL, lr(0.12, 0, -0.1), 0.2, 0.85),
   },
   {
     id: 'think',
     name: 'Thinking',
-    pose: {
-      armL: lr(-0.15, 0, 0.2),
-      armR: lr(1.55, -0.85, -0.55),
-      legL: lr(0.35, 0, 0.15),
-      legR: NEUTRAL,
-    },
+    pose: pose(lr(-0.1, 0, 0.2), lr(1.35, -0.75, -0.45), lr(0.3, 0, 0.12), NEUTRAL, 0.15, 1.65),
   },
   {
     id: 'flex',
     name: 'Flex',
-    pose: {
-      armL: lr(1.55, 0.55, 1.25),
-      armR: lr(1.55, -0.55, -1.25),
-      legL: lr(0, 0, 0.35),
-      legR: lr(0, 0, -0.35),
-    },
+    pose: pose(lr(1.25, 0.45, 1.15), lr(1.25, -0.45, -1.15), lr(0, 0, 0.35), lr(0, 0, -0.35), 2.05, 2.05),
   },
   {
     id: 'sit',
     name: 'Sit',
-    pose: {
-      armL: lr(0.85, 0.15, 0.35),
-      armR: lr(0.85, -0.15, -0.35),
-      legL: lr(1.55, 0.1, 0.25),
-      legR: lr(1.55, -0.1, -0.25),
-    },
+    pose: pose(lr(0.75, 0.1, 0.3), lr(0.75, -0.1, -0.3), lr(1.45, 0.08, 0.2), lr(1.45, -0.08, -0.2), 0.55, 0.55, 1.55, 1.55),
   },
   {
     id: 'point',
     name: 'Point forward',
-    pose: {
-      armL: lr(-0.1, 0, 0.2),
-      armR: lr(1.45, 0, 0),
-      legL: NEUTRAL,
-      legR: lr(0.45, 0, -0.12),
-    },
+    pose: pose(lr(-0.1, 0, 0.2), lr(1.45, 0, -0.15), NEUTRAL, lr(0.4, 0, -0.12), 0.15, 0.25),
   },
   {
     id: 'akimbo',
     name: 'Hands on hips',
-    pose: {
-      armL: lr(-0.95, 0.65, 0.95),
-      armR: lr(-0.95, -0.65, -0.95),
-      legL: lr(0, 0, 0.55),
-      legR: lr(0, 0, -0.55),
-    },
+    pose: pose(lr(-0.55, 0.55, 0.95), lr(-0.55, -0.55, -0.95), lr(0, 0, 0.5), lr(0, 0, -0.5), 1.45, 1.45),
   },
   {
     id: 'kneel',
     name: 'One knee',
-    pose: {
-      armL: lr(0.4, 0, 0.25),
-      armR: lr(0.4, 0, -0.25),
-      legL: lr(1.65, 0.2, 0.35),
-      legR: lr(0.15, 0, -0.2),
-    },
+    pose: pose(lr(0.35, 0, 0.25), lr(0.35, 0, -0.25), lr(1.35, 0.15, 0.3), lr(0.2, 0, -0.15), 0.35, 0.35, 1.85, 0.2),
   },
 ];
 
@@ -774,18 +763,40 @@ export let heldPose: Pose | null = null;
 /** Preset id, `custom`, or null when no pose held. */
 export let heldPoseId: string | null = null;
 
+const ROOT_LIMBS = ['armL', 'armR', 'legL', 'legR'] as const;
+const BEND_JOINTS = ['elbowL', 'elbowR', 'kneeL', 'kneeR'] as const;
+
 function poseRigDrop(id: string | null): number {
-  if (id === 'sit') return -0.72;
-  if (id === 'kneel') return -0.38;
+  if (id === 'sit') return -0.55;
+  if (id === 'kneel') return -0.32;
   return 0;
 }
 
-export function poseFromCustomXs(armL: number, armR: number, legL: number, legR: number): Pose {
+/** Draft → pose. Spread is outward-positive on both sides (right maps to −z). */
+export function poseFromDraft(d: {
+  armL: { raise: number; spread: number; bend: number };
+  armR: { raise: number; spread: number; bend: number };
+  legL: { raise: number; spread: number; bend: number };
+  legR: { raise: number; spread: number; bend: number };
+}): Pose {
+  return pose(
+    lr(d.armL.raise, 0, d.armL.spread),
+    lr(d.armR.raise, 0, -d.armR.spread),
+    lr(d.legL.raise, 0, d.legL.spread),
+    lr(d.legR.raise, 0, -d.legR.spread),
+    Math.max(0, d.armL.bend),
+    Math.max(0, d.armR.bend),
+    Math.max(0, d.legL.bend),
+    Math.max(0, d.legR.bend),
+  );
+}
+
+export function draftFromPose(p: Pose) {
   return {
-    armL: lr(armL, 0, 0),
-    armR: lr(armR, 0, 0),
-    legL: lr(legL, 0, 0),
-    legR: lr(legR, 0, 0),
+    armL: { raise: p.armL.x, spread: p.armL.z, bend: p.elbowL },
+    armR: { raise: p.armR.x, spread: -p.armR.z, bend: p.elbowR },
+    legL: { raise: p.legL.x, spread: p.legL.z, bend: p.kneeL },
+    legR: { raise: p.legR.x, spread: -p.legR.z, bend: p.kneeR },
   };
 }
 
@@ -793,30 +804,40 @@ export function applyHeldPose(g: THREE.Group = player) {
   if (!heldPose) return;
   const rig = g.userData.rig as THREE.Group;
   const u = rig.userData as Record<string, THREE.Object3D>;
-  for (const k of ['armL', 'armR', 'legL', 'legR'] as const) {
+  for (const k of ROOT_LIMBS) {
     const limb = u[k];
     if (!limb) return;
     const r = heldPose[k];
     // Face is +Z; Three +Rx swings a hanging limb to −Z — negate stored face-forward x.
     limb.rotation.set(-r.x, r.y, r.z);
   }
+  // Elbow curls forward (−Rx); knee curls back (+Rx).
+  if (u.elbowL) u.elbowL.rotation.set(-heldPose.elbowL, 0, 0);
+  if (u.elbowR) u.elbowR.rotation.set(-heldPose.elbowR, 0, 0);
+  if (u.kneeL) u.kneeL.rotation.set(heldPose.kneeL, 0, 0);
+  if (u.kneeR) u.kneeR.rotation.set(heldPose.kneeR, 0, 0);
   rig.position.y = poseRigDrop(g === player ? heldPoseId : null);
 }
 
-export function setHeldPose(pose: Pose | null, id: string | null = null) {
-  heldPose = pose ? clonePose(pose) : null;
-  heldPoseId = heldPose ? id : null;
-  const rig = player.userData.rig as THREE.Group;
-  if (heldPose) applyHeldPose(player);
-  else {
-    const u = rig.userData as Record<string, THREE.Object3D>;
-    for (const k of ['armL', 'armR', 'legL', 'legR'] as const) {
-      const limb = u[k];
-      if (!limb) continue;
-      limb.rotation.set(0, 0, 0);
-    }
-    rig.position.y = 0;
+function resetPoseJoints(g: THREE.Group) {
+  const rig = g.userData.rig as THREE.Group;
+  const u = rig.userData as Record<string, THREE.Object3D>;
+  for (const k of ROOT_LIMBS) {
+    const limb = u[k];
+    if (limb) limb.rotation.set(0, 0, 0);
   }
+  for (const k of BEND_JOINTS) {
+    const joint = u[k];
+    if (joint) joint.rotation.set(0, 0, 0);
+  }
+  rig.position.y = 0;
+}
+
+export function setHeldPose(poseIn: Pose | null, id: string | null = null) {
+  heldPose = poseIn ? clonePose(poseIn) : null;
+  heldPoseId = heldPose ? id : null;
+  if (heldPose) applyHeldPose(player);
+  else resetPoseJoints(player);
 }
 
 export function clearHeldPose() {
@@ -847,6 +868,10 @@ function walkAnim(a: THREE.Group, sp: number, t: number, ph: number) {
   u.legR!.rotation.set(-s, 0, 0);
   u.armL!.rotation.set(-s, 0, 0);
   u.armR!.rotation.set(s, 0, 0);
+  if (u.elbowL) u.elbowL.rotation.set(-0.15 * sp, 0, 0);
+  if (u.elbowR) u.elbowR.rotation.set(-0.15 * sp, 0, 0);
+  if (u.kneeL) u.kneeL.rotation.set(Math.max(0, s) * 0.35, 0, 0);
+  if (u.kneeR) u.kneeR.rotation.set(Math.max(0, -s) * 0.35, 0, 0);
   r.position.y = sp > .1 ? Math.abs(Math.sin(t * 9 + ph)) * .07 * sp : 0;
 }
 

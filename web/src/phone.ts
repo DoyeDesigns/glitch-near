@@ -15,7 +15,7 @@ import {
   currentInterior,
   heldPoseId,
   player,
-  poseFromCustomXs,
+  poseFromDraft,
   POSE_PRESETS,
   setAssistantClickHandler,
   setHeldPose,
@@ -163,32 +163,52 @@ function loadChainProof(): void {
       if (phoneOpen && phoneApp === 'set') phoneRefresh();
     });
 }
-/** v2: limb x is face-forward positive (matches POSE_PRESETS / applyHeldPose). */
-const CUSTOM_POSE_KEY = 'glitch-custom-pose-v2';
-type CustomPoseXs = { armL: number; armR: number; legL: number; legR: number };
+/** v3: raise / outward-spread / bend (elbow|knee) per limb. */
+const CUSTOM_POSE_KEY = 'glitch-custom-pose-v3';
+type PoseLimbId = 'armL' | 'armR' | 'legL' | 'legR';
+type PoseLimbDraft = { raise: number; spread: number; bend: number };
+type CustomPoseDraft = Record<PoseLimbId, PoseLimbDraft>;
 
-function loadCustomPoseXs(): CustomPoseXs | null {
+const emptyLimbDraft = (): PoseLimbDraft => ({ raise: 0, spread: 0, bend: 0 });
+const emptyPoseDraft = (): CustomPoseDraft => ({
+  armL: emptyLimbDraft(),
+  armR: emptyLimbDraft(),
+  legL: emptyLimbDraft(),
+  legR: emptyLimbDraft(),
+});
+
+function readLimbDraft(raw: unknown): PoseLimbDraft | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const raise = Number(o.raise),
+    spread = Number(o.spread),
+    bend = Number(o.bend);
+  if (![raise, spread, bend].every(Number.isFinite)) return null;
+  return { raise, spread, bend: Math.max(0, bend) };
+}
+
+function loadCustomPoseDraft(): CustomPoseDraft | null {
   try {
-    const raw = JSON.parse(localStorage.getItem(CUSTOM_POSE_KEY) || 'null') as Partial<CustomPoseXs> | null;
+    const raw = JSON.parse(localStorage.getItem(CUSTOM_POSE_KEY) || 'null') as Partial<CustomPoseDraft> | null;
     if (!raw || typeof raw !== 'object') return null;
-    const armL = Number(raw.armL),
-      armR = Number(raw.armR),
-      legL = Number(raw.legL),
-      legR = Number(raw.legR);
-    if (![armL, armR, legL, legR].every(Number.isFinite)) return null;
+    const armL = readLimbDraft(raw.armL),
+      armR = readLimbDraft(raw.armR),
+      legL = readLimbDraft(raw.legL),
+      legR = readLimbDraft(raw.legR);
+    if (!armL || !armR || !legL || !legR) return null;
     return { armL, armR, legL, legR };
   } catch {
     return null;
   }
 }
 
-function saveCustomPoseXs(xs: CustomPoseXs) {
+function saveCustomPoseDraft(xs: CustomPoseDraft) {
   localStorage.setItem(CUSTOM_POSE_KEY, JSON.stringify(xs));
 }
 
 function customPose(): Pose | null {
-  const xs = loadCustomPoseXs();
-  return xs ? poseFromCustomXs(xs.armL, xs.armR, xs.legL, xs.legR) : null;
+  const xs = loadCustomPoseDraft();
+  return xs ? poseFromDraft(xs) : null;
 }
 
 let phoneApp: string | null = null,
@@ -197,7 +217,8 @@ let phoneApp: string | null = null,
   dmWith: string | null = null,
   profOf: string | null = null,
   poseEdit = false,
-  poseDraft: CustomPoseXs = { armL: 0, armR: 0, legL: 0, legR: 0 };
+  poseLimb: PoseLimbId = 'armL',
+  poseDraft: CustomPoseDraft = emptyPoseDraft();
 const hash = (s: string) => {
   let h = 0;
   for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -547,23 +568,28 @@ function renderPhone() {
       `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('map', 'Map', '#ffb12e', 'M')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('pose', 'Pose', '#ff7a59', '◇')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}</div>`;
   } else if (phoneApp === 'pose') {
     if (poseEdit) {
-      const draftPose = poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR);
-      const row = (id: keyof CustomPoseXs, label: string) => {
-        const v = poseDraft[id];
+      const draftPose = poseFromDraft(poseDraft);
+      const limb = poseDraft[poseLimb];
+      const isArm = poseLimb === 'armL' || poseLimb === 'armR';
+      const bendLabel = isArm ? 'Elbow' : 'Knee';
+      const chip = (id: PoseLimbId, label: string) =>
+        `<button type="button" class="pose-chip${poseLimb === id ? ' on' : ''}" data-a="poseLimb" data-v="${id}">${label}</button>`;
+      const row = (key: keyof PoseLimbDraft, label: string, min: number, max: number) => {
+        const v = limb[key];
         const deg = Math.round((v * 180) / Math.PI);
-        return `<label class="pose-row"><span>${label} <small>${deg}°</small></span><input type="range" data-pose-limb="${id}" min="-2.4" max="2.4" step="0.05" value="${v}"></label>`;
+        return `<label class="pose-row"><span>${label} <small>${deg}°</small></span><input type="range" data-pose-axis="${key}" min="${min}" max="${max}" step="0.05" value="${v}"></label>`;
       };
       body =
         hdr('Make a pose', 'poseList') +
-        `<p class="hint">Positive = toward your face. Preview updates live; save stays on this browser.</p>` +
+        `<p class="hint">Raise / spread / ${bendLabel.toLowerCase()}. Positive raise = toward face; spread = outward.</p>` +
         `<div class="pose-stage" id="poseLive">${poseSvgMarkup(draftPose, { size: 148, className: 'pose-fig pose-fig-lg' })}</div>` +
-        row('armL', 'Arm left') +
-        row('armR', 'Arm right') +
-        row('legL', 'Leg left') +
-        row('legR', 'Leg right') +
+        `<div class="pose-chips">${chip('armL', 'Arm L')}${chip('armR', 'Arm R')}${chip('legL', 'Leg L')}${chip('legR', 'Leg R')}</div>` +
+        row('raise', 'Raise', -2.4, 2.4) +
+        row('spread', 'Spread out', -0.4, 1.7) +
+        row('bend', bendLabel, 0, 2.3) +
         `<div class="acts"><button class="pri" data-a="poseSave">Save pose</button><button data-a="poseList">Cancel</button></div>`;
     } else {
-      const custom = loadCustomPoseXs();
+      const custom = loadCustomPoseDraft();
       const customP = customPose();
       const activePreset = POSE_PRESETS.find(p => p.id === heldPoseId);
       const activePose: Pose =
@@ -574,11 +600,11 @@ function renderPhone() {
         heldPoseId === 'custom'
           ? 'Your pose'
           : activePreset?.name ?? 'Standing';
-      const card = (id: string, name: string, pose: Pose, badge?: string) => {
+      const card = (id: string, name: string, p: Pose, badge?: string) => {
         const on = heldPoseId === id ? ' on' : '';
         const tag = badge ? `<em class="pose-badge">${esc(badge)}</em>` : '';
         return `<button type="button" class="pose-card${on}" data-a="posePick" data-v="${esc(id)}">
-          <span class="pose-thumb">${poseSvgMarkup(pose, { size: 88, className: 'pose-fig' })}</span>
+          <span class="pose-thumb">${poseSvgMarkup(p, { size: 88, className: 'pose-fig' })}</span>
           <span class="pose-card-name">${esc(name)}${tag}</span>
         </button>`;
       };
@@ -775,8 +801,16 @@ function renderPhone() {
         dmWith = null;
       }
       if (v === 'pose') {
-        const xs = loadCustomPoseXs();
-        poseDraft = xs ? { ...xs } : { armL: 0, armR: 0, legL: 0, legR: 0 };
+        const xs = loadCustomPoseDraft();
+        poseDraft = xs
+          ? {
+              armL: { ...xs.armL },
+              armR: { ...xs.armR },
+              legL: { ...xs.legL },
+              legR: { ...xs.legR },
+            }
+          : emptyPoseDraft();
+        poseLimb = 'armL';
       }
     } else if (a === 'hintsOn') {
       setAssistHintsEnabled(true);
@@ -785,16 +819,28 @@ function renderPhone() {
     } else if (a === 'poseList') {
       poseEdit = false;
       phoneApp = 'pose';
+    } else if (a === 'poseLimb' && v && ['armL', 'armR', 'legL', 'legR'].includes(v)) {
+      poseLimb = v as PoseLimbId;
+      phoneApp = 'pose';
+      poseEdit = true;
     } else if (a === 'poseEdit') {
-      const xs = loadCustomPoseXs();
-      poseDraft = xs ? { ...xs } : { armL: 0, armR: 0, legL: 0, legR: 0 };
-      setHeldPose(poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR), 'custom');
+      const xs = loadCustomPoseDraft();
+      poseDraft = xs
+        ? {
+            armL: { ...xs.armL },
+            armR: { ...xs.armR },
+            legL: { ...xs.legL },
+            legR: { ...xs.legR },
+          }
+        : emptyPoseDraft();
+      poseLimb = 'armL';
+      setHeldPose(poseFromDraft(poseDraft), 'custom');
       poseEdit = true;
       phoneApp = 'pose';
     } else if (a === 'posePick') {
       if (v === 'custom') {
-        const pose = customPose();
-        if (pose) setHeldPose(pose, 'custom');
+        const p = customPose();
+        if (p) setHeldPose(p, 'custom');
       } else {
         const preset = POSE_PRESETS.find(p => p.id === v);
         if (preset) setHeldPose(preset.pose, preset.id);
@@ -802,8 +848,13 @@ function renderPhone() {
     } else if (a === 'poseClear') {
       setHeldPose(null, null);
     } else if (a === 'poseSave') {
-      saveCustomPoseXs({ ...poseDraft });
-      setHeldPose(poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR), 'custom');
+      saveCustomPoseDraft({
+        armL: { ...poseDraft.armL },
+        armR: { ...poseDraft.armR },
+        legL: { ...poseDraft.legL },
+        legR: { ...poseDraft.legR },
+      });
+      setHeldPose(poseFromDraft(poseDraft), 'custom');
       poseEdit = false;
       banner('Pose saved', 'good');
     } else if (a === 'social') phoneApp = 'social';
@@ -977,12 +1028,12 @@ function renderPhone() {
   });
   sheet.oninput = e => {
     const t = e.target as HTMLInputElement | null;
-    if (!t || t.type !== 'range' || !t.dataset.poseLimb) return;
-    const limb = t.dataset.poseLimb as keyof CustomPoseXs;
+    if (!t || t.type !== 'range' || !t.dataset.poseAxis) return;
+    const axis = t.dataset.poseAxis as keyof PoseLimbDraft;
     const val = Number(t.value);
     if (!Number.isFinite(val)) return;
-    poseDraft[limb] = val;
-    const live = poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR);
+    poseDraft[poseLimb][axis] = axis === 'bend' ? Math.max(0, val) : val;
+    const live = poseFromDraft(poseDraft);
     setHeldPose(live, 'custom');
     const label = t.closest('label')?.querySelector('small');
     if (label) label.textContent = `${Math.round((val * 180) / Math.PI)}°`;
