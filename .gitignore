@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# env / secrets (keep *.example)
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# local data / build
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+dist/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+
+# Rust / NEAR contracts
+contracts/target/
+
+# tooling caches
+.vite/
+*.tsbuildinfo
+
+# near CLI scratch (optional local)
+args.json
+mint.json
