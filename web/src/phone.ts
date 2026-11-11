@@ -43,6 +43,7 @@ import {
   loadMerchantQuotes,
   openCustomizer,
   playCityDaySim,
+  startMerchantPoll,
   type CityDayBoard,
   type CityDayRow,
 } from './games';
@@ -311,12 +312,27 @@ function refreshMyHomeQuotes() {
     .catch(() => {});
 }
 
+let stopHomePoll: (() => void) | null = null;
+
+function syncHomeMerchantPoll() {
+  const want = phoneOpen && phoneApp === 'myhome';
+  if (want && !stopHomePoll) {
+    stopHomePoll = startMerchantPoll(() => {
+      if (phoneOpen && phoneApp === 'myhome') phoneRefresh();
+    });
+  } else if (!want && stopHomePoll) {
+    stopHomePoll();
+    stopHomePoll = null;
+  }
+}
+
 export function openPhone(app?: string) {
   if (introOpen() || (modalOpen() && !phoneOpen)) return;
   if (phoneOpen) {
     phoneApp = app || null;
     renderPhone();
     if (phoneApp === 'myhome') refreshMyHomeQuotes();
+    syncHomeMerchantPoll();
     return;
   }
   phoneOpen = true;
@@ -330,11 +346,13 @@ export function openPhone(app?: string) {
     sheet.onclick = null;
     sheet.onkeydown = null;
     sheet.oninput = null;
+    syncHomeMerchantPoll();
     updateAssistHint();
   });
   sheet.classList.add('phonesheet', 'assist-sheet');
   renderPhone();
   if (phoneApp === 'myhome') refreshMyHomeQuotes();
+  syncHomeMerchantPoll();
 }
 export function phoneRefresh() {
   if (!phoneOpen) return;
@@ -486,12 +504,17 @@ function daySentence(d: CityDayBoard): string {
     }
   }
   const soFar = d.phase === 'done' ? '' : ' so far';
+  const npcN = d.phase === 'done' ? d.npcTrades.length : d.shownNpcTrades;
+  const npc =
+    npcN === 0
+      ? `No NPC city trades${soFar}`
+      : `${fmtN(npcN)} NPC supply trade${npcN === 1 ? '' : 's'}${soFar}`;
   const head =
     d.pumps + d.rugs === 0
       ? `No pumps or rugs${soFar}`
       : `${fmtN(d.pumps + d.rugs)} headlines${soFar} (${d.pumps} pump${d.pumps === 1 ? '' : 's'}, ${d.rugs} rug${d.rugs === 1 ? '' : 's'})`;
-  if (!best || bestAbs < 0.01) return `${head}. Nothing moved more than 1%.`;
-  return `${head}. Biggest spike: ${best.title} ${dayMove(best.open, best.high).text}.`;
+  if (!best || bestAbs < 0.01) return `${npc}. ${head}. Nothing moved more than 1%.`;
+  return `${npc}. ${head}. Biggest spike: ${best.title} ${dayMove(best.open, best.high).text}.`;
 }
 
 function citySimBtn(): string {
@@ -567,7 +590,7 @@ function cityDayHtml(): string {
     <div class="day-top"><b>${title}</b><span class="day-clock">${esc(d.clock)} / ${end}</span></div>
     <div class="day-meter" aria-hidden="true"><i style="width:${Math.round(d.progress * 100)}%"></i></div>
     <p class="day-line">${esc(daySentence(d))}</p>
-    <div class="day-stats"><span><b>${fmtN(d.sales)}</b><small>Sales</small></span><span><b class="pos">${d.pumps}</b><small>Pumps</small></span><span><b class="neg">${d.rugs}</b><small>Rugs</small></span></div>
+    <div class="day-stats"><span><b>${fmtN(d.sales)}</b><small>Sales</small></span><span><b>${fmtN(d.phase === 'done' ? d.npcTrades.length : d.shownNpcTrades)}</b><small>NPC trades</small></span><span><b class="pos">${d.pumps}</b><small>Pumps</small></span><span><b class="neg">${d.rugs}</b><small>Rugs</small></span></div>
     ${d.latest ? `<p class="hint">${esc(d.latest)}</p>` : ''}
     ${shops}
     ${quietLine}
@@ -922,7 +945,7 @@ function renderPhone() {
       dmIn(dmWith!, x, true);
       npcReply(dmWith!, x);
     } else if (a === 'go') return travel(v!);
-    else if (['buyhome', 'paymaintenance', 'furn', 'gohome', 'homepaint', 'invest'].includes(a)) {
+    else if (['buyhome', 'paymaintenance', 'furn', 'gohome', 'homepaint'].includes(a)) {
       if (homeAct(a, v)) return;
     } else if (a === 'copyacct') {
       const id = chainProof?.accountId;
@@ -1031,7 +1054,8 @@ function renderPhone() {
       return location.reload();
     }
     renderPhone();
-    if ((a === 'app' && v === 'myhome') || a === 'buyhome' || a === 'furn' || a === 'invest') {
+    syncHomeMerchantPoll();
+    if ((a === 'app' && v === 'myhome') || a === 'buyhome' || a === 'furn') {
       refreshMyHomeQuotes();
     }
     const n = $('#pin') as HTMLInputElement | null;

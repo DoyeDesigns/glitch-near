@@ -6,7 +6,7 @@ Constants: [`shared/src/economy.ts`](../shared/src/economy.ts). Catalog: [`share
 
 See [`ONCHAIN.md`](./ONCHAIN.md) for the full map. Short rules that affect economy design:
 
-1. **Purchases ≠ burns.** Food, furniture, studio, maintenance, and forge `gdCost` are player-signed **`ft_transfer` → merchant** (`chef` / `dealer` / `smith`). Burns are only for sinks (holding tax / upkeep, fees, trade loss, post cost, fines) and merchant COGS on restock. Shops **close** when merchant GD is below `MERCHANT_MIN_BALANCE` (1,000); players reopen via `POST /merchants/:id/invest`.
+1. **Purchases ≠ burns.** Food, furniture, studio, maintenance, and forge `gdCost` are player-signed **`ft_transfer` → merchant** (`chef` / `dealer` / `smith`). Burns are player sinks (holding tax / upkeep, fees, trade loss, post cost, fines). Merchants also **pay each other** on restock (supply chain) and on a frequent **city-trade triangle** (staff meals, ingredients, parts, tools, repairs — `MERCHANT_CITY_TRADES`). Shops **close** below `MERCHANT_MIN_BALANCE` (1,000) until NPC cashflow or sales refill them. Day sim lists those NPC trades off-chain; live ticks settle on-chain.
 2. **`available = chainBalance − pendingBurns − escrowed`.** Every spend, stake, and maintenance payment checks `available`. `/me` returns `available`. Lazy `burn_from` flushes are capped at real chain balance.
 3. **Food is instant.** Pay chef, apply hunger server-side, **no food token mint** (catalog food rows are price/effect only).
 4. **Pay-then-deliver** for furniture / studio / gear with `pending_delivery` + reconcile; refund from merchant is last resort.
@@ -95,6 +95,8 @@ Starter balance: **START_GD = 60,000** (not skill pay).
 | Fast travel gas | **200** GD | **burn** accrued **(b)** via `POST /travel` (`GAS_GD`) |
 | Passive upkeep (holding tax) | **0.01%** / **10s** | **burn** accrued **(b)** on `GET /me` catch-up (`UPKEEP_RATE`) |
 | CIA fine (guilty) | `min(available, floor(loot * 1.25))` | **burn** accrued **(b)** when player case resolves |
+| Merchant restock supply | GD per stock unit | **`ft_transfer` merchant → merchant** **(a)** (see `MERCHANT_SUPPLY_CHAIN`) |
+| Merchant city trades | 80–180 GD / hop | **`ft_transfer` merchant → merchant** **(a)** (`MERCHANT_CITY_TRADES`; ~10s live; day sim off-chain) |
 | Furniture | catalog `priceGD` | **`ft_transfer` → dealer** **(a)** |
 | Studio buy | **90,000** GD | **`ft_transfer` → dealer** **(a)** |
 | Studio maintenance | **1,000** GD / **1 h** | **`ft_transfer` → dealer** **(a)** |

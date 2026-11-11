@@ -55,6 +55,14 @@ export type MerchantShopView = {
   /** True when gdBalance is below MERCHANT_MIN_BALANCE. */
   closed: boolean;
   menu: MerchantMenuItem[];
+  /** Most recent NPC supply/city trade touching this merchant. */
+  lastTrade?: {
+    from: string;
+    to: string;
+    amount: number;
+    label: string;
+    at: number;
+  };
 };
 
 export type MerchantsPayload = {
@@ -106,8 +114,13 @@ function writeRow(
   ).run(stock, demandEma, now, merchantId, itemId);
 }
 
-/** Apply timestamp restock/demand decay for one merchant. */
-export function syncMerchantInventory(merchantId: MerchantId, now = Date.now()): void {
+export type MerchantRestockDelta = { merchantId: MerchantId; itemId: string; stockGained: number };
+
+/** Apply timestamp restock/demand decay; returns stock units gained (for supply-chain GD). */
+export function syncMerchantInventoryWithDeltas(
+  merchantId: MerchantId,
+  now = Date.now(),
+): MerchantRestockDelta[] {
   ensureMerchantRows(merchantId, now);
   const rows = db
     .prepare(
@@ -115,14 +128,23 @@ export function syncMerchantInventory(merchantId: MerchantId, now = Date.now()):
        FROM merchant_inventory WHERE merchant_id = ?`,
     )
     .all(merchantId) as MerchantInventoryRow[];
+  const deltas: MerchantRestockDelta[] = [];
   for (const row of rows) {
     const rule = merchantItemRule(merchantId, row.item_id);
     if (!rule) continue;
     const elapsedSec = Math.max(0, (now - row.updated_at) / 1000);
     if (elapsedSec <= 0) continue;
     const next = applyChefRestock(row.stock, row.demand_ema, rule.targetStock, elapsedSec);
+    const stockGained = next.stock - row.stock;
     writeRow(merchantId, row.item_id, next.stock, next.demandEma, now);
+    if (stockGained > 0) deltas.push({ merchantId, itemId: row.item_id, stockGained });
   }
+  return deltas;
+}
+
+/** Apply timestamp restock/demand decay for one merchant. */
+export function syncMerchantInventory(merchantId: MerchantId, now = Date.now()): void {
+  syncMerchantInventoryWithDeltas(merchantId, now);
 }
 
 /** Sync all three merchants. */
@@ -238,7 +260,11 @@ export function dealerItemSnapshot(itemId: string, now = Date.now()): MerchantQu
 }
 
 async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
-  syncMerchantInventory(merchantId);
+  const deltas = syncMerchantInventoryWithDeltas(merchantId);
+  if (deltas.length) {
+    const { settleRestockSupply } = await import('./merchantEconomy');
+    await settleRestockSupply(deltas);
+  }
   const merchant = getMerchant(merchantId);
   if (!merchant) throw new AuthError(`${merchantId} is not set up`, 503);
   let gdBalance = '0';
@@ -275,12 +301,25 @@ async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
     menu.push(entry);
   }
   const minBalance = merchantId === 'chef' ? CHEF_MIN_BALANCE : MERCHANT_MIN_BALANCE;
+  const { getLastTrade } = await import('./merchantEconomy');
+  const last = getLastTrade(merchantId);
   return {
     accountId: merchant.account_id,
     gdBalance,
     minBalance,
     closed: !merchantShopOpen(gdBalance),
     menu,
+    ...(last
+      ? {
+          lastTrade: {
+            from: last.from,
+            to: last.to,
+            amount: last.amount,
+            label: last.label,
+            at: last.at,
+          },
+        }
+      : {}),
   };
 }
 

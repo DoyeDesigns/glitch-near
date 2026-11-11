@@ -8,11 +8,16 @@ import {
   CHEF_PRICE_MIN_MULT,
   CHEF_SIM_MAX_HOURS,
   DEALER_GOODS,
+  MERCHANT_CITY_TRADES,
+  MERCHANT_CITY_TRADES_PER_DAY,
   MERCHANT_MIN_BALANCE,
+  cityTradePayment,
   merchantInvestToOpen,
+  merchantRestockPayment,
   merchantShopOpen,
   quoteChefPrice,
   simulateCityFastForward,
+  simulateMerchantCityDay,
   SMITH_GEAR,
 } from '../src/merchants.rules';
 
@@ -31,6 +36,52 @@ describe('merchant insolvency helpers', () => {
     expect(merchantInvestToOpen(MERCHANT_MIN_BALANCE - 250)).toBe(250);
     expect(merchantInvestToOpen(MERCHANT_MIN_BALANCE)).toBe(0);
     expect(merchantInvestToOpen(String(MERCHANT_MIN_BALANCE + 10))).toBe(0);
+  });
+
+  it('restock supply payment pays the chain partner and caps at available', () => {
+    expect(merchantRestockPayment('chef', 2, 10_000)).toEqual({
+      from: 'chef',
+      to: 'dealer',
+      amount: 400,
+      label: 'ingredients',
+    });
+    expect(merchantRestockPayment('chef', 10, 150)?.amount).toBe(150);
+    expect(merchantRestockPayment('chef', 1, 0)).toBeNull();
+  });
+
+  it('city trade pays up to amountGd but never spends the open floor', () => {
+    const edge = MERCHANT_CITY_TRADES.find(t => t.from === 'smith' && t.to === 'chef')!;
+    expect(cityTradePayment(edge, MERCHANT_MIN_BALANCE + 500)).toEqual({
+      from: 'smith',
+      to: 'chef',
+      amount: Math.min(edge.amountGd, 500),
+      label: 'staff meals',
+    });
+    expect(cityTradePayment(edge, MERCHANT_MIN_BALANCE)).toBeNull();
+    expect(cityTradePayment(edge, MERCHANT_MIN_BALANCE + 10)?.amount).toBe(10);
+  });
+});
+
+describe('merchant city trades day sim', () => {
+  it('triangle: each role sends and receives across a day', () => {
+    const day = simulateMerchantCityDay(
+      { chef: 50_000, smith: 50_000, dealer: 50_000 },
+      { rounds: 12, seed: 42 },
+    );
+    expect(day.trades.length).toBeGreaterThan(6);
+    const senders = new Set(day.trades.map(t => t.from));
+    const receivers = new Set(day.trades.map(t => t.to));
+    expect(senders).toEqual(new Set(['chef', 'smith', 'dealer']));
+    expect(receivers).toEqual(new Set(['chef', 'smith', 'dealer']));
+    for (const id of ['chef', 'smith', 'dealer'] as const) {
+      expect(day.end[id]).toBeGreaterThanOrEqual(MERCHANT_MIN_BALANCE);
+    }
+  });
+
+  it('city fast-forward embeds many NPC trades', () => {
+    const r = simulateCityFastForward(24, 42);
+    expect(r.npcTrades.rounds).toBe(MERCHANT_CITY_TRADES_PER_DAY);
+    expect(r.npcTrades.trades.length).toBeGreaterThan(20);
   });
 });
 

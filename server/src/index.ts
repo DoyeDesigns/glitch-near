@@ -24,6 +24,19 @@ void resumeTransfers()
   .then(() => resumeForges());
 void ensureShardToken();
 
+if (process.env.VITEST !== 'true') {
+  void import('./merchantEconomy').then(({ runMerchantSupplyTick }) => {
+    void import('@glitch/shared').then(({ MERCHANT_CITY_TRADE_INTERVAL_MS }) => {
+      setInterval(() => {
+        void runMerchantSupplyTick().catch(err => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[merchants] supply tick failed: ${msg.slice(0, 160)}`);
+        });
+      }, MERCHANT_CITY_TRADE_INTERVAL_MS);
+    });
+  });
+}
+
 const app = createApp();
 
 serve({ fetch: app.fetch, port: config.port }, info => {

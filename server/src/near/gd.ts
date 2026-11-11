@@ -55,6 +55,22 @@ export function invalidateGdCache(accountId: string): void {
   gdCache.delete(accountId);
 }
 
+/**
+ * Move GD when a mock/test transfer hook is installed (no player outbox).
+ * Returns false if no hook — caller must sign on-chain.
+ */
+export async function transferGdViaHook(
+  fromAccount: string,
+  toAccount: string,
+  amount: bigint,
+): Promise<boolean> {
+  if (!gdTransfer) return false;
+  await gdTransfer(fromAccount, toAccount, amount);
+  invalidateGdCache(fromAccount);
+  invalidateGdCache(toAccount);
+  return true;
+}
+
 /** Mint GD via treasury/oracle signer. Amount as string for U128. Never retried. */
 export async function mintGD(accountId: string, amount: bigint | number | string): Promise<void> {
   const amt = String(amount);

@@ -20,7 +20,13 @@ import { forgeMint, resumeForges } from '../src/forge';
 import { homeBuy, homePayRent } from '../src/home';
 import { MERCHANT_CLOSED_MSG } from '../src/merchantGate';
 import { syncNeedsDecay } from '../src/needs';
-import { investInMerchant, purchase, resumePurchases } from '../src/purchase';
+import {
+  clearLastTradesForTests,
+  runMerchantSupplyTick,
+  settleCityTrades,
+  settleSupplyForTests,
+} from '../src/merchantEconomy';
+import { purchase, resumePurchases } from '../src/purchase';
 import { restPlayer } from '../src/rest';
 import { shopBuy } from '../src/shop';
 import {
@@ -831,25 +837,92 @@ describe('merchant insolvency', () => {
     expect(balances.get(chef)).toBe(beforeChef);
   });
 
-  it('invest that crosses the minimum reopens the shop for the next buy', async () => {
+  it('NPC supply-chain payment can reopen a closed shop for the next buy', async () => {
     const row = player('reopen');
     const chef = insertMerchant('chef', BigInt(MERCHANT_MIN_BALANCE - 400));
+    const dealer = insertMerchant('dealer', 50_000n);
     insertMerchant('smith');
-    insertMerchant('dealer');
     fund(row.account_id!, 50_000n);
     syncMerchantInventory('chef');
 
     await expect(shopBuy(row.id, 'zobo-drink')).rejects.toThrow(MERCHANT_CLOSED_MSG);
 
-    const invested = await investInMerchant(row.id, 'chef', 400n);
-    expect(invested.closed).toBe(false);
-    expect(BigInt(invested.gdBalance)).toBe(BigInt(MERCHANT_MIN_BALANCE));
-    expect(balances.get(chef)).toBe(BigInt(MERCHANT_MIN_BALANCE));
+    // Dealer restocks and pays chef (canteen) — NPC cashflow, not player invest.
+    const hops = await settleSupplyForTests('dealer', 20);
+    expect(hops.some(h => h.ok && h.to === 'chef')).toBe(true);
+    expect(balances.get(chef)!).toBeGreaterThanOrEqual(BigInt(MERCHANT_MIN_BALANCE));
+    expect(balances.get(dealer)!).toBeLessThan(50_000n);
 
     const view = await merchantsView();
     expect(view.chef.closed).toBe(false);
 
     const res = await shopBuy(row.id, 'zobo-drink');
     expect(res.status).toBe('delivered');
+  });
+
+  it('chef restock pays dealer and can drain below the open minimum', async () => {
+    insertMerchant('chef', 5_000n);
+    const dealer = insertMerchant('dealer', MERCHANT_FLOAT);
+    insertMerchant('smith');
+    const hops = await settleSupplyForTests('chef', 10);
+    expect(hops).toEqual([
+      expect.objectContaining({ from: 'chef', to: 'dealer', amount: 2_000, ok: true }),
+    ]);
+    expect(balances.get(dealer)).toBe(MERCHANT_FLOAT + 2_000n);
+  });
+
+  it('city trades move GD among all three and respect the open floor', async () => {
+    clearLastTradesForTests();
+    const chef = insertMerchant('chef', BigInt(MERCHANT_MIN_BALANCE + 200));
+    const smith = insertMerchant('smith', BigInt(MERCHANT_MIN_BALANCE + 5_000));
+    const dealer = insertMerchant('dealer', BigInt(MERCHANT_MIN_BALANCE + 5_000));
+    const before = {
+      chef: balances.get(chef)!,
+      smith: balances.get(smith)!,
+      dealer: balances.get(dealer)!,
+    };
+    const hops = await settleCityTrades();
+    expect(hops.some(h => h.ok)).toBe(true);
+    expect(hops.every(h => h.ok)).toBe(true);
+    for (const h of hops) {
+      expect(h.amount).toBeGreaterThan(0);
+    }
+    // Surplus above min was only 200 on chef — hops leave the floor.
+    expect(balances.get(chef)!).toBeGreaterThanOrEqual(BigInt(MERCHANT_MIN_BALANCE));
+    expect(balances.get(smith)!).toBeGreaterThanOrEqual(BigInt(MERCHANT_MIN_BALANCE));
+    expect(balances.get(dealer)!).toBeGreaterThanOrEqual(BigInt(MERCHANT_MIN_BALANCE));
+    const moved =
+      balances.get(chef)! !== before.chef ||
+      balances.get(smith)! !== before.smith ||
+      balances.get(dealer)! !== before.dealer;
+    expect(moved).toBe(true);
+
+    const view = await merchantsView();
+    expect(view.chef.lastTrade || view.smith.lastTrade || view.dealer.lastTrade).toBeTruthy();
+  });
+
+  it('supply tick still moves GD when shelves are already full (city trades)', async () => {
+    clearLastTradesForTests();
+    insertMerchant('chef', 80_000n);
+    insertMerchant('smith', 80_000n);
+    insertMerchant('dealer', 80_000n);
+    syncMerchantInventory('chef');
+    syncMerchantInventory('smith');
+    syncMerchantInventory('dealer');
+    const before = {
+      chef: balances.get(merchantAccountId('chef'))!,
+      smith: balances.get(merchantAccountId('smith'))!,
+      dealer: balances.get(merchantAccountId('dealer'))!,
+    };
+    const hops = await runMerchantSupplyTick();
+    expect(hops.some(h => h.ok && h.label !== 'ingredients' && h.label !== 'parts' && h.label !== 'canteen')).toBe(
+      true,
+    );
+    const after = {
+      chef: balances.get(merchantAccountId('chef'))!,
+      smith: balances.get(merchantAccountId('smith'))!,
+      dealer: balances.get(merchantAccountId('dealer'))!,
+    };
+    expect(after).not.toEqual(before);
   });
 });

@@ -44,11 +44,145 @@ export function merchantShopOpen(gdBalance: number | bigint | string): boolean {
   return bal >= BigInt(MERCHANT_MIN_BALANCE);
 }
 
-/** GD still needed for the merchant to reopen (0 when already open). */
-export function merchantInvestToOpen(gdBalance: number | bigint | string): number {
+/** GD still needed to reach MERCHANT_MIN_BALANCE (0 when already open). */
+export function merchantGdToOpen(gdBalance: number | bigint | string): number {
   const bal = typeof gdBalance === 'bigint' ? gdBalance : BigInt(gdBalance);
   const need = BigInt(MERCHANT_MIN_BALANCE) - bal;
   return need > 0n ? Number(need) : 0;
+}
+
+/** @deprecated Use merchantGdToOpen */
+export const merchantInvestToOpen = merchantGdToOpen;
+
+export type MerchantRoleId = 'chef' | 'smith' | 'dealer';
+
+/** Who pays whom when inventory restocks (NPC supply chain — no new contract). */
+export type MerchantSupplyRule = {
+  from: MerchantRoleId;
+  to: MerchantRoleId;
+  /** GD charged per full stock unit restored. */
+  gdPerUnit: number;
+  label: string;
+};
+
+export const MERCHANT_SUPPLY_CHAIN: readonly MerchantSupplyRule[] = [
+  { from: 'chef', to: 'dealer', gdPerUnit: 200, label: 'ingredients' },
+  { from: 'smith', to: 'dealer', gdPerUnit: 400, label: 'parts' },
+  { from: 'dealer', to: 'chef', gdPerUnit: 50, label: 'canteen' },
+];
+
+export type MerchantSupplyPayment = {
+  from: MerchantRoleId;
+  to: MerchantRoleId;
+  amount: number;
+  label: string;
+};
+
+/** Ongoing city commerce (even when shelves are full). Full triangle among the three. */
+export type MerchantCityTrade = {
+  from: MerchantRoleId;
+  to: MerchantRoleId;
+  amountGd: number;
+  label: string;
+};
+
+export const MERCHANT_CITY_TRADES: readonly MerchantCityTrade[] = [
+  { from: 'smith', to: 'chef', amountGd: 120, label: 'staff meals' },
+  { from: 'dealer', to: 'chef', amountGd: 100, label: 'staff meals' },
+  { from: 'chef', to: 'dealer', amountGd: 150, label: 'ingredients' },
+  { from: 'smith', to: 'dealer', amountGd: 180, label: 'parts' },
+  { from: 'dealer', to: 'smith', amountGd: 90, label: 'tools' },
+  { from: 'chef', to: 'smith', amountGd: 80, label: 'repairs' },
+];
+
+/** How often live city trades fire (ms). */
+export const MERCHANT_CITY_TRADE_INTERVAL_MS = 10_000;
+
+/** NPC trade rounds inside one simulated day. */
+export const MERCHANT_CITY_TRADES_PER_DAY = 48;
+
+/**
+ * GD a merchant owes its supplier after restocking `stockGained` units.
+ * Capped by `availableGd` so the hop cannot drive the payer below zero.
+ */
+export function merchantRestockPayment(
+  from: MerchantRoleId,
+  stockGained: number,
+  availableGd: number | bigint,
+): MerchantSupplyPayment | null {
+  if (stockGained <= 0) return null;
+  const rule = MERCHANT_SUPPLY_CHAIN.find(r => r.from === from);
+  if (!rule) return null;
+  const available = typeof availableGd === 'bigint' ? Number(availableGd) : availableGd;
+  if (!Number.isFinite(available) || available <= 0) return null;
+  const raw = Math.floor(stockGained * rule.gdPerUnit);
+  const amount = Math.min(raw, Math.floor(available));
+  if (amount <= 0) return null;
+  return { from, to: rule.to, amount, label: rule.label };
+}
+
+/**
+ * City-trade hop: pay at most `trade.amountGd`, but never spend the open floor.
+ * Returns null when the payer has no surplus above MERCHANT_MIN_BALANCE.
+ */
+export function cityTradePayment(
+  trade: MerchantCityTrade,
+  availableGd: number | bigint,
+): MerchantSupplyPayment | null {
+  const available = typeof availableGd === 'bigint' ? Number(availableGd) : availableGd;
+  if (!Number.isFinite(available)) return null;
+  const surplus = Math.floor(available) - MERCHANT_MIN_BALANCE;
+  if (surplus <= 0) return null;
+  const amount = Math.min(trade.amountGd, surplus);
+  if (amount <= 0) return null;
+  return { from: trade.from, to: trade.to, amount, label: trade.label };
+}
+
+export type MerchantCityTradeEvent = MerchantSupplyPayment & { t: number; round: number };
+
+export type MerchantCityDayResult = {
+  start: Record<MerchantRoleId, number>;
+  end: Record<MerchantRoleId, number>;
+  trades: MerchantCityTradeEvent[];
+  rounds: number;
+};
+
+/**
+ * Pure off-chain day of NPC city trades (no NEAR). Deterministic for (seed, rounds, start).
+ */
+export function simulateMerchantCityDay(
+  startBalances: Record<MerchantRoleId, number>,
+  opts?: { rounds?: number; seed?: number },
+): MerchantCityDayResult {
+  const rounds = Math.max(0, opts?.rounds ?? MERCHANT_CITY_TRADES_PER_DAY);
+  const rng = mulberry32((opts?.seed ?? 1) >>> 0);
+  const bal: Record<MerchantRoleId, number> = {
+    chef: Math.max(0, Math.floor(startBalances.chef)),
+    smith: Math.max(0, Math.floor(startBalances.smith)),
+    dealer: Math.max(0, Math.floor(startBalances.dealer)),
+  };
+  const start = { ...bal };
+  const trades: MerchantCityTradeEvent[] = [];
+  const horizon = 24 * 3600;
+  for (let round = 0; round < rounds; round++) {
+    const order = [...MERCHANT_CITY_TRADES];
+    // Stable shuffle with mulberry32
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(rng.next() * (i + 1));
+      const tmp = order[i]!;
+      order[i] = order[j]!;
+      order[j] = tmp;
+    }
+    const t = ((round + 1) / (rounds + 1)) * horizon;
+    for (const edge of order) {
+      const pay = cityTradePayment(edge, bal[edge.from]);
+      if (!pay) continue;
+      bal[edge.from] -= pay.amount;
+      bal[edge.to] += pay.amount;
+      trades.push({ ...pay, t, round });
+    }
+  }
+  return { start, end: bal, trades, rounds };
 }
 export const CHEF_PRICE_MIN_MULT = 0.5;
 export const CHEF_PRICE_MAX_MULT = 3;
@@ -243,6 +377,8 @@ export type CitySimResult = {
     dealer: CitySimMerchant;
   };
   events: CitySimEvent[];
+  /** Off-chain NPC wallet commerce for the day recap. */
+  npcTrades: MerchantCityDayResult;
 };
 
 type MerchantId = 'chef' | 'smith' | 'dealer';
@@ -310,8 +446,15 @@ export function simulateCityFastForward(hours: number, seed: number): CitySimRes
     dealer: { timeline: [], ending: endingFor(DEALER_GOODS, state) },
   });
 
+  const npcStart = { chef: 100_000, smith: 100_000, dealer: 100_000 };
   if (horizon <= 0) {
-    return { hours: h, seed: seedU, merchants: emptyMerchants(), events: [] };
+    return {
+      hours: h,
+      seed: seedU,
+      merchants: emptyMerchants(),
+      events: [],
+      npcTrades: simulateMerchantCityDay(npcStart, { rounds: 0, seed: seedU }),
+    };
   }
 
   let t = 0;
@@ -396,6 +539,10 @@ export function simulateCityFastForward(hours: number, seed: number): CitySimRes
       dealer: { timeline: timelines.dealer, ending: endingFor(DEALER_GOODS, state) },
     },
     events: cityEvents,
+    npcTrades: simulateMerchantCityDay(npcStart, {
+      rounds: MERCHANT_CITY_TRADES_PER_DAY,
+      seed: seedU ^ 0x9e3779b9,
+    }),
   };
 }
 

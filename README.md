@@ -117,8 +117,7 @@ Session cookie required unless noted.
 | POST | `/rest` | Bench / sleep |
 | POST | `/forge/mint` | Gear |
 | GET/POST | `/market`, `/market/list`, `/market/buy`, `/market/cancel` | Player listings |
-| GET | `/merchants` | Dynamic quotes (`closed` when GD below min) |
-| POST | `/merchants/:id/invest` | Player pays GD to chef/smith/dealer to reopen |
+| GET | `/merchants` | Dynamic quotes; restock settles NPC supply-chain GD; `closed` when below min |
 | POST | `/sim/fast-forward` | Deterministic city day (no chain write) |
 | GET | `/ads`, `/ads/creative` | Public billboards |
 | GET | `/admin/health` | `x-admin-token`; 404 if unset |

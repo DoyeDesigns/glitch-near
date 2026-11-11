@@ -33,8 +33,8 @@ Walk to a lit door or station, press **Use**.
 | Wall Street / Exchange | Timed UP/DOWN bet | `/trade/open`, `/trade` |
 | Vault Lab | Vault Cracker locks | `/vault/start`, `/finish`, `/cancel` |
 | Attention Tower | Paid post | `/post` |
-| Gear Forge | Mint gear NFT for shards + GD; invest if closed | `/forge/mint`, `/merchants/smith/invest` |
-| Neon Diner | Buy food (hunger); invest if closed | `/shop/buy`, `/merchants`, `/merchants/chef/invest` |
+| Gear Forge | Mint gear NFT for shards + GD; closed if smith out of GD | `/forge/mint`, `/merchants` |
+| Neon Diner | Buy food (hunger); closed if chef out of GD | `/shop/buy`, `/merchants` |
 | Park bench | Rest energy | `/rest` `{ kind: 'bench' }` |
 | My Home | Sleep / decorate (if owned) | `/rest` sleep, `/home/*`, furniture via `/shop/buy` |
 
@@ -53,7 +53,7 @@ Open: click the cyan square drone beside the player, or press **P**. Modules gri
 | Profile | Name / role card | Mostly client + `/me` |
 | Pose | 10 presets + custom (arm raise 0=ribs / spread / elbow·knee) | **Client-only**; `localStorage` key `glitch-custom-pose-v5` |
 | Settings | Rename, look, hint toggle, Advanced chain proof, reset | `/me/chain`; reset clears local save only |
-| My Home | Buy studio, maintenance, furniture, room paint; invest if dealer closed | `/home/*`, `/shop/buy`, `/merchants/dealer/invest`; **paint is client-only** |
+| My Home | Buy studio, maintenance, furniture, room paint; dealer may be closed | `/home/*`, `/shop/buy`, `/merchants`; **paint is client-only** |
 | Market | List / buy / cancel gear or furniture | `/market`, `/market/list`, `/market/buy`, `/market/cancel` |
 
 Hints: level-tiered lines near the drone (`#assistHint`). Hide with ×; re-enable in Settings or Modules home.

@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import {
   catalogById,
-  merchantInvestToOpen,
   merchantRulesFor,
   HOMEP_GD,
   MAINTENANCE_GD,
@@ -823,6 +822,14 @@ export type CityDayHeadline = {
 };
 
 /** Playback board for one simulated city day. Live menus and GD are never written. */
+export type CityDayNpcTrade = {
+  t: number;
+  from: string;
+  to: string;
+  amount: number;
+  label: string;
+};
+
 export type CityDayBoard = {
   phase: CityDayPhase;
   hours: number;
@@ -839,6 +846,9 @@ export type CityDayBoard = {
   sales: number;
   pumps: number;
   rugs: number;
+  /** Off-chain NPC city-trade events for the day recap. */
+  npcTrades: CityDayNpcTrade[];
+  shownNpcTrades: number;
 };
 
 type SimPoint = { t: number; itemId: string; price: number };
@@ -864,6 +874,8 @@ function emptyCityDay(): CityDayBoard {
     sales: 0,
     pumps: 0,
     rugs: 0,
+    npcTrades: [],
+    shownNpcTrades: 0,
   };
 }
 
@@ -915,6 +927,9 @@ export async function playCityDaySim(onTick?: () => void): Promise<void> {
         { timeline: SimPoint[]; ending: Record<string, { price: number }> }
       >;
       events: Array<{ t: number; kind: 'pump' | 'rugPull'; title: string }>;
+      npcTrades?: {
+        trades: Array<{ t: number; from: string; to: string; amount: number; label: string }>;
+      };
     }>('/sim/fast-forward', { hours: 24, seed: 42 });
 
     const shops: CityDayShop[] = SHOP_META.map(meta => {
@@ -943,6 +958,16 @@ export async function playCityDaySim(onTick?: () => void): Promise<void> {
     });
 
     const headlines = res.events.slice().sort((a, b) => a.t - b.t);
+    const npcTrades: CityDayNpcTrade[] = (res.npcTrades?.trades ?? [])
+      .slice()
+      .sort((a, b) => a.t - b.t)
+      .map(t => ({
+        t: t.t,
+        from: t.from,
+        to: t.to,
+        amount: t.amount,
+        label: t.label,
+      }));
     cityDay = {
       phase: 'playing',
       hours: res.hours,
@@ -956,6 +981,8 @@ export async function playCityDaySim(onTick?: () => void): Promise<void> {
       sales: 0,
       pumps: 0,
       rugs: 0,
+      npcTrades,
+      shownNpcTrades: 0,
     };
     onTick?.();
 
@@ -963,6 +990,7 @@ export async function playCityDaySim(onTick?: () => void): Promise<void> {
     const playMs = 60_000;
     const started = performance.now();
     let headIdx = 0;
+    let npcIdx = 0;
     let lastUi = 0;
 
     const advance = (simT: number, final: boolean) => {
@@ -980,8 +1008,16 @@ export async function playCityDaySim(onTick?: () => void): Promise<void> {
         }
       }
       while (headIdx < headlines.length && headlines[headIdx]!.t <= simT) headIdx += 1;
+      while (npcIdx < npcTrades.length && npcTrades[npcIdx]!.t <= simT) {
+        const hop = npcTrades[npcIdx]!;
+        latest = `${roleLabel(hop.from)} → ${roleLabel(hop.to)} ${fmtN(hop.amount)} GD (${hop.label})`;
+        npcIdx += 1;
+      }
       cityDay.shownHeadlines = headIdx;
-      cityDay.latest = final ? 'Live prices were not changed.' : latest;
+      cityDay.shownNpcTrades = npcIdx;
+      cityDay.latest = final
+        ? `${fmtN(npcTrades.length)} NPC supply trades today. Live prices were not changed.`
+        : latest;
       cityDay.progress = final ? 1 : Math.min(1, simT / horizon);
       cityDay.clock = dayClock(final ? horizon : simT);
       tallyCityDay();
@@ -1076,7 +1112,20 @@ type MerchantMenuDish = {
 /** @deprecated Alias. */
 type ChefMenuDish = MerchantMenuDish;
 
-type MerchantShopMeta = { closed: boolean; gdBalance: string; minBalance: number };
+type MerchantLastTrade = {
+  from: string;
+  to: string;
+  amount: number;
+  label: string;
+  at: number;
+};
+
+type MerchantShopMeta = {
+  closed: boolean;
+  gdBalance: string;
+  minBalance: number;
+  lastTrade?: MerchantLastTrade;
+};
 
 /** Cached dealer / smith quotes from GET /merchants. */
 export let dealerQuotes: Record<string, MerchantMenuDish> = {};
@@ -1085,30 +1134,79 @@ export let chefShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBala
 export let smithShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBalance: 1000 };
 export let dealerShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBalance: 1000 };
 
-function shopMeta(raw: { closed?: boolean; gdBalance?: string; minBalance?: number } | undefined): MerchantShopMeta {
+function shopMeta(
+  raw:
+    | {
+        closed?: boolean;
+        gdBalance?: string;
+        minBalance?: number;
+        lastTrade?: MerchantLastTrade;
+      }
+    | undefined,
+): MerchantShopMeta {
   return {
     closed: !!raw?.closed,
     gdBalance: String(raw?.gdBalance ?? '0'),
     minBalance: Number(raw?.minBalance ?? 1000) || 1000,
+    lastTrade: raw?.lastTrade,
   };
 }
 
 const CLOSED_MSG = 'Closed — merchant is out of GD';
 
-function investBlock(merchantId: 'chef' | 'smith' | 'dealer', shop: MerchantShopMeta): string {
-  if (!shop.closed) return '';
-  const need = merchantInvestToOpen(shop.gdBalance);
-  const def = Math.max(need, 1);
-  return `<div class="day" style="margin:8px 0"><b>${esc(CLOSED_MSG)}</b><p class="hint">Invest GD into this merchant to reopen (need ${fmtN(need)} GD more). Balance ${fmtN(Number(shop.gdBalance))} / ${fmtN(shop.minBalance)}.</p><div class="cmp"><input id="investAmt" type="number" min="1" step="1" value="${def}"><button class="pri" data-a="invest" data-v="${merchantId}" data-invest="${merchantId}">Invest</button></div></div>`;
+function roleLabel(id: string): string {
+  if (id === 'chef') return 'Chef';
+  if (id === 'smith') return 'Smith';
+  if (id === 'dealer') return 'Dealer';
+  return id;
+}
+
+function merchantWalletBlock(name: string, shop: MerchantShopMeta): string {
+  const status = shop.closed ? CLOSED_MSG : 'Open';
+  const last = shop.lastTrade
+    ? `<p class="hint">Last: ${esc(roleLabel(shop.lastTrade.from))} → ${esc(roleLabel(shop.lastTrade.to))} ${fmtN(shop.lastTrade.amount)} GD (${esc(shop.lastTrade.label)})</p>`
+    : '';
+  const closedHint = shop.closed
+    ? `<p class="hint">NPC city trades and player sales refill this wallet (${fmtN(Number(shop.gdBalance))} / ${fmtN(shop.minBalance)}).</p>`
+    : '';
+  return `<div class="day" style="margin:8px 0"><b>${esc(name)} wallet</b><p class="hint">${esc(status)} · ${fmtN(Number(shop.gdBalance))} GD</p>${last}${closedHint}</div>`;
+}
+
+/** Poll GET /merchants while a merchant UI is open. */
+export function startMerchantPoll(onUpdate: () => void): () => void {
+  const id = window.setInterval(() => {
+    void loadMerchantQuotes()
+      .then(() => onUpdate())
+      .catch(() => {});
+  }, 5_000);
+  return () => window.clearInterval(id);
 }
 
 export async function loadMerchantQuotes(): Promise<void> {
   const res = await fetch('/merchants', { credentials: 'include' });
   const data = (await res.json()) as {
     error?: string;
-    chef?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
-    dealer?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
-    smith?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
+    chef?: {
+      menu: MerchantMenuDish[];
+      closed?: boolean;
+      gdBalance?: string;
+      minBalance?: number;
+      lastTrade?: MerchantLastTrade;
+    };
+    dealer?: {
+      menu: MerchantMenuDish[];
+      closed?: boolean;
+      gdBalance?: string;
+      minBalance?: number;
+      lastTrade?: MerchantLastTrade;
+    };
+    smith?: {
+      menu: MerchantMenuDish[];
+      closed?: boolean;
+      gdBalance?: string;
+      minBalance?: number;
+      lastTrade?: MerchantLastTrade;
+    };
   };
   if (!res.ok) throw new Error(data.error || 'Could not load merchants');
   chefShop = shopMeta(data.chef);
@@ -1137,6 +1235,9 @@ export function dinerGame() {
   let simPlaying = false;
   let simRaf = 0;
   let simLastUi = 0;
+  const stopPoll = startMerchantPoll(() => {
+    if (!busy) r();
+  });
   const stopSim = () => {
     if (simRaf) cancelAnimationFrame(simRaf);
     simRaf = 0;
@@ -1147,9 +1248,27 @@ export function dinerGame() {
     const res = await fetch('/merchants', { credentials: 'include' });
     const data = (await res.json()) as {
       error?: string;
-      chef?: { menu: ChefMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
-      dealer?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
-      smith?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
+      chef?: {
+        menu: ChefMenuDish[];
+        closed?: boolean;
+        gdBalance?: string;
+        minBalance?: number;
+        lastTrade?: MerchantLastTrade;
+      };
+      dealer?: {
+        menu: MerchantMenuDish[];
+        closed?: boolean;
+        gdBalance?: string;
+        minBalance?: number;
+        lastTrade?: MerchantLastTrade;
+      };
+      smith?: {
+        menu: MerchantMenuDish[];
+        closed?: boolean;
+        gdBalance?: string;
+        minBalance?: number;
+        lastTrade?: MerchantLastTrade;
+      };
     };
     if (!res.ok) throw new Error(data.error || 'Could not load menu');
     menu = data.chef?.menu ?? [];
@@ -1159,45 +1278,10 @@ export function dinerGame() {
     dealerQuotes = Object.fromEntries((data.dealer?.menu ?? []).map(d => [d.itemId, d]));
     smithQuotes = Object.fromEntries((data.smith?.menu ?? []).map(d => [d.itemId, d]));
   };
-  const bindInvest = () => {
-    const btn = sheet.querySelector('[data-invest]') as HTMLButtonElement | null;
-    if (!btn) return;
-    btn.onclick = () => {
-      void (async () => {
-        if (busy) return;
-        const inp = $('#investAmt') as HTMLInputElement | null;
-        const amount = Math.floor(Number(inp?.value ?? 0));
-        if (!Number.isFinite(amount) || amount <= 0) {
-          banner('Enter a positive GD amount', 'bad');
-          return;
-        }
-        busy = true;
-        r();
-        try {
-          const res = await lifeRequest<{
-            closed: boolean;
-            gdBalance: string;
-            available: string;
-            settling: string;
-          }>(`/merchants/${btn.dataset.invest}/invest`, { amount });
-          applyFunds(res.available, res.settling);
-          chefShop = { ...chefShop, closed: res.closed, gdBalance: res.gdBalance };
-          banner(res.closed ? 'Invested. Shop still needs more GD.' : 'Shop reopened.', res.closed ? 'info' : 'good');
-          await loadMenu();
-          updateHud();
-        } catch (err) {
-          banner(err instanceof Error ? err.message : 'Could not invest', 'bad');
-        } finally {
-          busy = false;
-          r();
-        }
-      })();
-    };
-  };
   const r = () => {
     const funds = fundsNow();
     const closed = chefShop.closed;
-    sheet.innerHTML = `<h2>Neon Diner</h2><p>Paid in <b>GD</b>. Prices move with stock and demand. You have <b>${fmtN(funds)} GD</b>.</p>${meters()}${investBlock('chef', chefShop)}${
+    sheet.innerHTML = `<h2>Neon Diner</h2><p>Paid in <b>GD</b>. Prices move with stock and demand. You have <b>${fmtN(funds)} GD</b>.</p>${meters()}${merchantWalletBlock('Chef', chefShop)}${
       menu.length === 0
         ? '<p class="hint">Loading menu…</p>'
         : menu
@@ -1215,7 +1299,6 @@ export function dinerGame() {
             })
             .join('')
     }<div class="acts"><button id="dsim" ${busy || simPlaying || closed ? 'disabled' : ''}>${simPlaying ? 'Simulating…' : 'Simulate 1 day'}</button><button id="dx">Leave</button></div>`;
-    bindInvest();
     sheet.querySelectorAll('[data-id]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         void (async () => {
@@ -1273,8 +1356,10 @@ export function dinerGame() {
                   ending: Record<string, { price: number }>;
                 };
               };
+              npcTrades?: { trades: unknown[] };
             }>('/sim/fast-forward', { hours: 24, seed: 42 });
             const chef = res.merchants.chef;
+            const npcCount = res.npcTrades?.trades?.length ?? 0;
             const horizon = Math.max(1, res.hours * 3600);
             const playMs = 60_000;
             const started = performance.now();
@@ -1303,7 +1388,10 @@ export function dinerGame() {
                 simPlaying = false;
                 simRaf = 0;
                 r();
-                banner('Day sim finished. Live prices unchanged.', 'info');
+                banner(
+                  `Day sim finished · ${fmtN(npcCount)} NPC supply trades. Live prices unchanged.`,
+                  'info',
+                );
               }
             };
             simRaf = requestAnimationFrame(tick);
@@ -1317,10 +1405,14 @@ export function dinerGame() {
     }
     ($('#dx') as HTMLButtonElement).onclick = () => {
       stopSim();
+      stopPoll();
       closeModal();
     };
   };
-  openModal('', () => stopSim());
+  openModal('', () => {
+    stopSim();
+    stopPoll();
+  });
   void loadMenu()
     .then(() => r())
     .catch(err => {
@@ -1364,11 +1456,11 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
   const closed = dealerShop.closed;
   const studioQ = dealerQuotes['studio-apartment'];
   const studioPrice = studioQ?.price ?? HOMEP;
-  const closedBlock = investBlock('dealer', dealerShop);
+  const dealerWallet = merchantWalletBlock('Dealer', dealerShop);
   if (!H.owned)
     return (
       hdr('My Home', 'home') +
-      closedBlock +
+      dealerWallet +
       `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div>${studioQ ? `<div class="hint">${esc(reasonHint(studioQ))}</div>` : ''}</div></div><div class="acts"><button class="pri" data-a="buyhome" ${closed || funds < studioPrice + MAINTENANCE ? 'disabled' : ''}>${closed ? 'Closed' : `Buy: ${fmtN(studioPrice)} GD + ${fmtN(MAINTENANCE)} GD maintenance`}</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
     );
   const paintId = H.paint?.id ?? 'midnight';
@@ -1378,7 +1470,7 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
   ).join('');
   return (
     hdr('My Home', 'home') +
-    closedBlock +
+    dealerWallet +
     `<div class="loc"><div><b>Studio apartment</b><div class="hint">${overdue() ? '<span class="neg">MAINTENANCE OVERDUE. Your bed is locked until you pay.</span>' : 'Maintenance paid for ' + mmss(maintenanceLeft())} · Comfort ${comfort()}</div></div></div>
   <div class="acts"><button class="pri" data-a="gohome">Go home (free)</button><button data-a="paymaintenance" ${closed || funds < MAINTENANCE || maintenanceLeft() > MAINTENANCE_MS * 2 ? 'disabled' : ''}>${closed ? 'Closed' : `Pay maintenance ${fmtN(MAINTENANCE)} GD`}</button></div>
   <small style="display:block;margin-top:10px">Room colors</small><div class="paint-grid">${paints}</div>
@@ -1397,32 +1489,6 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
 
 export function homeAct(a: string, v?: string): boolean | void {
   const H = S.home;
-  if (a === 'invest') {
-    const merchantId = v === 'chef' || v === 'smith' || v === 'dealer' ? v : 'dealer';
-    const inp = $('#investAmt') as HTMLInputElement | null;
-    const amount = Math.floor(Number(inp?.value ?? 0));
-    if (!Number.isFinite(amount) || amount <= 0) {
-      banner('Enter a positive GD amount', 'bad');
-      return;
-    }
-    void lifeRequest<{
-      closed: boolean;
-      gdBalance: string;
-      available: string;
-      settling: string;
-    }>(`/merchants/${merchantId}/invest`, { amount })
-      .then(async res => {
-        applyFunds(res.available, res.settling);
-        if (merchantId === 'dealer') dealerShop = { ...dealerShop, closed: res.closed, gdBalance: res.gdBalance };
-        if (merchantId === 'chef') chefShop = { ...chefShop, closed: res.closed, gdBalance: res.gdBalance };
-        if (merchantId === 'smith') smithShop = { ...smithShop, closed: res.closed, gdBalance: res.gdBalance };
-        banner(res.closed ? 'Invested. Shop still needs more GD.' : 'Shop reopened.', res.closed ? 'info' : 'good');
-        await loadMerchantQuotes().catch(() => {});
-        updateHud();
-      })
-      .catch(err => banner(err instanceof Error ? err.message : 'Could not invest', 'bad'));
-    return;
-  }
   if (a === 'homepaint') {
     if (!H.owned || !v) return;
     const preset = HOME_PAINT_PRESETS.find(p => p.id === v);
@@ -1542,13 +1608,13 @@ export function sleepGame() {
 }
 
 export function forgeGame() {
-  openModal('');
   let busy = false;
+  let stopPoll = () => {};
   const r = () => {
     const funds = fundsNow();
     const closed = smithShop.closed;
     sheet.innerHTML =
-      `<h2>Gear Forge</h2><p>Gear is an <b>NFT</b>: a one-of-a-kind item with its own number that only you own. Collect <b>Shards</b> from the Vault Cracker, then mint here. GD price is the smith quote.</p><div class="hint">You have <b>${S.shards}</b> shards and <b>${fmtN(funds)}</b> GD.</div>${investBlock('smith', smithShop)}` +
+      `<h2>Gear Forge</h2><p>Gear is an <b>NFT</b>: a one-of-a-kind item with its own number that only you own. Collect <b>Shards</b> from the Vault Cracker, then mint here. GD price is the smith quote.</p><div class="hint">You have <b>${S.shards}</b> shards and <b>${fmtN(funds)}</b> GD.</div>${merchantWalletBlock('Smith', smithShop)}` +
       Object.keys(GEARINFO)
         .map(k => {
           const g = +k,
@@ -1568,40 +1634,6 @@ export function forgeGame() {
         })
         .join('') +
       '<div class="acts"><button id="fx2">Leave</button></div>';
-    const investBtn = sheet.querySelector('[data-invest]') as HTMLButtonElement | null;
-    if (investBtn) {
-      investBtn.onclick = () => {
-        void (async () => {
-          if (busy) return;
-          const inp = $('#investAmt') as HTMLInputElement | null;
-          const amount = Math.floor(Number(inp?.value ?? 0));
-          if (!Number.isFinite(amount) || amount <= 0) {
-            banner('Enter a positive GD amount', 'bad');
-            return;
-          }
-          busy = true;
-          r();
-          try {
-            const res = await lifeRequest<{
-              closed: boolean;
-              gdBalance: string;
-              available: string;
-              settling: string;
-            }>('/merchants/smith/invest', { amount });
-            applyFunds(res.available, res.settling);
-            smithShop = { ...smithShop, closed: res.closed, gdBalance: res.gdBalance };
-            banner(res.closed ? 'Invested. Shop still needs more GD.' : 'Shop reopened.', res.closed ? 'info' : 'good');
-            await loadMerchantQuotes();
-            updateHud();
-          } catch (err) {
-            banner(err instanceof Error ? err.message : 'Could not invest', 'bad');
-          } finally {
-            busy = false;
-            r();
-          }
-        })();
-      };
-    }
     sheet.querySelectorAll('[data-e]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         S.look.gear = +(b as HTMLElement).dataset.e!;
@@ -1659,8 +1691,15 @@ export function forgeGame() {
           });
       };
     });
-    ($('#fx2') as HTMLButtonElement).onclick = closeModal;
+    ($('#fx2') as HTMLButtonElement).onclick = () => {
+      stopPoll();
+      closeModal();
+    };
   };
+  openModal('', () => stopPoll());
+  stopPoll = startMerchantPoll(() => {
+    if (!busy) r();
+  });
   void loadMerchantQuotes()
     .catch(err => banner(err instanceof Error ? err.message : 'Could not load forge prices', 'bad'))
     .finally(r);

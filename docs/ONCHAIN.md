@@ -2,7 +2,7 @@
 
 Policy for every GD and item movement on NEAR testnet. The server paths in `server/src` implement this map. Where this file and the code disagree, the code is the source of truth.
 
-Contracts: `GD_CONTRACT`, `ITEMS_CONTRACT`. Player keys are custodial (encrypted in SQLite); the server decrypts them to sign **player** txs. The treasury/oracle key signs **mint**, **burn_from**, **create_token**, and merchant restock burns.
+Contracts: `GD_CONTRACT`, `ITEMS_CONTRACT`. Player keys are custodial (encrypted in SQLite); the server decrypts them to sign **player** txs. The treasury/oracle key signs **mint**, **burn_from**, **create_token**, forge item mint, and shard mint/burn. Merchant→merchant GD hops use each merchant’s key (`merchantFtTransfer`).
 
 ---
 
@@ -17,7 +17,8 @@ Contracts: `GD_CONTRACT`, `ITEMS_CONTRACT`. Player keys are custodial (encrypted
 **(a)** call kinds:
 
 - **Player-signed:** `ft_transfer` (and any player-origin NEP-141) using the player’s decrypted key.
-- **Treasury-signed:** `mint`, `burn_from`, `create_token`, merchant COGS burns, forge item mint, shard mint/burn.
+- **Treasury-signed:** `mint`, `burn_from`, `create_token`, forge item mint, shard mint/burn.
+- **Merchant-signed:** `ft_transfer` between merchant wallets (restock supply chain + city trades).
 
 ---
 
@@ -88,9 +89,9 @@ Signed with the **player’s decrypted key**. Destination is the merchant accoun
 
 Require `available >= amount` before signing.
 
-### Burns — treasury `burn_from` only for sinks **(b)** (lazy) or merchant COGS **(a)**
+### Burns — treasury `burn_from` for player sinks **(b)** (lazy)
 
-Burns are **not** used for player purchases.
+Burns are **not** used for player purchases or merchant→merchant commerce.
 
 | Movement | Class | Notes |
 | --- | --- | --- |
@@ -101,7 +102,13 @@ Burns are **not** used for player purchases.
 | Fast travel gas | **(b)** | `GAS_GD` (200); `POST /travel` |
 | Passive holding tax | **(b)** | `UPKEEP_RATE` / `UPKEEP_INTERVAL_S`; catch-up on `GET /me` |
 | CIA fine (guilty) | **(b)** | `min(available, floor(loot * 1.25))` when player case resolves |
-| Merchant cost-of-goods on restock | **(a)** | Treasury/merchant burn when restocking inventory economics |
+
+### Merchant → merchant — merchant-signed `ft_transfer` **(a)**
+
+| Movement | Notes |
+| --- | --- |
+| Restock supply chain | When stock recovers: chef→dealer (ingredients), smith→dealer (parts), dealer→chef (canteen). See `MERCHANT_SUPPLY_CHAIN`. |
+| City trades (triangle) | Ongoing staff meals / ingredients / parts / tools / repairs among all three (`MERCHANT_CITY_TRADES`). Each hop leaves `MERCHANT_MIN_BALANCE` on the payer when possible. Live tick ~10s; day sim is off-chain ledger only. |
 
 ### Escrow — server ledger **(b)**-adjacent
 
@@ -132,7 +139,7 @@ Daily cap bookkeeping, XP, needs (except food hunger apply after pay), social, m
 | Gear forge | **(a)** | `create_token` `gear-<type>-<uuid>` (max 1) + `mint` to player. |
 | Player market list | **(c)** hold | Open listing in SQLite; qty held = chain balance − open/sold-in-flight listings. Furniture or gear tokens only. Price 100–1,000,000 GD. |
 | Player market buy | **(a)** | Buyer `ft_transfer` → seller; then treasury `admin_transfer` seller → buyer (existing minter method). Same paying/paid/delivered/failed + escrow + resume as shop purchases. 2% fee → seller `pending_burns`. |
-| Merchant restock / COGS | **(a)** | Burns or admin moves as designed. |
+| Merchant restock / city trades | **(a)** | Merchant-signed GD `ft_transfer` (see above); not item mint. |
 | Catalog seed | ops **(a)** | `create_token` for non-gear types. |
 | Headphones / placement | **(c)** | Free look / which owned item is placed. |
 

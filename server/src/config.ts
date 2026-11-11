@@ -97,9 +97,10 @@ export const config = {
   /** Chain owner (`glitch-….testnet`), not the players signer. */
   chainRoot,
   treasuryAccount: str('TREASURY_ACCOUNT', chainRoot ? `treasury.${chainRoot}` : ''),
-  merchantChef: str('MERCHANT_CHEF', chainRoot ? `chef.${chainRoot}` : ''),
-  merchantSmith: str('MERCHANT_SMITH', chainRoot ? `smith.${chainRoot}` : ''),
-  merchantDealer: str('MERCHANT_DEALER', chainRoot ? `dealer.${chainRoot}` : ''),
+  // Same parent as setupMerchants / merchantAccountId: ROOT_ACCOUNT (players.…), not chain root.
+  merchantChef: str('MERCHANT_CHEF', rootAccount ? `chef.${rootAccount}` : ''),
+  merchantSmith: str('MERCHANT_SMITH', rootAccount ? `smith.${rootAccount}` : ''),
+  merchantDealer: str('MERCHANT_DEALER', rootAccount ? `dealer.${rootAccount}` : ''),
   /** Sender account id in admin top-up commands. */
   topupFrom: str('TOPUP_ACCOUNT', chainRoot),
 };
