@@ -13,6 +13,7 @@ import { config } from '../src/config';
 import { db } from '../src/db';
 import { getPlayerById, type PlayerRow } from '../src/near/accounts';
 import { invalidateGdCache, setGdChainForTests } from '../src/near/gd';
+import { setItemsChainForTests } from '../src/near/items';
 import { clearActiveEventsForTests, stepSim, world } from '../src/sim';
 
 if (!config.dbPath || config.dbPath.includes('glitch.sqlite')) {
@@ -65,10 +66,14 @@ beforeEach(() => {
       balances.set(accountId, (balances.get(accountId) ?? 0n) + amount);
     },
   });
+  setItemsChainForTests({
+    balances: async () => ({}),
+  });
 });
 
 afterAll(() => {
   setGdChainForTests(null);
+  setItemsChainForTests(null);
 });
 
 describe('travel sink', () => {

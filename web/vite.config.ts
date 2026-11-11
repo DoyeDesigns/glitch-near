@@ -21,6 +21,7 @@ export default defineConfig({
       '/market': { target: 'http://localhost:8787', changeOrigin: true },
       '/home': { target: 'http://localhost:8787', changeOrigin: true },
       '/rest': { target: 'http://localhost:8787', changeOrigin: true },
+      '/travel': { target: 'http://localhost:8787', changeOrigin: true },
       '/forge': { target: 'http://localhost:8787', changeOrigin: true },
       '/merchants': { target: 'http://localhost:8787', changeOrigin: true },
       '/sim': { target: 'http://localhost:8787', changeOrigin: true },

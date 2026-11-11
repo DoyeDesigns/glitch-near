@@ -28,3 +28,6 @@ contracts/target/
 # near CLI scratch (optional local)
 args.json
 mint.json
+
+# local hackathon notes (not for public clone)
+docs/TRACK09.md

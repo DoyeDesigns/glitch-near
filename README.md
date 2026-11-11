@@ -2,7 +2,7 @@
 
 Glitch is a 3D city game on **NEAR testnet** (or a local **mock** ledger). Players earn and spend **GD** (NEP-141) by playing. NPC merchants hold GD. Items live in one **NEP-245-style** multi-token contract. The **server** validates every game result before mint, burn, or transfer. Players never see a wallet, seed phrase, or gas prompt. The only wallet screen is `/advertise` (billboard ads paid in testnet NEAR).
 
-**Track 09 — Games With Real Economies** at [NEAR Hackathon](https://nearhackathon.com/). See [docs/TRACK09.md](docs/TRACK09.md). This repo does **not** use NEAR Intents. Testnet-only work is eligible.
+**Track 09 — Games With Real Economies** at [NEAR Hackathon](https://nearhackathon.com/). This repo does **not** use NEAR Intents. Testnet-only work is eligible.
 
 ![Glitch city hub](docs/media/glitch-city.jpg)
 
@@ -140,9 +140,9 @@ Paint, poses, and the assist drone stay **client cosmetic** (localStorage / pres
 - `server/` — Hono, SQLite, NEAR or mock ledger.
 - `shared/` — economy, merchants, events, RNG (mulberry32).
 - `contracts/` — `gd`, `items`, `market` (deployed; do not rename methods).
-- `docs/` — [PLAYER_UI.md](docs/PLAYER_UI.md), [TEST.md](docs/TEST.md), [TRACK09.md](docs/TRACK09.md), [ONCHAIN.md](docs/ONCHAIN.md), [ECONOMY.md](docs/ECONOMY.md), [ITEMS.md](docs/ITEMS.md), [ACCOUNTS.md](docs/ACCOUNTS.md).
+- `docs/` — [PLAYER_UI.md](docs/PLAYER_UI.md), [TEST.md](docs/TEST.md), [ONCHAIN.md](docs/ONCHAIN.md), [ECONOMY.md](docs/ECONOMY.md), [ITEMS.md](docs/ITEMS.md), [ACCOUNTS.md](docs/ACCOUNTS.md).
 - License — [MIT](LICENSE) (Copyright 2026 Edoye).
 
 ## Track 09 in one line
 
-Economy **is** the gameplay: earn GD in minigames, spend at merchants with wallets, list items to other players, forge unique gear — and the player never opens a chain wallet. Intents are out of scope; NEP-245 items and custodial play are in. Details: [docs/TRACK09.md](docs/TRACK09.md).
+Economy **is** the gameplay: earn GD in minigames, spend at merchants with wallets, list items to other players, forge unique gear — and the player never opens a chain wallet. Intents are out of scope; NEP-245 items and custodial play are in.

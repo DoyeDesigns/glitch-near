@@ -64,7 +64,7 @@ Exit code must be **0**.
 8. Assist → **My Home**: if affordable, buy studio; try **paint** (cosmetic, client-only).
 9. Assist → **Market**: open listings UI (list/buy only if you have furniture/gear).
 
-Optional: Attention Tower post, Exchange one small trade, Map Go (client GD burn — expected gap).
+Optional: Attention Tower post, Exchange one small trade, Assist → Map → Go (`POST /travel`, `GAS_GD` pending burn).
 
 ## 6. Optional: NEAR testnet
 
@@ -87,3 +87,4 @@ Not required for screener PASS. Needs funded `players` parent and keys — see [
 | Google tab missing | `GOOGLE_CLIENT_ID` unset (expected) |
 | Advertise wallet fails | Need `VITE_MARKET_CONTRACT` in `web/.env.local` and testnet |
 | Admin 404 | `ADMIN_TOKEN` unset (expected) |
+| Map Go 404 in Vite | Restart `npm run dev` so Vite proxies `/travel` to the API |
