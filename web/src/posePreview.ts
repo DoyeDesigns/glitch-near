@@ -20,10 +20,7 @@ function segPath(px: number, py: number, ex: number, ey: number, thick: number):
   return `M${px + nx} ${py + ny} L${ex + nx} ${ey + ny} L${ex - nx} ${ey - ny} L${px - nx} ${py - ny} Z`;
 }
 
-/**
- * Two-bone limb: root rotation then bend.
- * Elbow bend curls toward face (reduces down-component); knee curls back (same SVG cue via +bend).
- */
+/** Two-bone limb: root rotation then bend. */
 function jointedLimb(
   px: number,
   py: number,
@@ -37,7 +34,6 @@ function jointedLimb(
   const u = tip(upperLen, root);
   const mx = px + u.x;
   const my = py + u.y;
-  // Continue from upper tip: bend rotates the lower segment in the plane of the upper.
   const ang = Math.atan2(u.x, u.y);
   const b = kneeStyle ? bend : -bend;
   const a2 = ang + b;
@@ -57,12 +53,10 @@ export function poseSvgMarkup(
   const hy = 18;
   const torsoTop = 28;
   const torsoBot = 52;
-  const armPy = 32;
-  const legPy = 52;
-  const armL = jointedLimb(40, armPy, 12, 11, 5.2, pose.armL, pose.elbowL, false);
-  const armR = jointedLimb(60, armPy, 12, 11, 5.2, pose.armR, pose.elbowR, false);
-  const legL = jointedLimb(44, legPy, 14, 13, 6.2, pose.legL, pose.kneeL, true);
-  const legR = jointedLimb(56, legPy, 14, 13, 6.2, pose.legR, pose.kneeR, true);
+  const armL = jointedLimb(40, 32, 12, 11, 5.2, pose.armL, pose.elbowL, false);
+  const armR = jointedLimb(60, 32, 12, 11, 5.2, pose.armR, pose.elbowR, false);
+  const legL = jointedLimb(44, 52, 14, 13, 6.2, pose.legL, pose.kneeL, true);
+  const legR = jointedLimb(56, 52, 14, 13, 6.2, pose.legR, pose.kneeR, true);
   return `<svg${cls} width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
   <rect x="38" y="${torsoTop}" width="24" height="${torsoBot - torsoTop}" rx="3" fill="${fill}" opacity=".92"/>
   <circle cx="${hx}" cy="${hy}" r="10" fill="${fill}"/>

@@ -21,6 +21,7 @@ import {
   setHeldPose,
   vel,
   type Pose,
+  type PoseLimbDraft,
 } from './world';
 import { NEUTRAL_POSE, poseSvgMarkup } from './posePreview';
 import { closeModal, introOpen, modalOpen, openModal, sheet, updateHud } from './hud';
@@ -163,10 +164,9 @@ function loadChainProof(): void {
       if (phoneOpen && phoneApp === 'set') phoneRefresh();
     });
 }
-/** v3: raise / outward-spread / bend (elbow|knee) per limb. */
-const CUSTOM_POSE_KEY = 'glitch-custom-pose-v3';
+/** v5: arm raise 0 = ribs hang; spread aims lift out. */
+const CUSTOM_POSE_KEY = 'glitch-custom-pose-v5';
 type PoseLimbId = 'armL' | 'armR' | 'legL' | 'legR';
-type PoseLimbDraft = { raise: number; spread: number; bend: number };
 type CustomPoseDraft = Record<PoseLimbId, PoseLimbDraft>;
 
 const emptyLimbDraft = (): PoseLimbDraft => ({ raise: 0, spread: 0, bend: 0 });
@@ -184,7 +184,7 @@ function readLimbDraft(raw: unknown): PoseLimbDraft | null {
     spread = Number(o.spread),
     bend = Number(o.bend);
   if (![raise, spread, bend].every(Number.isFinite)) return null;
-  return { raise, spread, bend: Math.max(0, bend) };
+  return { raise, spread, bend };
 }
 
 function loadCustomPoseDraft(): CustomPoseDraft | null {
@@ -581,12 +581,12 @@ function renderPhone() {
       };
       body =
         hdr('Make a pose', 'poseList') +
-        `<p class="hint">Raise / spread / ${bendLabel.toLowerCase()}. Positive raise = toward face; spread = outward.</p>` +
+        `<p class="hint">${isArm ? 'Raise 0 = arm at ribs; higher lifts. Spread aims the lift out (T-pose = raise + spread).' : 'Raise / spread the leg.'} ${bendLabel} bends.</p>` +
         `<div class="pose-stage" id="poseLive">${poseSvgMarkup(draftPose, { size: 148, className: 'pose-fig pose-fig-lg' })}</div>` +
         `<div class="pose-chips">${chip('armL', 'Arm L')}${chip('armR', 'Arm R')}${chip('legL', 'Leg L')}${chip('legR', 'Leg R')}</div>` +
-        row('raise', 'Raise', -2.4, 2.4) +
-        row('spread', 'Spread out', -0.4, 1.7) +
-        row('bend', bendLabel, 0, 2.3) +
+        row('raise', isArm ? 'Raise (0 = ribs)' : 'Raise', isArm ? -0.8 : -2.4, 2.4) +
+        row('spread', 'Spread out', 0, 1.7) +
+        row('bend', bendLabel, isArm ? -2.3 : 0, 2.3) +
         `<div class="acts"><button class="pri" data-a="poseSave">Save pose</button><button data-a="poseList">Cancel</button></div>`;
     } else {
       const custom = loadCustomPoseDraft();
@@ -1032,7 +1032,8 @@ function renderPhone() {
     const axis = t.dataset.poseAxis as keyof PoseLimbDraft;
     const val = Number(t.value);
     if (!Number.isFinite(val)) return;
-    poseDraft[poseLimb][axis] = axis === 'bend' ? Math.max(0, val) : val;
+    const isLeg = poseLimb === 'legL' || poseLimb === 'legR';
+    poseDraft[poseLimb][axis] = axis === 'bend' && isLeg ? Math.max(0, val) : val;
     const live = poseFromDraft(poseDraft);
     setHeldPose(live, 'custom');
     const label = t.closest('label')?.querySelector('small');

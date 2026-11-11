@@ -494,9 +494,10 @@ export function buildLook(g: THREE.Group, L: Look) {
   const mkArm = (x: number, side: 'L' | 'R') => {
     const upper = new THREE.Group();
     upper.position.set(x, 1.6, 0);
-    upper.add(bx(0.2, 0.4, 0.24, top, 0, -0.2, 0));
+    // Longer upper arm so a hang rests along the ribs, not mid-chest.
+    upper.add(bx(0.2, 0.55, 0.24, top, 0, -0.275, 0));
     const elbow = new THREE.Group();
-    elbow.position.set(0, -0.4, 0);
+    elbow.position.set(0, -0.55, 0);
     elbow.add(bx(0.17, 0.28, 0.2, skin, 0, -0.14, 0), bx(0.15, 0.12, 0.16, skin, 0, -0.32, 0.02));
     upper.add(elbow);
     rig.add(upper);
@@ -658,9 +659,9 @@ export function buildLook(g: THREE.Group, L: Look) {
   if (heldPose && g.userData.isPlayer) applyHeldPose(g);
 }
 
-/** Shoulder/hip euler. `x` = face-forward raise; `z` = spread (left +out, right −out). */
+/** Shoulder/hip euler (applied to the rig). `x` face-forward; `z` outward for left / − for right. */
 export type LimbRot = { x: number; y: number; z: number };
-/** Elbow/knee bend is radians, 0 = straight. Elbow curls forward; knee curls back. */
+/** Elbow/knee bend radians. Elbow curls forward; knee curls back. */
 export type Pose = {
   armL: LimbRot;
   armR: LimbRot;
@@ -766,35 +767,65 @@ export let heldPoseId: string | null = null;
 const ROOT_LIMBS = ['armL', 'armR', 'legL', 'legR'] as const;
 const BEND_JOINTS = ['elbowL', 'elbowR', 'kneeL', 'kneeR'] as const;
 
+export type PoseLimbDraft = { raise: number; spread: number; bend: number };
+
 function poseRigDrop(id: string | null): number {
   if (id === 'sit') return -0.55;
   if (id === 'kneel') return -0.32;
   return 0;
 }
 
-/** Draft → pose. Spread is outward-positive on both sides (right maps to −z). */
+/**
+ * Arm draft → shoulder euler.
+ * Raise 0 = hang along the ribs; positive lifts up; negative eases behind.
+ * Spread aims that lift outward (0 = forward, max = pure side / T-pose when raised).
+ */
+function armDraftToRot(d: PoseLimbDraft, left: boolean): LimbRot {
+  const side = left ? 1 : -1;
+  const dir = Math.min(1, Math.max(0, d.spread / 1.7));
+  const up = Math.max(0, d.raise);
+  const back = Math.min(0, d.raise);
+  // raise → 0 always returns the upper arm to the ribs, no matter the spread aim.
+  return lr(up * (1 - dir) + back, 0, side * up * dir);
+}
+
+function armRotToDraft(r: LimbRot, left: boolean, bend: number): PoseLimbDraft {
+  const sideZ = left ? r.z : -r.z;
+  const up = Math.hypot(Math.max(0, r.x), Math.max(0, sideZ));
+  const back = Math.min(0, r.x);
+  const raise = up + back;
+  const spread = up > 0.05 ? (Math.atan2(Math.max(0, sideZ), Math.max(0, r.x)) / (Math.PI / 2)) * 1.7 : 0;
+  return { raise, spread: Math.min(1.7, Math.max(0, spread)), bend };
+}
+
+/** Draft → pose. Legs keep simple raise/spread; arms use rib-hang raise. */
 export function poseFromDraft(d: {
-  armL: { raise: number; spread: number; bend: number };
-  armR: { raise: number; spread: number; bend: number };
-  legL: { raise: number; spread: number; bend: number };
-  legR: { raise: number; spread: number; bend: number };
+  armL: PoseLimbDraft;
+  armR: PoseLimbDraft;
+  legL: PoseLimbDraft;
+  legR: PoseLimbDraft;
 }): Pose {
   return pose(
-    lr(d.armL.raise, 0, d.armL.spread),
-    lr(d.armR.raise, 0, -d.armR.spread),
+    armDraftToRot(d.armL, true),
+    armDraftToRot(d.armR, false),
     lr(d.legL.raise, 0, d.legL.spread),
     lr(d.legR.raise, 0, -d.legR.spread),
-    Math.max(0, d.armL.bend),
-    Math.max(0, d.armR.bend),
+    d.armL.bend,
+    d.armR.bend,
     Math.max(0, d.legL.bend),
     Math.max(0, d.legR.bend),
   );
 }
 
-export function draftFromPose(p: Pose) {
+export function draftFromPose(p: Pose): {
+  armL: PoseLimbDraft;
+  armR: PoseLimbDraft;
+  legL: PoseLimbDraft;
+  legR: PoseLimbDraft;
+} {
   return {
-    armL: { raise: p.armL.x, spread: p.armL.z, bend: p.elbowL },
-    armR: { raise: p.armR.x, spread: -p.armR.z, bend: p.elbowR },
+    armL: armRotToDraft(p.armL, true, p.elbowL),
+    armR: armRotToDraft(p.armR, false, p.elbowR),
     legL: { raise: p.legL.x, spread: p.legL.z, bend: p.kneeL },
     legR: { raise: p.legR.x, spread: -p.legR.z, bend: p.kneeR },
   };
