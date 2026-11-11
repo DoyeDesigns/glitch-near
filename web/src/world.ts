@@ -663,7 +663,10 @@ function clonePose(p: Pose): Pose {
   };
 }
 
-/** Built-in poses — bold silhouettes, not subtle. */
+/**
+ * Built-in poses. Limb `x` is face-forward positive (toward the head’s +Z).
+ * `applyHeldPose` negates x for Three.js (positive Rx swings limbs backward).
+ */
 export const POSE_PRESETS: { id: string; name: string; pose: Pose }[] = [
   {
     id: 'crossed',
@@ -679,8 +682,8 @@ export const POSE_PRESETS: { id: string; name: string; pose: Pose }[] = [
     id: 'victory',
     name: 'Victory',
     pose: {
-      armL: lr(-2.35, 0.2, 0.95),
-      armR: lr(-2.35, -0.2, -0.95),
+      armL: lr(2.35, 0.2, 0.95),
+      armR: lr(2.35, -0.2, -0.95),
       legL: lr(0, 0, 0.2),
       legR: lr(0, 0, -0.2),
     },
@@ -699,8 +702,8 @@ export const POSE_PRESETS: { id: string; name: string; pose: Pose }[] = [
     id: 'wave',
     name: 'Wave hello',
     pose: {
-      armL: lr(0.2, 0, 0.15),
-      armR: lr(-2.2, -0.45, -1.05),
+      armL: lr(-0.15, 0, 0.15),
+      armR: lr(2.2, -0.45, -1.05),
       legL: NEUTRAL,
       legR: lr(0.15, 0, -0.1),
     },
@@ -709,7 +712,7 @@ export const POSE_PRESETS: { id: string; name: string; pose: Pose }[] = [
     id: 'think',
     name: 'Thinking',
     pose: {
-      armL: lr(0.25, 0, 0.2),
+      armL: lr(-0.15, 0, 0.2),
       armR: lr(1.55, -0.85, -0.55),
       legL: lr(0.35, 0, 0.15),
       legR: NEUTRAL,
@@ -719,8 +722,8 @@ export const POSE_PRESETS: { id: string; name: string; pose: Pose }[] = [
     id: 'flex',
     name: 'Flex',
     pose: {
-      armL: lr(-1.55, 0.55, 1.25),
-      armR: lr(-1.55, -0.55, -1.25),
+      armL: lr(1.55, 0.55, 1.25),
+      armR: lr(1.55, -0.55, -1.25),
       legL: lr(0, 0, 0.35),
       legR: lr(0, 0, -0.35),
     },
@@ -739,7 +742,7 @@ export const POSE_PRESETS: { id: string; name: string; pose: Pose }[] = [
     id: 'point',
     name: 'Point forward',
     pose: {
-      armL: lr(0.15, 0, 0.2),
+      armL: lr(-0.1, 0, 0.2),
       armR: lr(1.45, 0, 0),
       legL: NEUTRAL,
       legR: lr(0.45, 0, -0.12),
@@ -749,8 +752,8 @@ export const POSE_PRESETS: { id: string; name: string; pose: Pose }[] = [
     id: 'akimbo',
     name: 'Hands on hips',
     pose: {
-      armL: lr(0.95, 0.65, 0.95),
-      armR: lr(0.95, -0.65, -0.95),
+      armL: lr(-0.95, 0.65, 0.95),
+      armR: lr(-0.95, -0.65, -0.95),
       legL: lr(0, 0, 0.55),
       legR: lr(0, 0, -0.55),
     },
@@ -771,6 +774,12 @@ export let heldPose: Pose | null = null;
 /** Preset id, `custom`, or null when no pose held. */
 export let heldPoseId: string | null = null;
 
+function poseRigDrop(id: string | null): number {
+  if (id === 'sit') return -0.72;
+  if (id === 'kneel') return -0.38;
+  return 0;
+}
+
 export function poseFromCustomXs(armL: number, armR: number, legL: number, legR: number): Pose {
   return {
     armL: lr(armL, 0, 0),
@@ -782,26 +791,31 @@ export function poseFromCustomXs(armL: number, armR: number, legL: number, legR:
 
 export function applyHeldPose(g: THREE.Group = player) {
   if (!heldPose) return;
-  const u = (g.userData.rig as THREE.Group).userData as Record<string, THREE.Object3D>;
+  const rig = g.userData.rig as THREE.Group;
+  const u = rig.userData as Record<string, THREE.Object3D>;
   for (const k of ['armL', 'armR', 'legL', 'legR'] as const) {
     const limb = u[k];
     if (!limb) return;
     const r = heldPose[k];
-    limb.rotation.set(r.x, r.y, r.z);
+    // Face is +Z; Three +Rx swings a hanging limb to −Z — negate stored face-forward x.
+    limb.rotation.set(-r.x, r.y, r.z);
   }
+  rig.position.y = poseRigDrop(g === player ? heldPoseId : null);
 }
 
 export function setHeldPose(pose: Pose | null, id: string | null = null) {
   heldPose = pose ? clonePose(pose) : null;
   heldPoseId = heldPose ? id : null;
+  const rig = player.userData.rig as THREE.Group;
   if (heldPose) applyHeldPose(player);
   else {
-    const u = (player.userData.rig as THREE.Group).userData as Record<string, THREE.Object3D>;
+    const u = rig.userData as Record<string, THREE.Object3D>;
     for (const k of ['armL', 'armR', 'legL', 'legR'] as const) {
       const limb = u[k];
       if (!limb) continue;
       limb.rotation.set(0, 0, 0);
     }
+    rig.position.y = 0;
   }
 }
 
@@ -826,7 +840,6 @@ function walkAnim(a: THREE.Group, sp: number, t: number, ph: number) {
     u = r.userData as Record<string, THREE.Object3D>;
   if (a === player && heldPose && sp <= 0.4) {
     applyHeldPose(a);
-    r.position.y = 0;
     return;
   }
   const s = Math.sin(t * 9 + ph) * sp * .75;

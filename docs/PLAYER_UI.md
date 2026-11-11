@@ -51,7 +51,7 @@ Open: click the cyan square drone beside the player, or press **P**. Modules gri
 | Map | Districts + Go | **Go** burns GD in the browser (fast travel — client-only gap) |
 | Balance | Available GD, shards, skill-pay meter, city-day sim | `/me`; sim uses `/sim/fast-forward` (no chain write) |
 | Profile | Name / role card | Mostly client + `/me` |
-| Pose | 10 presets + one custom pose | **Client-only**; custom in `localStorage` key `glitch-custom-pose` |
+| Pose | 10 presets + one custom pose | **Client-only**; custom in `localStorage` key `glitch-custom-pose-v2` |
 | Settings | Rename, look, hint toggle, Advanced chain proof, reset | `/me/chain`; reset clears local save only |
 | My Home | Buy studio, maintenance, furniture, room paint | `/home/*`, `/shop/buy`; **paint is client-only** |
 | Market | List / buy / cancel gear or furniture | `/market`, `/market/list`, `/market/buy`, `/market/cancel` |

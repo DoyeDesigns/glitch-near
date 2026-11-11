@@ -22,6 +22,7 @@ import {
   vel,
   type Pose,
 } from './world';
+import { NEUTRAL_POSE, poseSvgMarkup } from './posePreview';
 import { closeModal, introOpen, modalOpen, openModal, sheet, updateHud } from './hud';
 import {
   cityDay,
@@ -162,7 +163,8 @@ function loadChainProof(): void {
       if (phoneOpen && phoneApp === 'set') phoneRefresh();
     });
 }
-const CUSTOM_POSE_KEY = 'glitch-custom-pose';
+/** v2: limb x is face-forward positive (matches POSE_PRESETS / applyHeldPose). */
+const CUSTOM_POSE_KEY = 'glitch-custom-pose-v2';
 type CustomPoseXs = { armL: number; armR: number; legL: number; legR: number };
 
 function loadCustomPoseXs(): CustomPoseXs | null {
@@ -545,6 +547,7 @@ function renderPhone() {
       `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('map', 'Map', '#ffb12e', 'M')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('pose', 'Pose', '#ff7a59', '◇')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}</div>`;
   } else if (phoneApp === 'pose') {
     if (poseEdit) {
+      const draftPose = poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR);
       const row = (id: keyof CustomPoseXs, label: string) => {
         const v = poseDraft[id];
         const deg = Math.round((v * 180) / Math.PI);
@@ -552,29 +555,46 @@ function renderPhone() {
       };
       body =
         hdr('Make a pose', 'poseList') +
-        `<p class="hint">Drag limbs. Save keeps one custom pose on this browser.</p>` +
+        `<p class="hint">Positive = toward your face. Preview updates live; save stays on this browser.</p>` +
+        `<div class="pose-stage" id="poseLive">${poseSvgMarkup(draftPose, { size: 148, className: 'pose-fig pose-fig-lg' })}</div>` +
         row('armL', 'Arm left') +
         row('armR', 'Arm right') +
         row('legL', 'Leg left') +
         row('legR', 'Leg right') +
-        `<div class="acts"><button class="pri" data-a="poseSave">Save</button></div>`;
+        `<div class="acts"><button class="pri" data-a="poseSave">Save pose</button><button data-a="poseList">Cancel</button></div>`;
     } else {
       const custom = loadCustomPoseXs();
-      const rows = POSE_PRESETS.map(p => {
-        const on = heldPoseId === p.id ? ' on' : '';
-        return `<button class="row pose-pick${on}" data-a="posePick" data-v="${esc(p.id)}"><span>${esc(p.name)}</span></button>`;
-      }).join('');
+      const customP = customPose();
+      const activePreset = POSE_PRESETS.find(p => p.id === heldPoseId);
+      const activePose: Pose =
+        heldPoseId === 'custom' && customP
+          ? customP
+          : activePreset?.pose ?? NEUTRAL_POSE;
+      const activeName =
+        heldPoseId === 'custom'
+          ? 'Your pose'
+          : activePreset?.name ?? 'Standing';
+      const card = (id: string, name: string, pose: Pose, badge?: string) => {
+        const on = heldPoseId === id ? ' on' : '';
+        const tag = badge ? `<em class="pose-badge">${esc(badge)}</em>` : '';
+        return `<button type="button" class="pose-card${on}" data-a="posePick" data-v="${esc(id)}">
+          <span class="pose-thumb">${poseSvgMarkup(pose, { size: 88, className: 'pose-fig' })}</span>
+          <span class="pose-card-name">${esc(name)}${tag}</span>
+        </button>`;
+      };
+      const cards = POSE_PRESETS.map(p => card(p.id, p.name, p.pose)).join('');
+      const customCard = customP
+        ? card('custom', 'Your pose', customP, 'saved')
+        : '';
       body =
         hdr('Pose', 'home') +
-        `<p class="hint">Holds until you walk. Anywhere in the city.</p>` +
-        (custom
-          ? `<div class="acts"><button class="pri" data-a="posePick" data-v="custom">Use my pose</button></div>`
-          : '') +
-        rows +
-        (custom
-          ? `<button class="row pose-pick${heldPoseId === 'custom' ? ' on' : ''}" data-a="posePick" data-v="custom"><span>Custom</span></button>`
-          : '') +
-        `<div class="acts"><button data-a="poseEdit">Make a pose</button>${heldPoseId ? '<button data-a="poseClear">Clear</button>' : ''}</div>`;
+        `<p class="hint">Tap a silhouette. Holds until you walk.</p>` +
+        `<div class="pose-now${heldPoseId ? ' live' : ''}">
+          <div class="pose-stage sm">${poseSvgMarkup(activePose, { size: 112, className: 'pose-fig pose-fig-lg' })}</div>
+          <div class="pose-now-meta"><small>Now</small><b>${esc(activeName)}</b></div>
+        </div>` +
+        `<div class="pose-grid">${customCard}${cards}</div>` +
+        `<div class="acts"><button class="pri" data-a="poseEdit">${custom ? 'Edit my pose' : 'Make a pose'}</button>${heldPoseId ? '<button data-a="poseClear">Clear</button>' : ''}</div>`;
     }
   } else if (phoneApp === 'shop') {
     void loadMarket();
@@ -962,9 +982,12 @@ function renderPhone() {
     const val = Number(t.value);
     if (!Number.isFinite(val)) return;
     poseDraft[limb] = val;
-    setHeldPose(poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR), 'custom');
+    const live = poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR);
+    setHeldPose(live, 'custom');
     const label = t.closest('label')?.querySelector('small');
     if (label) label.textContent = `${Math.round((val * 180) / Math.PI)}°`;
+    const stage = sheet.querySelector('#poseLive');
+    if (stage) stage.innerHTML = poseSvgMarkup(live, { size: 148, className: 'pose-fig pose-fig-lg' });
   };
 }
 

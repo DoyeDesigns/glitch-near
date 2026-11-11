@@ -126,7 +126,27 @@ input[type=text],input[type=password]{font:600 16px var(--disp);color:var(--fg);
 .ap i{position:relative;width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;font:700 22px var(--disp);font-style:normal;color:#06101a}.ap.soon{opacity:.45;cursor:default}
 .ap u{position:absolute;top:-4px;right:-4px;background:var(--pink);color:#fff;border-radius:9px;padding:0 5px;font:700 11px var(--mono);text-decoration:none}
 .cmp{display:flex;gap:6px;margin:8px 0}.cmp input{margin:0;flex:1;padding:8px 10px;font-size:14px}
-.pose-pick{display:flex;width:100%;margin:4px 0;text-align:left}.pose-pick.on{border-color:var(--cyan);color:var(--cyan)}
+.pose-now{display:flex;align-items:center;gap:12px;margin:6px 0 12px;padding:10px 12px;border:1px solid var(--line);background:color-mix(in srgb,#0a1424 70%,transparent)}
+.pose-now.live{border-color:color-mix(in srgb,var(--cyan) 55%,var(--line))}
+.pose-now-meta{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pose-now-meta small{font:700 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
+.pose-now-meta b{font:700 15px var(--disp);color:var(--fg)}
+.pose-stage{display:flex;align-items:center;justify-content:center;margin:4px 0 10px;padding:14px;border:1px solid color-mix(in srgb,var(--cyan) 35%,var(--line));background:
+  radial-gradient(ellipse at 50% 70%,color-mix(in srgb,var(--cyan) 18%,transparent),transparent 65%),
+  linear-gradient(180deg,#0a1520,#070910);min-height:160px}
+.pose-stage.sm{margin:0;padding:6px;min-height:0;border:0;background:transparent;flex:none}
+.pose-fig{display:block;color:var(--cyan);filter:drop-shadow(0 0 8px color-mix(in srgb,var(--cyan) 35%,transparent))}
+.pose-fig-lg{color:#9af0ff}
+.pose-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:4px 0 8px}
+.pose-card{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px 8px;border:1px solid var(--line);background:color-mix(in srgb,#0b1220 80%,transparent);color:var(--fg);text-align:center;transition:border-color .12s,color .12s,background .12s}
+.pose-card:hover{border-color:color-mix(in srgb,var(--cyan) 45%,var(--line))}
+.pose-card.on{border-color:var(--cyan);color:var(--cyan);background:color-mix(in srgb,var(--cyan) 10%,#0b1220)}
+.pose-card.on .pose-fig{color:var(--cyan)}
+.pose-thumb{display:flex;align-items:center;justify-content:center;width:100%;height:96px;background:
+  radial-gradient(ellipse at 50% 80%,color-mix(in srgb,var(--cyan) 12%,transparent),transparent 60%),
+  #080e18;border:1px solid color-mix(in srgb,var(--line) 80%,transparent)}
+.pose-card-name{font:700 11px/1.25 var(--mono);letter-spacing:.02em;display:flex;flex-direction:column;align-items:center;gap:3px;min-height:2.4em}
+.pose-badge{font:700 8px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#021018;background:var(--lime);padding:1px 5px}
 .pose-row{display:flex;flex-direction:column;gap:4px;margin:10px 0;font-size:12px}
 .pose-row input[type=range]{width:100%;accent-color:var(--cyan)}
 .pose-row small{text-transform:none;letter-spacing:0}
