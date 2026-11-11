@@ -6,7 +6,11 @@ import {
   CHEF_FOOD,
   CHEF_PRICE_MAX_MULT,
   CHEF_PRICE_MIN_MULT,
+  CHEF_SIM_MAX_HOURS,
+  DEALER_GOODS,
   quoteChefPrice,
+  simulateCityFastForward,
+  SMITH_GEAR,
 } from '../src/merchants.rules';
 
 const zobo = CHEF_FOOD.find(r => r.id === 'zobo-drink')!;
@@ -68,5 +72,50 @@ describe('chef quote', () => {
     expect(next.stock).toBeGreaterThan(10);
     expect(next.stock).toBeLessThanOrEqual(20);
     expect(next.demandEma).toBeLessThan(0.5);
+  });
+});
+
+describe('city fast-forward', () => {
+  it('same seed and hours returns the same payload twice', () => {
+    const a = simulateCityFastForward(24, 7);
+    const b = simulateCityFastForward(24, 7);
+    expect(a).toEqual(b);
+    expect(a.merchants.chef.timeline.length).toBeGreaterThan(0);
+    expect(Object.keys(a.merchants.chef.ending)).toEqual(CHEF_FOOD.map(f => f.id));
+    expect(Object.keys(a.merchants.smith.ending)).toEqual(SMITH_GEAR.map(f => f.id));
+    expect(Object.keys(a.merchants.dealer.ending)).toEqual(DEALER_GOODS.map(f => f.id));
+  });
+
+  it('caps hours at 168', () => {
+    const r = simulateCityFastForward(999, 1);
+    expect(r.hours).toBe(CHEF_SIM_MAX_HOURS);
+  });
+
+  it('zero hours yields empty timelines and base ending prices', () => {
+    const r = simulateCityFastForward(0, 3);
+    expect(r.merchants.chef.timeline).toEqual([]);
+    expect(r.merchants.smith.timeline).toEqual([]);
+    expect(r.merchants.dealer.timeline).toEqual([]);
+    expect(r.events).toEqual([]);
+    for (const rule of CHEF_FOOD) {
+      expect(r.merchants.chef.ending[rule.id]!.price).toBe(rule.basePrice);
+      expect(r.merchants.chef.ending[rule.id]!.stock).toBe(rule.targetStock);
+      expect(r.merchants.chef.ending[rule.id]!.demandEma).toBe(0);
+    }
+    for (const rule of SMITH_GEAR) {
+      expect(r.merchants.smith.ending[rule.id]!.price).toBe(rule.basePrice);
+      expect(r.merchants.smith.ending[rule.id]!.stock).toBe(rule.targetStock);
+    }
+    for (const rule of DEALER_GOODS) {
+      expect(r.merchants.dealer.ending[rule.id]!.price).toBe(rule.basePrice);
+      expect(r.merchants.dealer.ending[rule.id]!.stock).toBe(rule.targetStock);
+    }
+  });
+
+  it('24h run produces at least one smith or dealer sale', () => {
+    const r = simulateCityFastForward(24, 42);
+    const smithOrDealer =
+      r.merchants.smith.timeline.length + r.merchants.dealer.timeline.length;
+    expect(smithOrDealer).toBeGreaterThan(0);
   });
 });

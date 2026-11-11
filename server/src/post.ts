@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import {
+  bumpEuphoria,
   clamp,
+  EUPHORIA_POST_BUMP,
   faucetCredit,
   mulberry32,
   payCapFor,
@@ -252,6 +254,9 @@ export async function publishPost(player: PlayerRow, input: { sym: string; take:
   }
 
   nudgeToken(sym, take, reach);
+  if (take === 'hype') {
+    world.pressures.euphoria = bumpEuphoria(world.pressures.euphoria, EUPHORIA_POST_BUMP);
+  }
   pushFeed('npc', player.name, postText(sym, take), rng);
   if (postViral(reach)) pushFeed('sys', 'TRENDING', `${player.name}'s ${sym} post is going viral.`, rng);
 

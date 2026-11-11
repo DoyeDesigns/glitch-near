@@ -4,9 +4,10 @@
   "workspaces": ["shared", "web", "server"],
   "scripts": {
     "test": "npm run test -w @glitch/shared && npm run test -w @glitch/server",
-    "dev": "npm run dev -w web",
+    "dev": "node scripts/dev.mjs",
     "dev:server": "npm run dev -w @glitch/server",
     "dev:web": "npm run dev -w web",
+    "verify": "npm run verify -w @glitch/server",
     "build": "npm run build -w web",
     "sim:economy": "tsx shared/scripts/sim-economy.ts"
   }

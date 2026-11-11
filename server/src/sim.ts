@@ -2,8 +2,10 @@ import {
   createWorld,
   stepWorld,
   type Case,
+  type EventStage,
   type FeedPost,
   type MarketState,
+  type Pressures,
   type SimEffect,
   type Token,
   type World,
@@ -26,6 +28,8 @@ export type StreamPayload = {
   feed: FeedPost[];
   cases: Case[];
   activeEvents: ActiveEvent[];
+  pressures: Pressures;
+  eventStage: EventStage | null;
 };
 
 export const world: World = createWorld(config.seed);
@@ -98,6 +102,8 @@ export function getStreamPayload(): StreamPayload {
     feed: world.feed.slice(0, 40).map(f => ({ ...f })),
     cases: world.cases.map(c => ({ ...c })),
     activeEvents: activeEvents.map(e => ({ ...e })),
+    pressures: { ...world.pressures },
+    eventStage: world.eventStage ? { ...world.eventStage } : null,
   };
 }
 
@@ -107,5 +113,6 @@ export function getHealth() {
     tick: Math.floor(world.time * 2),
     seed: world.seed,
     time: world.time,
+    chainMode: config.chainMode,
   };
 }

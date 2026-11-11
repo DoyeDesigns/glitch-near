@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Glitch — Advertise</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/advertise.css">
+</head>
+<body>
+<main id="app">
+  <header>
+    <p class="brand">Glitch</p>
+    <h1>Advertise</h1>
+    <p class="lede">Book a billboard slot with your NEAR wallet. Players never see wallets — this page is for advertisers only.</p>
+    <div class="wallet-row">
+      <button type="button" id="connect" class="pri">Connect wallet</button>
+      <button type="button" id="disconnect" hidden>Disconnect</button>
+      <span id="account" class="mono"></span>
+    </div>
+  </header>
+
+  <p id="err" class="err" hidden></p>
+  <p id="ok" class="ok" hidden></p>
+
+  <section id="slots" class="slots" aria-live="polite">
+    <p class="hint">Loading slots from the market contract…</p>
+  </section>
+
+  <section class="book">
+    <h2>Book a slot</h2>
+    <form id="book">
+      <label>Slot
+        <select id="slot" name="slot" required></select>
+      </label>
+      <label>Units
+        <input id="units" name="units" type="number" min="1" value="1" required>
+      </label>
+      <label>Creative URL (https)
+        <input id="creative" name="creative" type="url" placeholder="https://…" required maxlength="300">
+      </label>
+      <label>Project name
+        <input id="project" name="project" type="text" maxlength="40" required>
+      </label>
+      <p class="price">Price: <strong id="price">—</strong> NEAR</p>
+      <button type="submit" class="pri" id="submit" disabled>Book ad</button>
+    </form>
+  </section>
+</main>
+<script type="module" src="/src/advertise.ts"></script>
+</body>
+</html>

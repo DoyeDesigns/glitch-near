@@ -1,6 +1,6 @@
 # On-chain settlement map
 
-Policy for every GD and item movement on NEAR testnet. **Doc only — no implementation yet.**
+Policy for every GD and item movement on NEAR testnet. The server paths in `server/src` implement this map. Where this file and the code disagree, the code is the source of truth.
 
 Contracts: `GD_CONTRACT`, `ITEMS_CONTRACT`. Player keys are custodial (encrypted in SQLite); the server decrypts them to sign **player** txs. The treasury/oracle key signs **mint**, **burn_from**, **create_token**, and merchant restock burns.
 
@@ -94,13 +94,13 @@ Burns are **not** used for player purchases.
 
 | Movement | Class | Notes |
 | --- | --- | --- |
-| Passive upkeep / holding tax (`UPKEEP_RATE` / 10s) | **(b)** | Accrue → flush |
 | Trade entry fee (1%) | **(b)** | |
 | Trade loss | **(b)** | |
 | Post cost (burn half) | **(b)** | Escrow half separate |
-| Fast-travel gas (`GAS_GD`) | **(b)** | |
-| CIA fine | **(b)** | |
+| Player market fee (2%) | **(b)** | Accrued on seller when GD transfer lands |
 | Merchant cost-of-goods on restock | **(a)** | Treasury/merchant burn when restocking inventory economics |
+
+**Still client-only display sinks** (browser balance chrome; not server `pending_burns` yet): passive holding tax (`UPKEEP_RATE` / 10s), fast-travel gas (`GAS_GD`), CIA fines.
 
 ### Escrow — server ledger **(b)**-adjacent
 
@@ -108,11 +108,14 @@ Burns are **not** used for player purchases.
 | --- | --- |
 | Trade stake hold | Increases `escrowed`; reduces `available` |
 | Post escrow half | Same |
+| Player market buy | Buyer escrow while `listing_sales.status = paying` |
 | Stake/escrow release on settle | Decreases `escrowed`; win may `mint` profit **(a)** |
 
 ### Server-only **(c)**
 
-Daily cap bookkeeping, XP, needs (except food hunger apply after pay), social, market sim, look cosmetics, key storage, prototype USDG (removed).
+Daily cap bookkeeping, XP, needs (except food hunger apply after pay), social, market sim, look cosmetics, **poses** (client `localStorage`), home paint (client), key storage, prototype USDG (removed).
+
+`GET /leaderboard` ranks by spendable `available` GD (15s cache) — read-only, no chain write.
 
 ---
 
@@ -126,6 +129,8 @@ Daily cap bookkeeping, XP, needs (except food hunger apply after pay), social, m
 | Shard earn (vault) | **(a)** | Treasury `mint` shards. |
 | Shard spend (forge) | **(a)** | Treasury `burn_from` shards + player `ft_transfer` gdCost → smith + gear mint. |
 | Gear forge | **(a)** | `create_token` `gear-<type>-<uuid>` (max 1) + `mint` to player. |
+| Player market list | **(c)** hold | Open listing in SQLite; qty held = chain balance − open/sold-in-flight listings. Furniture or gear tokens only. Price 100–1,000,000 GD. |
+| Player market buy | **(a)** | Buyer `ft_transfer` → seller; then treasury `admin_transfer` seller → buyer (existing minter method). Same paying/paid/delivered/failed + escrow + resume as shop purchases. 2% fee → seller `pending_burns`. |
 | Merchant restock / COGS | **(a)** | Burns or admin moves as designed. |
 | Catalog seed | ops **(a)** | `create_token` for non-gear types. |
 | Headphones / placement | **(c)** | Free look / which owned item is placed. |
@@ -161,11 +166,11 @@ Refuse or throttle `createPlayerAccount` / signup when:
 | Optional `INVITE_CODE` | If set in env, require matching code on signup |
 | Root NEAR balance | Refuse signups when **`players` / `ROOT_ACCOUNT` NEAR balance &lt; 0.2** (cannot fund subaccounts safely) |
 
-Document env knobs (names TBD in implementation): e.g. `SIGNUP_IP_LIMIT`, `SIGNUP_HOURLY_CAP`, `INVITE_CODE`, funding check against `0.2` NEAR.
+Env knobs (see `server/.env.example`): `SIGNUP_IP_PER_HOUR` (default 5), `SIGNUP_HOURLY_CAP` (default 30), optional `INVITE_CODE`, funding check against `0.2` NEAR on `ROOT_ACCOUNT` when `CHAIN_MODE=testnet`.
 
 ---
 
-## Settlement sketch (no code yet)
+## Settlement sketch
 
 1. Validate action; compute `available`; reject if insufficient.
 2. **(b)**-only → append `pending_burns` / adjust `escrow`; return.

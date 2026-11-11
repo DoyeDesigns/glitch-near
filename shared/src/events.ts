@@ -1,3 +1,12 @@
+import {
+  decayPressures,
+  drawSeverity,
+  EVENT_CHECK_S,
+  EVENT_COOLDOWN_S,
+  rollArchetype,
+  rumorForArchetype,
+  RUMOR_LEAD_S,
+} from './events.rules';
 import { clamp, pick, rnd } from './rng';
 import type { Case, EventDef, FeedPost, World } from './types';
 
@@ -154,6 +163,7 @@ export const EVENTS: EventDef[] = [
   },
 ];
 
+/** @deprecated Flat weighted pick — kept for tests/legacy; scheduling uses tickEventSchedule. */
 export function runEvent(world: World): void {
   const tot = EVENTS.reduce((a, e) => a + e.w, 0);
   let r = world.rng.next() * tot;
@@ -163,4 +173,52 @@ export function runEvent(world: World): void {
       break;
     }
   }
+}
+
+function fireArchetype(world: World, archetype: 'pump' | 'rugPull'): void {
+  if (archetype === 'pump') EVENTS[0]!.run(world);
+  else EVENTS[1]!.run(world);
+}
+
+/**
+ * Pressure-driven schedule: decay → finish rumor → roll pump/rug when idle.
+ * Existing EVENTS[0]/[1] bodies run unchanged after the rumor lead.
+ */
+export function tickEventSchedule(world: World, dt: number): void {
+  world.pressures = decayPressures(world.pressures.euphoria, world.pressures.leverage, dt);
+
+  const stage = world.eventStage;
+  if (stage?.phase === 'rumor' && world.time >= stage.fireAt) {
+    stage.phase = 'live';
+    fireArchetype(world, stage.archetype);
+    world.eventCooldownUntil = world.time + EVENT_COOLDOWN_S;
+    world.eventStage = null;
+    world.eventCheckIn = EVENT_CHECK_S;
+    return;
+  }
+
+  if (world.eventStage) return;
+  if (world.time < world.eventCooldownUntil) return;
+
+  world.eventCheckIn -= dt;
+  if (world.eventCheckIn > 0) return;
+
+  const hit = rollArchetype(world.rng, world.pressures.euphoria, world.pressures.leverage);
+  if (!hit) {
+    world.eventCheckIn = EVENT_CHECK_S;
+    return;
+  }
+
+  const severity = drawSeverity(world.rng);
+  const { rumor, sym } = rumorForArchetype(world.rng, hit, world.tokens);
+  pushFeed(world, 'sys', 'RUMOR', rumor);
+  world.eventStage = {
+    archetype: hit,
+    phase: 'rumor',
+    severity,
+    rumor,
+    fireAt: world.time + RUMOR_LEAD_S,
+    sym,
+  };
+  world.eventCheckIn = EVENT_CHECK_S;
 }

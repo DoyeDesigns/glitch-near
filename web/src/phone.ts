@@ -1,21 +1,77 @@
-import { GAS_GD } from '@glitch/shared';
+import {
+  GAS_GD,
+  isPlayerListableToken,
+  listableTokenTitle,
+  MARKET_LIST_MAX_GD,
+  MARKET_LIST_MIN_GD,
+} from '@glitch/shared';
 import { $, esc, fmt, fmtN, pick, rnd } from './util';
-import { burn, logTx, payCap, roleName, SAVE, save, S, txlog, weak } from './state';
+import { burn, L, logTx, payCap, roleName, SAVE, save, S, txlog, weak } from './state';
 import { banner, feed, post, serverTick } from './market';
-import { NPC_NAMES } from './constants';
-import { cam, npcs, player, say, vel } from './world';
+import {
+  assistantScreenPos,
+  cam,
+  clearInterior,
+  currentInterior,
+  heldPoseId,
+  player,
+  poseFromCustomXs,
+  POSE_PRESETS,
+  setAssistantClickHandler,
+  setHeldPose,
+  vel,
+  type Pose,
+} from './world';
 import { closeModal, introOpen, modalOpen, openModal, sheet, updateHud } from './hud';
-import { homeAct, homeHtml, openCustomizer } from './games';
+import {
+  cityDay,
+  citySimPlaying,
+  homeAct,
+  homeHtml,
+  loadMerchantQuotes,
+  openCustomizer,
+  playCityDaySim,
+  type CityDayBoard,
+  type CityDayRow,
+} from './games';
 import { hudAvailable } from './hud';
-import { fetchChainProof, type ChainProof } from './session';
+import { fetchChainProof, me, refreshMe, type ChainProof } from './session';
+
+type MarketListing = {
+  id: string;
+  tokenId: string;
+  title: string;
+  price: string;
+  sellerName: string;
+  sellerId: string;
+};
+
+let marketListings: MarketListing[] = [];
+let marketErr = '';
+let marketBusy = false;
+
+async function loadMarket(): Promise<void> {
+  try {
+    const res = await fetch('/market', { credentials: 'include' });
+    const data = (await res.json()) as { listings?: MarketListing[]; error?: string };
+    if (!res.ok) throw new Error(data.error || 'Could not load market');
+    marketListings = data.listings ?? [];
+    marketErr = '';
+  } catch (err) {
+    marketErr = err instanceof Error ? err.message : 'Could not load market';
+  } finally {
+    if (phoneOpen && phoneApp === 'shop') phoneRefresh();
+  }
+}
 
 export const LOCS = [
   { id: 'plaza', name: 'Central Plaza', x: 0, z: 6, r: 14, sp: [0, 10] as [number, number], note: 'The main square. Everyone passes through.' },
-  { id: 'wall', name: 'Wall Street', x: -17, z: -4, r: 12, sp: [-13, -3] as [number, number], note: 'Trade coins at the Exchange.' },
-  { id: 'lab', name: 'Vault Lab', x: 17, z: -4, r: 12, sp: [13, -3] as [number, number], note: 'Crack vaults and watch the bounty board.' },
-  { id: 'tower', name: 'Attention Tower', x: 0, z: -24, r: 10, sp: [0, -19] as [number, number], note: 'Post, trend and gain followers.' },
-  { id: 'diner', name: 'Neon Diner', x: 30, z: 20, r: 10, sp: [27, 17] as [number, number], note: 'Eat here. Paid in GD.' },
-  { id: 'home', name: 'My Home', x: 140, z: 0, r: 14, sp: [140, 4] as [number, number], note: 'Your place.' },
+  { id: 'wall', name: 'Wall Street', x: -20, z: -4, r: 12, sp: [-15.5, -9] as [number, number], note: 'Trade coins at the Exchange.' },
+  { id: 'lab', name: 'Vault Lab', x: 20, z: -4, r: 12, sp: [15.5, -9] as [number, number], note: 'Crack vaults and watch the bounty board.' },
+  { id: 'tower', name: 'Attention Tower', x: 0, z: -26, r: 10, sp: [0, -25] as [number, number], note: 'Post, trend and gain followers.' },
+  { id: 'forge', name: 'Gear Forge', x: 0, z: -10, r: 8, sp: [0, -6] as [number, number], note: 'Forge gear from shards.' },
+  { id: 'diner', name: 'Neon Diner', x: 34, z: 24, r: 10, sp: [34, 20.5] as [number, number], note: 'Eat here. Paid in GD.' },
+  { id: 'home', name: 'My Home', x: 22, z: 32, r: 10, sp: [22, 26.5] as [number, number], note: 'Your place.' },
 ];
 export const GAS = GAS_GD;
 export const locAt = (x: number, z: number) => {
@@ -30,8 +86,17 @@ export const locAt = (x: number, z: number) => {
   }
   return b;
 };
-export const here = () => locAt(player.position.x, player.position.z);
-export const peopleAt = (id: string) => npcs.filter(a => locAt(a.position.x, a.position.z).id === id);
+export const here = () => {
+  if (currentInterior === 'home') return LOCS.find(l => l.id === 'home')!;
+  if (currentInterior === 'diner') return LOCS.find(l => l.id === 'diner')!;
+  if (currentInterior === 'exchange') return LOCS.find(l => l.id === 'wall')!;
+  if (currentInterior === 'vault') return LOCS.find(l => l.id === 'lab')!;
+  if (currentInterior === 'tower') return LOCS.find(l => l.id === 'tower')!;
+  if (currentInterior === 'forge') return LOCS.find(l => l.id === 'forge')!;
+  return locAt(player.position.x, player.position.z);
+};
+/** Real multiplayer presence is not wired — only you count as “here”. */
+export const peopleAt = (_id: string) => [] as Array<{ userData: { npc: { name: string } } }>;
 const chatLog: Record<string, Array<{ who: string; text: string; t: number; me?: boolean }>> = {};
 LOCS.forEach(l => {
   chatLog[l.id] = [];
@@ -60,10 +125,18 @@ function proofHtml(): string {
   if (chainErr) return `<p class="hint">${esc(chainErr)}</p>`;
   if (!chainProof) return `<p class="hint">Loading on-chain proof…</p>`;
   const p = chainProof;
+  const mock = p.chainMode === 'mock';
   const items = Object.entries(p.items);
   const itemRows =
     items.map(([id, n]) => `<li><code>${esc(id)}</code> ${esc(fmtUnits(n))}</li>`).join('') ||
     '<li>None</li>';
+  const explorers = mock
+    ? '<p class="hint">Local mock ledger — no testnet explorer.</p>'
+    : `<p class="hint">
+      <a href="${explorerHref(p.accountId)}" target="_blank" rel="noopener">Account</a>
+      ${p.gdContract ? ` · <a href="${explorerHref(p.gdContract)}" target="_blank" rel="noopener">GD contract</a>` : ''}
+      ${p.itemsContract ? ` · <a href="${explorerHref(p.itemsContract)}" target="_blank" rel="noopener">Items contract</a>` : ''}
+    </p>`;
   return `<div class="proof">
     <div class="proof-id"><code>${esc(p.accountId)}</code><button type="button" data-a="copyacct">Copy</button></div>
     <div><span>GD on chain</span><b>${esc(fmtUnits(p.gdOnChain))}</b></div>
@@ -71,11 +144,7 @@ function proofHtml(): string {
     <div><span>Pending</span><b>${esc(fmtUnits(p.pending))}</b></div>
     <div class="proof-items"><span>Items</span><ul>${itemRows}</ul></div>
     <div><span>Network fees, covered by the game</span><b>${esc(p.nearBalance)} NEAR</b></div>
-    <p class="hint">
-      <a href="${explorerHref(p.accountId)}" target="_blank" rel="noopener">Account</a>
-      ${p.gdContract ? ` · <a href="${explorerHref(p.gdContract)}" target="_blank" rel="noopener">GD contract</a>` : ''}
-      ${p.itemsContract ? ` · <a href="${explorerHref(p.itemsContract)}" target="_blank" rel="noopener">Items contract</a>` : ''}
-    </p>
+    ${explorers}
   </div>`;
 }
 
@@ -93,11 +162,40 @@ function loadChainProof(): void {
       if (phoneOpen && phoneApp === 'set') phoneRefresh();
     });
 }
+const CUSTOM_POSE_KEY = 'glitch-custom-pose';
+type CustomPoseXs = { armL: number; armR: number; legL: number; legR: number };
+
+function loadCustomPoseXs(): CustomPoseXs | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CUSTOM_POSE_KEY) || 'null') as Partial<CustomPoseXs> | null;
+    if (!raw || typeof raw !== 'object') return null;
+    const armL = Number(raw.armL),
+      armR = Number(raw.armR),
+      legL = Number(raw.legL),
+      legR = Number(raw.legR);
+    if (![armL, armR, legL, legR].every(Number.isFinite)) return null;
+    return { armL, armR, legL, legR };
+  } catch {
+    return null;
+  }
+}
+
+function saveCustomPoseXs(xs: CustomPoseXs) {
+  localStorage.setItem(CUSTOM_POSE_KEY, JSON.stringify(xs));
+}
+
+function customPose(): Pose | null {
+  const xs = loadCustomPoseXs();
+  return xs ? poseFromCustomXs(xs.armL, xs.armR, xs.legL, xs.legR) : null;
+}
+
 let phoneApp: string | null = null,
   socialTab = 'all',
   chatTab = 'here',
   dmWith: string | null = null,
-  profOf: string | null = null;
+  profOf: string | null = null,
+  poseEdit = false,
+  poseDraft: CustomPoseXs = { armL: 0, armR: 0, legL: 0, legR: 0 };
 const hash = (s: string) => {
   let h = 0;
   for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -139,13 +237,13 @@ function npcReply(name: string, text: string) {
   setTimeout(() => dmIn(name, pick(r), false), rnd(1500, 3500));
 }
 function badge() {
-  const b = $('#phoneBtn') as HTMLElement;
-  b.dataset.n = unread ? String(unread) : '';
+  /* Unread shows on the Chat module; no HUD phone button. */
 }
 export function travel(id: string) {
   const l = LOCS.find(x => x.id === id);
   if (!l) return;
   if (S.bal < GAS) return banner('Not enough GD to travel', 'bad');
+  if (currentInterior) clearInterior();
   burn(GAS);
   logTx('out', GAS, 'Fast travel');
   player.position.set(l.sp[0], 0, l.sp[1]);
@@ -158,11 +256,22 @@ export function travel(id: string) {
   save();
 }
 
+function refreshMyHomeQuotes() {
+  if (phoneApp !== 'myhome') return;
+  void loadMerchantQuotes()
+    .then(() => {
+      if (phoneOpen && phoneApp === 'myhome') phoneRefresh();
+    })
+    .catch(() => {});
+}
+
 export function openPhone(app?: string) {
   if (introOpen() || (modalOpen() && !phoneOpen)) return;
   if (phoneOpen) {
     phoneApp = app || null;
-    return renderPhone();
+    renderPhone();
+    if (phoneApp === 'myhome') refreshMyHomeQuotes();
+    return;
   }
   phoneOpen = true;
   phoneApp = app || null;
@@ -170,19 +279,27 @@ export function openPhone(app?: string) {
   dmWith = null;
   openModal('', () => {
     phoneOpen = false;
-    sheet.classList.remove('phonesheet');
+    poseEdit = false;
+    sheet.classList.remove('phonesheet', 'assist-sheet');
     sheet.onclick = null;
     sheet.onkeydown = null;
+    sheet.oninput = null;
+    updateAssistHint();
   });
-  sheet.classList.add('phonesheet');
+  sheet.classList.add('phonesheet', 'assist-sheet');
   renderPhone();
+  if (phoneApp === 'myhome') refreshMyHomeQuotes();
 }
 export function phoneRefresh() {
   if (!phoneOpen) return;
+  const scr = sheet.querySelector('.ph-scr') as HTMLElement | null;
+  const top = scr?.scrollTop ?? 0;
   const i = $('#pin') as HTMLInputElement | null,
     v = i && i.value,
     f = i && document.activeElement === i;
   renderPhone();
+  const scr2 = sheet.querySelector('.ph-scr') as HTMLElement | null;
+  if (scr2 && top) scr2.scrollTop = top;
   if (i) {
     const n = $('#pin') as HTMLInputElement | null;
     if (n && v != null) {
@@ -198,8 +315,220 @@ const ago2 = (t: number) => {
   const s = t > 1e12 ? Math.floor((Date.now() - t) / 1000) : Math.max(0, Math.floor(serverTick / 2 - t));
   return s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm' : Math.floor(s / 3600) + 'h';
 };
+const clampMap = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 const hdr = (title: string, back?: string) =>
   `<div class="ph-h">${back ? `<button data-a="${back}">‹</button>` : ''}<b>${title}</b></div>`;
+
+const BEGINNER_HINTS = [
+  'Neon Diner east — walk in and Use the counter to eat.',
+  'Vault Lab — Use a terminal to crack vaults for shards.',
+  'Gear Forge — spend shards to mint wearable gear.',
+  'My Home — buy a studio, then sleep to restore energy.',
+  'Step to a lit door, press Use to enter. E also works.',
+  'Hold-drag to look. Click me anytime for modules.',
+];
+const MID_HINTS = [
+  'Skill pay caps daily — after the meter fills you only get 20%.',
+  'Market module lists furniture or gear for GD (2% sale fee).',
+  'Forge mint prices follow the smith quote — check GD before minting.',
+  'Home maintenance is due each period or the bed locks.',
+  'Trade / Security / Community XP shapes your role.',
+];
+const HIGH_HINTS = [
+  'Tired or hungry cuts skill pay by 40% — eat and rest first.',
+  'Listing fee is 2% — price above the floor for a clean sale.',
+  'Daily skill cap is based on your levels; bank wins as settling.',
+  'Wanted status overrides your role until it expires.',
+];
+
+function skillTier(): 'beginner' | 'mid' | 'high' {
+  const mx = Math.max(L('trade'), L('sec'), L('comm'));
+  if (mx < 2) return 'beginner';
+  if (mx <= 3) return 'mid';
+  return 'high';
+}
+
+function contextHint(): string | null {
+  const p = player.position;
+  const near = (x: number, z: number, r: number) => Math.hypot(p.x - x, p.z - z) < r;
+  if (near(34, 24, 14)) return 'Diner: Use the counter to buy food and refill hunger.';
+  if (near(20, -4, 14)) return 'Vault Lab: Use a terminal — locks pay GD and shards.';
+  if (near(0, -10, 12)) return 'Forge: mint gear NFTs when you have shards + GD.';
+  if (near(0, 6, 12)) return 'Plaza: check the Exchange screens, then open Map for places.';
+  if (S.home.owned && near(22, 32, 14)) return 'Home: Use the bed to sleep. Pay maintenance if overdue.';
+  return null;
+}
+
+const HINTS_KEY = 'glitch-assist-hints';
+
+export function assistHintsEnabled(): boolean {
+  try {
+    return localStorage.getItem(HINTS_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+export function setAssistHintsEnabled(on: boolean) {
+  try {
+    localStorage.setItem(HINTS_KEY, on ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+  updateAssistHint();
+}
+
+export function currentAssistHint(): string {
+  const ctx = contextHint();
+  if (ctx && skillTier() === 'beginner') return ctx;
+  const pool = skillTier() === 'beginner' ? BEGINNER_HINTS : skillTier() === 'mid' ? MID_HINTS : HIGH_HINTS;
+  const i = Math.floor(Date.now() / 12000) % pool.length;
+  return pool[i]!;
+}
+
+export function updateAssistHint() {
+  const el = $('#assistHint') as HTMLElement | null;
+  const text = $('#assistHintText') as HTMLElement | null;
+  if (!el) return;
+  const coach = $('#coach') as HTMLElement | null;
+  if (!assistHintsEnabled() || phoneOpen || introOpen() || (coach && !coach.hidden)) {
+    el.hidden = true;
+    return;
+  }
+  const pos = assistantScreenPos();
+  if (!pos) {
+    el.hidden = true;
+    return;
+  }
+  const app = $('#app') as HTMLElement;
+  const ar = app.getBoundingClientRect();
+  el.hidden = false;
+  if (text) text.textContent = currentAssistHint();
+  // Sit above-right of the bot (away from the player). Flip to left only if it would leave the screen.
+  const localX = pos.x - ar.left;
+  const localY = pos.y - ar.top;
+  const flipLeft = localX > ar.width * 0.62;
+  el.dataset.side = flipLeft ? 'left' : 'right';
+  el.style.left = `${Math.round(localX)}px`;
+  el.style.top = `${Math.round(localY - 10)}px`;
+}
+
+const dayClockSpan = (hours: number) => {
+  const h = Math.max(0, Math.floor(hours));
+  return `${String(h).padStart(2, '0')}:00`;
+};
+
+function dayMove(open: number, price: number): { text: string; cls: 'up' | 'dn' | 'flat' } {
+  if (!(open > 0)) return { text: '—', cls: 'flat' };
+  const p = ((price - open) / open) * 100;
+  if (Math.abs(p) < 0.05) return { text: '0%', cls: 'flat' };
+  const digits = Math.abs(p) >= 10 ? 0 : 1;
+  return { text: `${p > 0 ? '+' : ''}${p.toFixed(digits)}%`, cls: p > 0 ? 'up' : 'dn' };
+}
+
+function daySentence(d: CityDayBoard): string {
+  if (d.phase === 'loading') return 'Building a seeded 24-hour city.';
+  if (d.phase === 'error') return d.error || 'Could not simulate.';
+  const rows = d.shops.flatMap(s => s.rows);
+  let best: CityDayRow | null = null;
+  let bestAbs = 0;
+  for (const row of rows) {
+    const abs = row.open > 0 ? Math.abs(row.high - row.open) / row.open : 0;
+    if (abs > bestAbs) {
+      bestAbs = abs;
+      best = row;
+    }
+  }
+  const soFar = d.phase === 'done' ? '' : ' so far';
+  const head =
+    d.pumps + d.rugs === 0
+      ? `No pumps or rugs${soFar}`
+      : `${fmtN(d.pumps + d.rugs)} headlines${soFar} (${d.pumps} pump${d.pumps === 1 ? '' : 's'}, ${d.rugs} rug${d.rugs === 1 ? '' : 's'})`;
+  if (!best || bestAbs < 0.01) return `${head}. Nothing moved more than 1%.`;
+  return `${head}. Biggest spike: ${best.title} ${dayMove(best.open, best.high).text}.`;
+}
+
+function citySimBtn(): string {
+  if (cityDay.phase === 'loading') return 'Fetching the day…';
+  if (citySimPlaying) return 'Playing the day…';
+  if (cityDay.phase === 'done') return 'Play this day again';
+  return 'Simulate 1 day';
+}
+
+function cityDayHtml(): string {
+  const d = cityDay;
+  const end = dayClockSpan(d.hours);
+  const shown = d.headlines.slice(0, d.shownHeadlines);
+  const recent = shown.slice(-3).reverse();
+  const movedRows = d.shops.flatMap(shop =>
+    shop.rows
+      .filter(row => row.open > 0 && Math.abs(row.high - row.open) / row.open >= 0.01)
+      .map(row => ({ shop: shop.name, row })),
+  );
+  const quiet = d.shops.reduce((n, shop) => n + shop.rows.length, 0) - movedRows.length;
+  const byShop = new Map<string, typeof movedRows>();
+  for (const item of movedRows) {
+    const list = byShop.get(item.shop) ?? [];
+    list.push(item);
+    byShop.set(item.shop, list);
+  }
+  const shops = [...byShop.entries()]
+    .map(([name, items]) => {
+      items.sort((a, b) => {
+        const aa = Math.abs(a.row.high - a.row.open) / a.row.open;
+        const bb = Math.abs(b.row.high - b.row.open) / b.row.open;
+        return bb - aa || b.row.sales - a.row.sales;
+      });
+      const rows = items
+        .map(({ row }) => {
+          const mv = dayMove(row.open, row.high);
+          const sold = row.sales === 1 ? '1 sale' : `${row.sales} sales`;
+          const closed =
+            d.phase === 'done' && row.open > 0 && Math.abs(row.close - row.open) / row.open >= 0.01
+              ? `<small>Closed ${fmtN(row.close)} ${dayMove(row.open, row.close).text}</small>`
+              : '';
+          return `<div class="day-row"><div class="day-name"><b>${esc(row.title)}</b><small>${sold}</small>${closed}</div><div class="day-end"><span class="px">${fmtN(row.high)} peak</span><span class="day-chip ${mv.cls}">${mv.text}</span></div></div>`;
+        })
+        .join('');
+      return `<section class="day-shop"><b>${esc(name)}</b>${rows}</section>`;
+    })
+    .join('');
+  const quietLine =
+    movedRows.length === 0
+      ? `<p class="hint">${d.phase === 'loading' ? 'Waiting for the first sales.' : 'No price moved more than 1% from the open.'}</p>`
+      : quiet > 0
+        ? `<p class="hint">${quiet} other good${quiet === 1 ? '' : 's'} stayed within 1% of the open.</p>`
+        : '';
+  const headlines =
+    recent.length === 0
+      ? `<p class="hint">${d.phase === 'done' ? 'No pumps or rugs this day.' : 'No headlines yet.'}</p>`
+      : recent
+          .map(h => {
+            const sec = Math.max(0, Math.floor(h.t));
+            const clock = `${String(Math.floor(sec / 3600)).padStart(2, '0')}:${String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}`;
+            const kind = h.kind === 'pump' ? 'pump' : 'rug';
+            const label = h.kind === 'pump' ? 'Pump' : 'Rug';
+            return `<div class="day-h"><time>${clock}</time><span class="pill ${kind}">${label}</span><span>${esc(h.title)}</span></div>`;
+          })
+          .join('') +
+        (shown.length > recent.length ? `<p class="hint">Latest ${recent.length} of ${fmtN(shown.length)}.</p>` : '');
+  const title = d.phase === 'done' ? 'Day recap' : d.phase === 'error' ? 'Day sim' : 'Today in the city';
+  const sub =
+    d.phase === 'done'
+      ? 'Percents are the day’s peak, not the close. Shops restock, so most prices finish near the open. Playback only.'
+      : 'Peaks versus the morning open. Playback only — your balance stays real.';
+  return `<article class="day" aria-live="polite">
+    <div class="day-top"><b>${title}</b><span class="day-clock">${esc(d.clock)} / ${end}</span></div>
+    <div class="day-meter" aria-hidden="true"><i style="width:${Math.round(d.progress * 100)}%"></i></div>
+    <p class="day-line">${esc(daySentence(d))}</p>
+    <div class="day-stats"><span><b>${fmtN(d.sales)}</b><small>Sales</small></span><span><b class="pos">${d.pumps}</b><small>Pumps</small></span><span><b class="neg">${d.rugs}</b><small>Rugs</small></span></div>
+    ${d.latest ? `<p class="hint">${esc(d.latest)}</p>` : ''}
+    ${shops}
+    ${quietLine}
+    <section class="day-shop"><b>Headlines</b>${headlines}</section>
+    <p class="hint">${sub}</p>
+  </article>`;
+}
 
 function renderPhone() {
   const t = new Date().toTimeString().slice(0, 5),
@@ -208,7 +537,84 @@ function renderPhone() {
   if (!phoneApp) {
     const ap = (id: string, nm: string, col: string, ch: string, soon?: number) =>
       `<button class="ap ${soon ? 'soon' : ''}" ${soon ? 'disabled' : `data-a="app" data-v="${id}"`}><i style="background:${col}">${ch}${id === 'chat' && unread ? `<u>${unread}</u>` : ''}</i><span>${nm}</span></button>`;
-    body = `<div class="ph-h"><b>Apps</b></div><div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('map', 'Map', '#ffb12e', 'M')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$', 1)}</div><p class="hint" style="text-align:center">Market (buy and sell with other players) arrives in the next update.</p>`;
+    body =
+      `<div class="ph-h"><b>Modules</b></div>` +
+      (assistHintsEnabled()
+        ? `<p class="assist-tip">${esc(currentAssistHint())}</p>`
+        : `<p class="assist-tip muted">Hints hidden. <button type="button" class="lnk" data-a="hintsOn">Show hints</button></p>`) +
+      `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('map', 'Map', '#ffb12e', 'M')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('pose', 'Pose', '#ff7a59', '◇')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}</div>`;
+  } else if (phoneApp === 'pose') {
+    if (poseEdit) {
+      const row = (id: keyof CustomPoseXs, label: string) => {
+        const v = poseDraft[id];
+        const deg = Math.round((v * 180) / Math.PI);
+        return `<label class="pose-row"><span>${label} <small>${deg}°</small></span><input type="range" data-pose-limb="${id}" min="-2.4" max="2.4" step="0.05" value="${v}"></label>`;
+      };
+      body =
+        hdr('Make a pose', 'poseList') +
+        `<p class="hint">Drag limbs. Save keeps one custom pose on this browser.</p>` +
+        row('armL', 'Arm left') +
+        row('armR', 'Arm right') +
+        row('legL', 'Leg left') +
+        row('legR', 'Leg right') +
+        `<div class="acts"><button class="pri" data-a="poseSave">Save</button></div>`;
+    } else {
+      const custom = loadCustomPoseXs();
+      const rows = POSE_PRESETS.map(p => {
+        const on = heldPoseId === p.id ? ' on' : '';
+        return `<button class="row pose-pick${on}" data-a="posePick" data-v="${esc(p.id)}"><span>${esc(p.name)}</span></button>`;
+      }).join('');
+      body =
+        hdr('Pose', 'home') +
+        `<p class="hint">Holds until you walk. Anywhere in the city.</p>` +
+        (custom
+          ? `<div class="acts"><button class="pri" data-a="posePick" data-v="custom">Use my pose</button></div>`
+          : '') +
+        rows +
+        (custom
+          ? `<button class="row pose-pick${heldPoseId === 'custom' ? ' on' : ''}" data-a="posePick" data-v="custom"><span>Custom</span></button>`
+          : '') +
+        `<div class="acts"><button data-a="poseEdit">Make a pose</button>${heldPoseId ? '<button data-a="poseClear">Clear</button>' : ''}</div>`;
+    }
+  } else if (phoneApp === 'shop') {
+    void loadMarket();
+    void refreshMe().catch(() => {});
+    const owned = Object.entries(me?.items ?? {}).filter(
+      ([id, n]) => isPlayerListableToken(id) && BigInt(n) > 0n,
+    );
+    const mine = marketListings.filter(l => l.sellerName === S.name);
+    const others = marketListings.filter(l => l.sellerName !== S.name);
+    const opt =
+      owned
+        .map(
+          ([id]) =>
+            `<option value="${esc(id)}">${esc(listableTokenTitle(id))}</option>`,
+        )
+        .join('') || '<option value="">No listable items</option>';
+    body =
+      hdr('Market', 'home') +
+      `<p class="hint">List furniture or gear for ${MARKET_LIST_MIN_GD}–${fmtN(MARKET_LIST_MAX_GD)} GD. Fee 2% on sale.</p>` +
+      (marketErr ? `<p class="hint" style="color:var(--pink)">${esc(marketErr)}</p>` : '') +
+      `<div class="cmp"><select id="mktToken">${opt}</select></div>` +
+      `<div class="cmp"><input id="mktPrice" type="number" min="${MARKET_LIST_MIN_GD}" max="${MARKET_LIST_MAX_GD}" value="500" placeholder="Price GD"><button class="pri" data-a="mktlist" ${marketBusy || !owned.length ? 'disabled' : ''}>List</button></div>` +
+      `<h3>Open listings</h3>` +
+      (others.length
+        ? others
+            .map(
+              l =>
+                `<div class="row"><span><b>${esc(l.title)}</b><small>${esc(l.sellerName)} · ${esc(fmtN(Number(l.price)))} GD</small></span><button class="pri" data-a="mktbuy" data-v="${esc(l.id)}" ${marketBusy ? 'disabled' : ''}>Buy</button></div>`,
+            )
+            .join('')
+        : '<p class="hint">No open listings yet.</p>') +
+      (mine.length
+        ? `<h3>Your listings</h3>` +
+          mine
+            .map(
+              l =>
+                `<div class="row"><span><b>${esc(l.title)}</b><small>${esc(fmtN(Number(l.price)))} GD</small></span><button data-a="mktcancel" data-v="${esc(l.id)}" ${marketBusy ? 'disabled' : ''}>Cancel</button></div>`,
+            )
+            .join('')
+        : '');
   } else if (phoneApp === 'social') {
     const list = feed.filter(p => socialTab === 'all' || isFol(p.who) || p.who === S.name).slice(0, 30);
     body =
@@ -262,28 +668,49 @@ function renderPhone() {
           })
           .join('') || '<p class="hint">No messages yet. Tap a name in Here to start one.</p>';
   } else if (phoneApp === 'map') {
-    const X = (x: number) => 150 + x * 3,
-      Z = (z: number) => 110 + z * 2.3;
+    // Plaza-focused map (home exterior is on the rim; far-plot interiors are not drawn).
+    const X = (x: number) => 150 + x * 2.6,
+      Z = (z: number) => 118 + z * 2.2;
+    const pin = (cx: number, cy: number, here: boolean, count: number, id: string, name: string) => {
+      const fill = here ? '#2ee6ff' : '#7a8cff';
+      const tip = cy + 14;
+      return `<g data-a="go" data-v="${id}" style="cursor:pointer">
+        <path d="M${cx} ${cy - 10} C${cx + 8} ${cy - 10} ${cx + 8} ${cy + 2} ${cx} ${tip} C${cx - 8} ${cy + 2} ${cx - 8} ${cy - 10} ${cx} ${cy - 10}Z" fill="${fill}" stroke="${here ? '#e9eefc' : '#26324f'}" stroke-width="1.5"/>
+        <circle cx="${cx}" cy="${cy - 4}" r="3.2" fill="#04060c"/>
+        <text x="${cx}" y="${cy - 18}" text-anchor="middle" fill="#e9eefc" font-size="8" font-family="Chakra Petch,sans-serif">${esc(name)}</text>
+        <text x="${cx + 10}" y="${cy - 2}" fill="#b8ff3d" font-size="8" font-family="sans-serif">${count}</text>
+      </g>`;
+    };
+    const mapLocs = LOCS;
+    const px = clampMap(X(player.position.x), 12, 288),
+      pz = clampMap(Z(player.position.z), 12, 208);
     body =
       hdr('Map', 'home') +
-      `<svg viewBox="0 0 300 220" class="map"><rect width="300" height="220" fill="#04060c"/>${LOCS.filter(l => l.id !== 'home')
-        .map(
-          l =>
-            `<g data-a="go" data-v="${l.id}" style="cursor:pointer"><circle cx="${X(l.x)}" cy="${Z(l.z)}" r="${l.r * 1.4}" fill="${l.id === L0.id ? 'rgba(46,230,255,.18)' : 'rgba(255,255,255,.05)'}" stroke="${l.id === L0.id ? '#2ee6ff' : '#26324f'}"/><text x="${X(l.x)}" y="${Z(l.z) + 3}" text-anchor="middle" fill="#e9eefc" font-size="9" font-family="sans-serif">${l.name}</text></g>`,
-        )
-        .join('')}<circle cx="${X(player.position.x)}" cy="${Z(player.position.z)}" r="4" fill="#b8ff3d"/></svg>
+      `<svg viewBox="0 0 300 220" class="map"><rect width="300" height="220" fill="#04060c"/>
+      <circle cx="150" cy="130" r="42" fill="none" stroke="#1a2440" stroke-width="1"/>
+      ${mapLocs
+        .map(l => {
+          const n = peopleAt(l.id).length + (l.id === L0.id ? 1 : 0);
+          return pin(X(l.x), Z(l.z), l.id === L0.id, n, l.id, l.name.split(' ')[0]!);
+        })
+        .join('')}
+      <circle cx="${px}" cy="${pz}" r="5" fill="#b8ff3d" stroke="#041008" stroke-width="2"/>
+      <text x="${px}" y="${pz - 9}" text-anchor="middle" fill="#b8ff3d" font-size="7" font-family="sans-serif">you</text>
+      </svg>
     <p class="hint">Walking is free. Fast travel costs ${GAS} GD.</p>` +
-      LOCS.filter(l => l.id !== 'home')
-        .map(
-          l =>
-            `<div class="loc"><div><b>${l.name}</b> ${l.id === L0.id ? '<span class="tag">You are here</span>' : ''}<div class="hint">${l.note} · ${peopleAt(l.id).length + (l.id === L0.id ? 1 : 0)} people</div></div>${l.id === L0.id ? '' : `<button data-a="go" data-v="${l.id}">Go</button>`}</div>`,
-        )
+      mapLocs
+        .map(l => {
+          const n = peopleAt(l.id).length + (l.id === L0.id ? 1 : 0);
+          return `<div class="loc"><div><b>${l.name}</b> ${l.id === L0.id ? '<span class="tag">You are here</span>' : ''}<div class="hint">${l.note} · ${n} people</div></div>${l.id === L0.id ? '' : `<button data-a="go" data-v="${l.id}">Go</button>`}</div>`;
+        })
         .join('');
   } else if (phoneApp === 'wallet') {
     body =
       hdr('Balance', 'home') +
       `<div class="res win" style="padding:6px 0"><small>Balance</small><b>${fmtN(hudAvailable ?? S.bal)} GD</b></div><div class="pstats"><span><b>${S.shards}</b><small>Shards</small></span><span><b>${S.nfts.length}</b><small>NFTs</small></span></div><div class="hint">Daily skill pay: ${fmt(S.payUsed)} of ${fmt(payCap())} used. After that it pays only 20%.${weak() ? ' <b class="neg">Tired or hungry: skill pay is cut by 40%.</b>' : ''}</div><div class="meter"><i style="width:${Math.min(100, (S.payUsed / payCap()) * 100)}%"></i></div>
-    <small style="display:block;margin-top:10px">Activity (every move is recorded, like a block explorer)</small>` +
+    <div class="acts" style="margin-top:10px"><button data-a="citysim" ${citySimPlaying ? 'disabled' : ''}>${citySimBtn()}</button></div>
+    ${cityDay.phase === 'idle' ? '<p class="hint">One minute of playback for 24 hours. Your balance and live shop prices stay real.</p>' : cityDayHtml()}` +
+      `<small style="display:block;margin-top:10px">Activity (every move is recorded, like a block explorer)</small>` +
       (txlog
         .slice(0, 12)
         .map(
@@ -298,11 +725,18 @@ function renderPhone() {
     phoneApp = 'prof';
     return renderPhone();
   } else if (phoneApp === 'set') {
+    if (!chainProof && !chainErr) loadChainProof();
     body =
       hdr('Settings', 'home') +
-      `<small>Display name</small><div class="cmp"><input id="pin" type="text" maxlength="14" value="${esc(S.name)}"><button class="pri" data-a="name">Save</button></div><div class="acts"><button data-a="style">Change my look</button></div><details class="adv"${advancedOpen ? ' open' : ''}><summary>Advanced</summary><h3>Onchain proof</h3>${proofHtml()}</details><div class="acts"><button class="dn" data-a="reset">Reset progress</button></div>`;
+      (chainProof?.chainMode === 'mock'
+        ? `<p class="tag mock-chain" style="margin:0 0 8px">Mock chain (no testnet)</p>`
+        : '') +
+      `<small>Display name</small><div class="cmp"><input id="pin" type="text" maxlength="14" value="${esc(S.name)}"><button class="pri" data-a="name">Save</button></div>` +
+      `<div class="acts"><button data-a="style">Change my look</button>` +
+      `<button data-a="${assistHintsEnabled() ? 'hintsOff' : 'hintsOn'}">${assistHintsEnabled() ? 'Hide floating hints' : 'Show floating hints'}</button></div>` +
+      `<details class="adv"${advancedOpen ? ' open' : ''}><summary>Advanced</summary><h3>Onchain proof</h3>${proofHtml()}</details><div class="acts"><button class="dn" data-a="reset">Reset progress</button></div>`;
   }
-  sheet.innerHTML = `<div class="ph-bar"><span>${t}</span><span>${esc(L0.name)}</span><span>5G ▮▮▮</span></div><div class="ph-scr">${body}</div><div class="ph-nav"><button data-a="home" aria-label="Home"></button></div>`;
+  sheet.innerHTML = `<div class="ph-bar"><span>ASSIST · ONLINE</span><span>${esc(L0.name)}</span><span>${t}</span></div><div class="ph-scr">${body}</div><div class="ph-nav"><button data-a="home" aria-label="Modules home"></button></div>`;
   sheet.onclick = e => {
     const b = (e.target as HTMLElement).closest('[data-a]') as HTMLElement | null;
     if (!b || (b as HTMLButtonElement).disabled) return;
@@ -312,12 +746,46 @@ function renderPhone() {
     if (a === 'home') {
       phoneApp = null;
       dmWith = null;
+      poseEdit = false;
     } else if (a === 'app') {
       phoneApp = v!;
+      poseEdit = false;
       if (v === 'chat') {
         chatTab = 'here';
         dmWith = null;
       }
+      if (v === 'pose') {
+        const xs = loadCustomPoseXs();
+        poseDraft = xs ? { ...xs } : { armL: 0, armR: 0, legL: 0, legR: 0 };
+      }
+    } else if (a === 'hintsOn') {
+      setAssistHintsEnabled(true);
+    } else if (a === 'hintsOff') {
+      setAssistHintsEnabled(false);
+    } else if (a === 'poseList') {
+      poseEdit = false;
+      phoneApp = 'pose';
+    } else if (a === 'poseEdit') {
+      const xs = loadCustomPoseXs();
+      poseDraft = xs ? { ...xs } : { armL: 0, armR: 0, legL: 0, legR: 0 };
+      setHeldPose(poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR), 'custom');
+      poseEdit = true;
+      phoneApp = 'pose';
+    } else if (a === 'posePick') {
+      if (v === 'custom') {
+        const pose = customPose();
+        if (pose) setHeldPose(pose, 'custom');
+      } else {
+        const preset = POSE_PRESETS.find(p => p.id === v);
+        if (preset) setHeldPose(preset.pose, preset.id);
+      }
+    } else if (a === 'poseClear') {
+      setHeldPose(null, null);
+    } else if (a === 'poseSave') {
+      saveCustomPoseXs({ ...poseDraft });
+      setHeldPose(poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR), 'custom');
+      poseEdit = false;
+      banner('Pose saved', 'good');
     } else if (a === 'social') phoneApp = 'social';
     else if (a === 'inbox') {
       dmWith = null;
@@ -354,23 +822,13 @@ function renderPhone() {
       const x = inp!.value.trim();
       if (!x) return;
       chatIn(here().id, S.name, x, true);
-      const pp = peopleAt(here().id);
-      if (pp.length && Math.random() < .6) {
-        const n = pick(pp),
-          nm = (n.userData.npc as { name: string }).name;
-        setTimeout(() => {
-          const r = pick(REPLY.find(z => z[0].test(x))![1]);
-          chatIn(locAt(n.position.x, n.position.z).id, nm, r);
-          say(n, r.slice(0, 24));
-        }, rnd(1500, 3500));
-      }
     } else if (a === 'sendDM') {
       const x = inp!.value.trim();
       if (!x) return;
       dmIn(dmWith!, x, true);
       npcReply(dmWith!, x);
     } else if (a === 'go') return travel(v!);
-    else if (['buyhome', 'paymaintenance', 'furn', 'gohome'].includes(a)) {
+    else if (['buyhome', 'paymaintenance', 'furn', 'gohome', 'homepaint'].includes(a)) {
       if (homeAct(a, v)) return;
     } else if (a === 'copyacct') {
       const id = chainProof?.accountId;
@@ -380,6 +838,80 @@ function renderPhone() {
         () => banner('Could not copy', 'bad'),
       );
       return;
+    } else if (a === 'mktlist') {
+      if (marketBusy) return;
+      const tokenEl = $('#mktToken') as HTMLSelectElement | null;
+      const priceEl = $('#mktPrice') as HTMLInputElement | null;
+      const tokenId = tokenEl?.value?.trim() ?? '';
+      const price = Number(priceEl?.value ?? 0);
+      if (!tokenId) {
+        banner('Pick an item to list', 'bad');
+        return;
+      }
+      marketBusy = true;
+      void fetch('/market/list', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tokenId, price }),
+      })
+        .then(async res => {
+          const data = (await res.json()) as { error?: string };
+          if (!res.ok) throw new Error(data.error || 'List failed');
+          banner('Listed', 'good');
+          await loadMarket();
+          await refreshMe();
+        })
+        .catch(err => banner(err instanceof Error ? err.message : 'List failed', 'bad'))
+        .finally(() => {
+          marketBusy = false;
+          phoneRefresh();
+        });
+      return;
+    } else if (a === 'mktbuy') {
+      if (marketBusy || !v) return;
+      marketBusy = true;
+      void fetch('/market/buy', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ listingId: v }),
+      })
+        .then(async res => {
+          const data = (await res.json()) as { error?: string; settling?: boolean };
+          if (!res.ok) throw new Error(data.error || 'Buy failed');
+          banner(data.settling ? 'Settling…' : 'Bought', 'good');
+          await loadMarket();
+          await refreshMe();
+          updateHud();
+        })
+        .catch(err => banner(err instanceof Error ? err.message : 'Buy failed', 'bad'))
+        .finally(() => {
+          marketBusy = false;
+          phoneRefresh();
+        });
+      return;
+    } else if (a === 'mktcancel') {
+      if (marketBusy || !v) return;
+      marketBusy = true;
+      void fetch('/market/cancel', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ listingId: v }),
+      })
+        .then(async res => {
+          const data = (await res.json()) as { error?: string };
+          if (!res.ok) throw new Error(data.error || 'Cancel failed');
+          banner('Listing cancelled', 'good');
+          await loadMarket();
+        })
+        .catch(err => banner(err instanceof Error ? err.message : 'Cancel failed', 'bad'))
+        .finally(() => {
+          marketBusy = false;
+          phoneRefresh();
+        });
+      return;
     } else if (a === 'name') {
       const x = inp!.value.trim().slice(0, 14);
       if (x) {
@@ -387,6 +919,12 @@ function renderPhone() {
         save();
         updateHud();
       }
+    } else if (a === 'citysim') {
+      if (citySimPlaying) return;
+      void playCityDaySim(() => {
+        if (phoneOpen && phoneApp === 'wallet') phoneRefresh();
+      }).catch(err => banner(err instanceof Error ? err.message : 'Could not simulate', 'bad'));
+      return;
     } else if (a === 'style') {
       closeModal();
       return openCustomizer();
@@ -399,6 +937,7 @@ function renderPhone() {
       return location.reload();
     }
     renderPhone();
+    if ((a === 'app' && v === 'myhome') || a === 'buyhome' || a === 'furn') refreshMyHomeQuotes();
     const n = $('#pin') as HTMLInputElement | null;
     if (n && (a === 'post' || a === 'sendLoc' || a === 'sendDM')) {
       n.value = '';
@@ -416,9 +955,28 @@ function renderPhone() {
     advancedOpen = adv.open;
     if (advancedOpen && Date.now() - chainAt > 5000) loadChainProof();
   });
+  sheet.oninput = e => {
+    const t = e.target as HTMLInputElement | null;
+    if (!t || t.type !== 'range' || !t.dataset.poseLimb) return;
+    const limb = t.dataset.poseLimb as keyof CustomPoseXs;
+    const val = Number(t.value);
+    if (!Number.isFinite(val)) return;
+    poseDraft[limb] = val;
+    setHeldPose(poseFromCustomXs(poseDraft.armL, poseDraft.armR, poseDraft.legL, poseDraft.legR), 'custom');
+    const label = t.closest('label')?.querySelector('small');
+    if (label) label.textContent = `${Math.round((val * 180) / Math.PI)}°`;
+  };
 }
 
-($('#phoneBtn') as HTMLButtonElement).onclick = () => (phoneOpen ? closeModal() : openPhone());
+setAssistantClickHandler(() => {
+  if (phoneOpen) closeModal();
+  else openPhone();
+});
+($('#assistHintHide') as HTMLButtonElement | null)?.addEventListener('click', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  setAssistHintsEnabled(false);
+});
 addEventListener('keydown', e => {
   if (e.key.toLowerCase() === 'p' && !((e.target as HTMLElement)?.tagName === 'INPUT')) {
     if (phoneOpen) closeModal();
@@ -426,34 +984,17 @@ addEventListener('keydown', e => {
   }
 });
 
-let folT = rnd(20, 35),
-  dmT = rnd(60, 90),
-  phT = 0;
+let phT = 0;
 const phoneUpdateState = { last: '' as string };
 export function phoneUpdate(dt: number) {
-  folT -= dt;
-  if (folT <= 0) {
-    folT = rnd(25, 45);
-    const n = pick(NPC_NAMES);
-    S.followers++;
-    post('sys', 'NEWS', `${n} followed ${S.name}.`);
-  }
-  dmT -= dt;
-  if (dmT <= 0) {
-    dmT = rnd(70, 110);
-    const n = pick(NPC_NAMES);
-    dmIn(n, pick(['gm! saw your post', 'you trading today?', 'follow back?', 'wagwan, nice look btw']));
-  }
   phT += dt;
   if (phT > 20 && phoneOpen && !(document.activeElement as HTMLElement | null)?.matches?.('#pin')) {
     phT = 0;
     if (phoneApp === 'set' && advancedOpen && Date.now() - chainAt > 5000) loadChainProof();
     phoneRefresh();
   }
+  updateAssistHint();
   const l = here();
-  if (l.id !== phoneUpdateState.last) {
-    phoneUpdateState.last = l.id;
-    ($('#loc') as HTMLElement).textContent = l.name;
-  }
-  ($('#loc') as HTMLElement).textContent = `${l.name} · ${peopleAt(l.id).length + 1} here`;
+  if (l.id !== phoneUpdateState.last) phoneUpdateState.last = l.id;
+  ($('#loc') as HTMLElement).textContent = `${l.name} · 1 here`;
 }

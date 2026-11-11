@@ -1,5 +1,8 @@
 import {
+  bumpLeverage,
   faucetCredit,
+  LARGE_STAKE_GD,
+  LEVERAGE_LARGE_BUMP,
   payCapFor,
   TRADE_MAX_STAKE,
   TRADE_MIN_STAKE,
@@ -251,6 +254,9 @@ export async function openTrade(
   }
 
   nudgeCoin(sym, dir, stake);
+  if (stake >= LARGE_STAKE_GD) {
+    world.pressures.leverage = bumpLeverage(world.pressures.leverage, LEVERAGE_LARGE_BUMP);
+  }
   schedule(id, resolvesAt);
   const snap = await tradeSnapshot(player);
   if (!snap.bet) throw new AuthError('Bet was not recorded', 503);

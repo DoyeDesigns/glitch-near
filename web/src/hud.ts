@@ -1,8 +1,8 @@
 import { $, esc, fmt, fmtN } from './util';
 import { applyChainItems } from './itemsSync';
 import { lvl, payCap, roleName, S, SAVE, START, SK } from './state';
-import { board, cases, chg, feed, market, metrics, px, serverTick, TOK } from './market';
-import { buildFurn, adTex, exTex, keys, labTex, npcs, towTex } from './world';
+import { cases, chg, feed, market, metrics, px, serverTick, TOK } from './market';
+import { buildFurn, adTex, exTex, keys, labTex, releaseLookLock, towTex } from './world';
 import { refreshMe } from './session';
 
 /** Last `available` from GET /me. HUD balance uses this when set. */
@@ -43,6 +43,32 @@ export const setSideTab = (t: string | null) => {
   sideTab = t;
 };
 
+type LbRow = { rank: number; name: string; balance: string };
+let lbRows: LbRow[] = [];
+let lbFetchAt = 0;
+let lbFetching = false;
+const LB_POLL_MS = 10_000;
+
+function ensureLeaderboardPoll() {
+  const now = Date.now();
+  if (lbFetching || (lbFetchAt > 0 && now - lbFetchAt < LB_POLL_MS)) return;
+  lbFetching = true;
+  fetch('/leaderboard', { credentials: 'include' })
+    .then(async res => {
+      if (!res.ok) return;
+      const data = (await res.json()) as { players?: LbRow[] };
+      if (Array.isArray(data.players)) {
+        lbRows = data.players;
+        lbFetchAt = Date.now();
+        if (sideTab === 'rank') renderSide();
+      }
+    })
+    .catch(() => {})
+    .finally(() => {
+      lbFetching = false;
+    });
+}
+
 export const modalEl = $('#modal') as HTMLElement;
 export const sheet = $('#sheet') as HTMLElement;
 export let modalTimer: ReturnType<typeof setInterval> | 0 = 0;
@@ -56,6 +82,7 @@ export const introOpen = () => !($('#intro') as HTMLElement).hidden;
 
 export function openModal(html: string, onClose?: (() => void) | null) {
   closeModal();
+  releaseLookLock();
   delete sheet.dataset.lock;
   sheet.className = 'sheet';
   sheet.onclick = null;
@@ -116,13 +143,55 @@ export function resultCard(
   };
 }
 
-const ADS: [string, string, string][] = [
-  ['YOUR AD HERE', '2,000 - 50,000 NGN per slot', '#ff3d9a'],
-  ['MOONBOY ARMY', 'Join the $MOON raid. Not financial advice.', '#b8ff3d'],
-  ['AUDIT SZN', 'Vault Cracker: open locks, get paid', '#2ee6ff'],
-];
-let adI = 0,
-  adT = 0;
+export type BillboardSlot = {
+  slotId: number;
+  ad: {
+    projectName: string;
+    creativeUrl: string;
+  } | null;
+  price1Unit: string;
+};
+
+let billboardSlots: BillboardSlot[] = [];
+const creativeImages = new Map<string, HTMLImageElement>();
+let adsPoll: ReturnType<typeof setInterval> | 0 = 0;
+
+function yoctoToNearLabel(yocto: string): string {
+  try {
+    const n = BigInt(yocto || '0');
+    const whole = n / 10n ** 24n;
+    const frac = n % 10n ** 24n;
+    const fracStr = frac.toString().padStart(24, '0').replace(/0+$/, '').slice(0, 4);
+    return fracStr ? `${whole}.${fracStr} N` : `${whole} N`;
+  } catch {
+    return '— N';
+  }
+}
+
+function loadCreative(url: string): HTMLImageElement | null {
+  const proxy = `/ads/creative?url=${encodeURIComponent(url)}`;
+  let img = creativeImages.get(proxy);
+  if (img) return img.complete && img.naturalWidth > 0 ? img : null;
+  img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.src = proxy;
+  creativeImages.set(proxy, img);
+  return null;
+}
+
+export function startAdsPoll() {
+  if (adsPoll) return;
+  const tick = () => {
+    fetch('/ads')
+      .then(r => r.json())
+      .then((data: { slots?: BillboardSlot[] }) => {
+        if (Array.isArray(data.slots)) billboardSlots = data.slots;
+      })
+      .catch(() => {});
+  };
+  tick();
+  adsPoll = setInterval(tick, 15_000);
+}
 const ago = (t: number) => {
   // Logical sim time from server is in seconds; wall posts use Date.now() ms.
   const age = t > 1e12 ? Math.floor((Date.now() - t) / 1000) : Math.max(0, Math.floor(serverTick / 2 - t));
@@ -179,23 +248,41 @@ export function drawScreens() {
       x.fillText(p.text.slice(0, 40), 14, 100 + i * 54);
     });
   });
-  adT++;
-  if (adT % 12 === 0) adI++;
   adTex.forEach((a, i) => {
-    const ad = ADS[(adI + i) % ADS.length]!;
+    const slot =
+      billboardSlots.length > 0
+        ? billboardSlots[i % billboardSlots.length]!
+        : { slotId: i, ad: null, price1Unit: '0' };
     a.redraw((x, w, h) => {
       x.fillStyle = '#080a16';
       x.fillRect(0, 0, w, h);
-      x.strokeStyle = ad[2];
+      x.strokeStyle = '#ff3d9a';
       x.lineWidth = 6;
       x.strokeRect(6, 6, w - 12, h - 12);
       x.textAlign = 'center';
-      x.fillStyle = ad[2];
-      x.font = '700 44px "Chakra Petch",sans-serif';
-      x.fillText(ad[0], w / 2, 110);
-      x.fillStyle = '#e9eefc';
-      x.font = '500 22px "Chakra Petch",sans-serif';
-      x.fillText(ad[1], w / 2, 160);
+      if (slot.ad?.creativeUrl) {
+        const img = loadCreative(slot.ad.creativeUrl);
+        if (img) {
+          try {
+            x.drawImage(img, 12, 12, w - 24, h - 48);
+          } catch {
+            /* tainted or not ready */
+          }
+        }
+        x.fillStyle = '#2ee6ff';
+        x.font = '700 20px "Chakra Petch",sans-serif';
+        x.fillText('Sponsored', w / 2, h - 18);
+        x.fillStyle = '#e9eefc';
+        x.font = '600 18px "Chakra Petch",sans-serif';
+        x.fillText((slot.ad.projectName || '').slice(0, 28), w / 2, 36);
+      } else {
+        x.fillStyle = '#ff3d9a';
+        x.font = '700 40px "Chakra Petch",sans-serif';
+        x.fillText('YOUR AD HERE', w / 2, 110);
+        x.fillStyle = '#e9eefc';
+        x.font = '500 22px "Chakra Petch",sans-serif';
+        x.fillText(yoctoToNearLabel(slot.price1Unit), w / 2, 160);
+      }
     });
   });
 }
@@ -233,7 +320,7 @@ export function updateHud() {
   ($('#payBar') as HTMLElement).style.width = used * 100 + '%';
   ($('#payTxt') as HTMLElement).textContent = fmt(S.payUsed) + ' / ' + fmt(payCap());
   ($('#mOn') as HTMLElement).textContent = fmtN(metrics.on);
-  ($('#mDist') as HTMLElement).textContent = fmtN(npcs.length + 1 + metrics.on / 40);
+  ($('#mDist') as HTMLElement).textContent = fmtN(1 + metrics.on / 40);
   ($('#mVis') as HTMLElement).textContent = fmtN(metrics.vis);
   const m = market.mood;
   ($('#mk') as HTMLElement).innerHTML =
@@ -249,23 +336,44 @@ const hideCoach = () => {
   ($('#coach') as HTMLElement).hidden = true;
 };
 
+function sideTitle(): string {
+  if (sideTab === 'feed') return 'Feed';
+  if (sideTab === 'skills') return 'Skills';
+  if (sideTab === 'rank') return 'Rank';
+  if (sideTab === 'about') return 'About';
+  return '';
+}
+
+function bindSideClose(el: HTMLElement) {
+  const x = el.querySelector('.side-x') as HTMLButtonElement | null;
+  if (x)
+    x.onclick = () => {
+      setSideTab(null);
+      renderSide();
+    };
+}
+
 export function renderSide() {
   const el = $('#side') as HTMLElement;
   if (!sideTab) {
     el.hidden = true;
+    document.querySelectorAll('.tabs [data-tab], #aboutBtn').forEach(b => b.classList.remove('on'));
     return;
   }
   el.hidden = false;
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', (b as HTMLElement).dataset.tab === sideTab));
+  ($('#aboutBtn') as HTMLElement).classList.toggle('on', sideTab === 'about');
+  const head = `<div class="side-h"><b>${esc(sideTitle())}</b><button type="button" class="side-x" aria-label="Close">×</button></div>`;
   if (sideTab === 'feed')
     el.innerHTML =
-      feed
+      head +
+      (feed
         .slice(0, 25)
         .map(
           p =>
             `<div class="post ${p.kind}"><time>${ago(p.t)}</time><span class="who">${esc(p.who)}</span><div>${esc(p.text)}</div><div class="lk">♥ ${p.likes}</div></div>`,
         )
-        .join('') || '<small>Quiet for now</small>';
+        .join('') || '<small>Quiet for now</small>');
   else if (sideTab === 'skills') {
     const row = (k: keyof typeof S.xp, d: string) => {
       const xp = S.xp[k],
@@ -275,6 +383,7 @@ export function renderSide() {
       return `<div class="sk"><div class="top"><b>${SK[k]} L${l}</b><small>${d}</small></div><div class="meter"><i style="width:${Math.round(((xp - a) / (b - a)) * 100)}%"></i></div></div>`;
     };
     el.innerHTML =
+      head +
       `<b>Role: ${roleName()}</b><p style="color:var(--mute);margin:2px 0 6px">Everyone starts as a Newcomer. Your role emerges from what you do.</p>` +
       row('trade', 'read signals') +
       row('sec', 'find bugs') +
@@ -282,17 +391,24 @@ export function renderSide() {
       ['Build', 'Capital', 'Creative'].map(n => `<div class="sk lock"><div class="top"><b>${n}</b><small>next update</small></div></div>`).join('') +
       `<small>Trades ${S.stats.trades} · Bugs ${S.stats.found} · Posts ${S.stats.posts} · Followers ${fmtN(S.followers)}</small>`;
   } else if (sideTab === 'rank') {
-    const all = board.concat([{ name: S.name + ' (you)', ret: (S.bal - START) / START, me: 1 }]).sort((a, b) => b.ret - a.ret);
+    ensureLeaderboardPoll();
+    const rows = lbRows;
     el.innerHTML =
-      `<b>Top returns</b> <span class="tag demo">NPC rivals</span>` +
-      all
-        .map(
-          (b, i) =>
-            `<div class="rk ${b.me ? 'me' : ''}"><span>${i + 1}. ${esc(b.name)}</span><span>${(b.ret >= 0 ? '+' : '') + (b.ret * 100).toFixed(0)}%</span></div>`,
-        )
-        .join('');
+      head +
+      `<b>Top balances</b>` +
+      (rows.length
+        ? rows
+            .map(p => {
+              const me = p.name === S.name;
+              const label = me ? `${p.name} (you)` : p.name;
+              return `<div class="rk ${me ? 'me' : ''}"><span>${p.rank}. ${esc(label)}</span><span>${fmtN(Number(p.balance))}</span></div>`;
+            })
+            .join('')
+        : '<small>No ranked players yet</small>');
   } else {
-    el.innerHTML = `<b>About this prototype</b><p style="color:var(--mute)">Glitch is a free multiplayer city where web3 history becomes a game. This is a one-player slice: the market, other players and visitor counts are simulated. Your GD is stored in this browser only and can never be cashed out.</p>
+    el.innerHTML =
+      head +
+      `<p style="color:var(--mute)">Glitch is a free multiplayer city where web3 history becomes a game. This is a one-player slice: the market, other players and visitor counts are simulated. Your GD is custodial — the server settles earn/spend on NEAR testnet or a local mock ledger. Players never see a wallet. GD cannot be cashed out to mainnet.</p>
     <b>Economy health</b><div class="rk"><span>Created by skill pay</span><span class="pos">${fmt(S.created)}</span></div><div class="rk"><span>Burned (fees, losses, fines, holding tax)</span><span class="neg">${fmt(S.burned)}</span></div>
     <p style="color:var(--mute)">Profits are capped daily and every loss is destroyed, so skill cannot print unlimited money.</p><button id="resetBtn">Reset progress</button>`;
     ($('#resetBtn') as HTMLButtonElement).onclick = () => {
@@ -304,6 +420,7 @@ export function renderSide() {
       location.reload();
     };
   }
+  bindSideClose(el);
 }
 
 document.querySelectorAll('.tabs [data-tab]').forEach(b => {
@@ -316,6 +433,7 @@ document.querySelectorAll('.tabs [data-tab]').forEach(b => {
 });
 ($('#aboutBtn') as HTMLButtonElement).onclick = () => {
   setSideTab(sideTab === 'about' ? null : 'about');
+  hideCoach();
   renderSide();
 };
 setInterval(() => {

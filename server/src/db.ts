@@ -103,6 +103,33 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS listings (
+    id TEXT PRIMARY KEY,
+    seller_id TEXT NOT NULL REFERENCES players(id),
+    token_id TEXT NOT NULL,
+    qty INTEGER NOT NULL DEFAULT 1,
+    price TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS listing_sales (
+    id TEXT PRIMARY KEY,
+    listing_id TEXT NOT NULL REFERENCES listings(id),
+    buyer_id TEXT NOT NULL REFERENCES players(id),
+    seller_id TEXT NOT NULL REFERENCES players(id),
+    token_id TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    fee TEXT NOT NULL,
+    outbox_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'paying',
+    delivered INTEGER NOT NULL DEFAULT 0,
+    deliver_tx_hash TEXT,
+    deliver_tx_at INTEGER,
+    deliver_attempts INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS forges (
     id TEXT PRIMARY KEY,
     player_id TEXT NOT NULL REFERENCES players(id),
@@ -132,6 +159,15 @@ db.exec(`
     stock REAL NOT NULL,
     demand_ema REAL NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS merchant_inventory (
+    merchant_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    stock REAL NOT NULL,
+    demand_ema REAL NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (merchant_id, item_id)
   );
 
   CREATE TABLE IF NOT EXISTS signup_log (
@@ -234,8 +270,13 @@ function migrate(): void {
   if (!cols.has('home_paid_until')) {
     db.exec(`ALTER TABLE players ADD COLUMN home_paid_until INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!cols.has('google_sub')) {
+    db.exec(`ALTER TABLE players ADD COLUMN google_sub TEXT`);
+  }
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_name ON players(name);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_players_google_sub ON players(google_sub)
+      WHERE google_sub IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_account_id ON players(account_id)
       WHERE account_id IS NOT NULL;
     CREATE TABLE IF NOT EXISTS trades (
@@ -291,6 +332,29 @@ function migrate(): void {
     );
   `);
   addMintColumns();
+  migrateChefInventoryToMerchant();
+}
+
+/** Copy legacy chef_inventory rows into merchant_inventory once. */
+function migrateChefInventoryToMerchant(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS merchant_inventory (
+      merchant_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      stock REAL NOT NULL,
+      demand_ema REAL NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (merchant_id, item_id)
+    );
+  `);
+  const hasChef = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chef_inventory'`)
+    .get() as { name: string } | undefined;
+  if (!hasChef) return;
+  db.exec(`
+    INSERT OR IGNORE INTO merchant_inventory (merchant_id, item_id, stock, demand_ema, updated_at)
+    SELECT 'chef', item_id, stock, demand_ema, updated_at FROM chef_inventory
+  `);
 }
 
 function addColumn(table: string, name: string, ddl: string): void {
@@ -320,6 +384,69 @@ function addMintColumns(): void {
   addColumn('purchases', 'deliver_tx_hash', 'deliver_tx_hash TEXT');
   addColumn('purchases', 'deliver_tx_at', 'deliver_tx_at INTEGER');
   addColumn('purchases', 'deliver_attempts', 'deliver_attempts INTEGER NOT NULL DEFAULT 0');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS listings (
+      id TEXT PRIMARY KEY,
+      seller_id TEXT NOT NULL REFERENCES players(id),
+      token_id TEXT NOT NULL,
+      qty INTEGER NOT NULL DEFAULT 1,
+      price TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_listings_open ON listings(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_listings_seller_token ON listings(seller_id, token_id, status);
+    CREATE TABLE IF NOT EXISTS listing_sales (
+      id TEXT PRIMARY KEY,
+      listing_id TEXT NOT NULL REFERENCES listings(id),
+      buyer_id TEXT NOT NULL REFERENCES players(id),
+      seller_id TEXT NOT NULL REFERENCES players(id),
+      token_id TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      fee TEXT NOT NULL,
+      outbox_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'paying',
+      delivered INTEGER NOT NULL DEFAULT 0,
+      deliver_tx_hash TEXT,
+      deliver_tx_at INTEGER,
+      deliver_attempts INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mock_gd (
+      account_id TEXT PRIMARY KEY,
+      amount TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS mock_items (
+      account_id TEXT NOT NULL,
+      token_id TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      PRIMARY KEY (account_id, token_id)
+    );
+    CREATE TABLE IF NOT EXISTS mock_tokens (
+      token_id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      max_supply TEXT,
+      supply TEXT NOT NULL DEFAULT '0'
+    );
+    CREATE TABLE IF NOT EXISTS mock_ads (
+      slot_id INTEGER PRIMARY KEY,
+      advertiser TEXT,
+      project_name TEXT,
+      creative_url TEXT,
+      start_ns TEXT,
+      end_ns TEXT,
+      paid TEXT
+    );
+    CREATE TABLE IF NOT EXISTS mock_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
 }
 
 migrate();

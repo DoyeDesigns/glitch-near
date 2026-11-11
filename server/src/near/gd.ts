@@ -1,5 +1,5 @@
 import type { KeyPairString } from 'near-api-js';
-import { config, requireNearConfig } from '../config';
+import { config, isMockChain, requireNearConfig } from '../config';
 import { randomId } from '../crypto';
 import { db } from '../db';
 import { getPlayerById } from './accounts';
@@ -15,6 +15,13 @@ import {
 import { decryptPrivateKey } from './keys';
 import { deliverSigned, lookupSignedTx, signAccountCall } from './mintTx';
 import { ChainWriteError, recordChainFailure, withChainRetry } from './retry';
+
+const MOCK_SECRET = 'ed25519:mock' as KeyPairString;
+
+function playerSecret(enc: string): KeyPairString {
+  if (isMockChain() && enc === 'mock') return MOCK_SECRET;
+  return decryptPrivateKey(enc) as KeyPairString;
+}
 
 const GD_CACHE_MS = 5_000;
 const gdCache = new Map<string, { balance: string; until: number }>();
@@ -180,7 +187,7 @@ export async function ftTransfer(
   if (amt <= 0n) throw new Error('Amount must be positive');
   const player = getPlayerById(fromPlayerId);
   if (!player?.account_id || !player.enc_private_key) throw new Error('Player has no key');
-  decryptPrivateKey(player.enc_private_key);
+  playerSecret(player.enc_private_key);
   const id = opts?.outboxId ?? randomId();
   if (!opts?.outboxId) {
     db.prepare(
@@ -220,7 +227,7 @@ export async function pushTransfer(id: string): Promise<TransferOutcome> {
   const player = getPlayerById(row.player_id);
   if (!player?.account_id || !player.enc_private_key) throw new Error('Player has no key');
   const accountId = player.account_id;
-  const secret = decryptPrivateKey(player.enc_private_key) as KeyPairString;
+  const secret = playerSecret(player.enc_private_key);
   const payload = JSON.parse(row.payload) as { to: string; amount: string; memo: string };
   return enqueueSignerWrite(accountId, async () => {
     const fresh = outboxRow(id);

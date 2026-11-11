@@ -18,6 +18,7 @@ export async function loginRequest(body: {
   pin?: string;
   guest?: boolean;
   signup?: boolean;
+  inviteCode?: string;
 }): Promise<Me> {
   const res = await fetch('/auth/login', {
     method: 'POST',
@@ -30,6 +31,39 @@ export async function loginRequest(body: {
   return refreshMe();
 }
 
+export class GoogleNeedsNameError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GoogleNeedsNameError';
+  }
+}
+
+export async function googleLoginRequest(body: {
+  credential: string;
+  name?: string;
+  inviteCode?: string;
+}): Promise<Me> {
+  const res = await fetch('/auth/google', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json()) as { error?: string; needsName?: boolean };
+  if (!res.ok) {
+    if (data.needsName) throw new GoogleNeedsNameError(data.error || 'Choose a player name');
+    throw new Error(data.error || 'Could not sign in with Google');
+  }
+  return refreshMe();
+}
+
+export async function fetchGoogleClientId(): Promise<string | null> {
+  const res = await fetch('/auth/google/config');
+  if (!res.ok) return null;
+  const data = (await res.json()) as { clientId?: string | null };
+  return data.clientId || null;
+}
+
 export type ChainProof = {
   accountId: string;
   gdOnChain: string;
@@ -39,6 +73,7 @@ export type ChainProof = {
   nearBalance: string;
   gdContract: string;
   itemsContract: string;
+  chainMode?: 'mock' | 'testnet';
 };
 
 export async function fetchChainProof(): Promise<ChainProof> {

@@ -1,6 +1,6 @@
-import { mulberry32, rnd } from './rng';
+import { mulberry32 } from './rng';
 import { tickMarket } from './market';
-import { resolveCases, runEvent } from './events';
+import { resolveCases, tickEventSchedule } from './events';
 import { createTokens } from './tokens';
 import type { World, WorldSnapshot } from './types';
 
@@ -11,7 +11,11 @@ export function createWorld(seed: number): World {
     rng,
     time: 0,
     marketAcc: 0,
-    nextEv: 14,
+    nextEv: 0,
+    eventCheckIn: 14,
+    eventCooldownUntil: 0,
+    pressures: { euphoria: 0, leverage: 0 },
+    eventStage: null,
     tokens: createTokens(rng),
     market: { mood: 0, heat: 0 },
     cases: [],
@@ -23,7 +27,7 @@ export function createWorld(seed: number): World {
 
 /**
  * Advance the simulation by `dtSeconds`.
- * Runs 0.5s market ticks, scheduled events, and case resolution.
+ * Runs 0.5s market ticks, pressure-driven events, and case resolution.
  * Appends presentation effects to `world.effects` (host should drain).
  */
 export function stepWorld(world: World, dtSeconds: number): void {
@@ -34,11 +38,7 @@ export function stepWorld(world: World, dtSeconds: number): void {
     world.marketAcc -= 0.5;
     tickMarket(world);
   }
-  world.nextEv -= dt;
-  if (world.nextEv <= 0) {
-    runEvent(world);
-    world.nextEv = rnd(world.rng, 32, 58);
-  }
+  tickEventSchedule(world, dt);
   resolveCases(world);
 }
 
@@ -50,6 +50,10 @@ export function snapshot(world: World): WorldSnapshot {
     time: world.time,
     marketAcc: world.marketAcc,
     nextEv: world.nextEv,
+    eventCheckIn: world.eventCheckIn,
+    eventCooldownUntil: world.eventCooldownUntil,
+    pressures: { ...world.pressures },
+    eventStage: world.eventStage ? { ...world.eventStage } : null,
     market: { mood: world.market.mood, heat: world.market.heat },
     tokens: world.tokens.map(t => ({
       sym: t.sym,

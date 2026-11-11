@@ -1,6 +1,10 @@
 # Glitch: NEAR testnet accounts, permissions and top-ups
 
+**Screener / CI path does not need this file.** Use `CHAIN_MODE=mock` and [TEST.md](./TEST.md). This doc is for optional live testnet demos and ops.
+
 Network: testnet only. Root: `glitch-edoye.testnet`. All commands are for near-cli-rs 0.30 on PowerShell. If a flag fails, run the command with `--help`.
+
+Env names: `ROOT_ACCOUNT` (= `players.…`), `TREASURY_KEY`, `KEY_ENCRYPTION_SECRET`, `GD_CONTRACT`, `ITEMS_CONTRACT`, `MARKET_CONTRACT`, optional `TOPUP_ACCOUNT` / merchant overrides — see `server/.env.example`.
 
 ## 1. Account map
 
@@ -10,7 +14,7 @@ Network: testnet only. Root: `glitch-edoye.testnet`. All commands are for near-c
 | `glitch-edoye-2.testnet` | Faucet-funded top-level account. A spare wallet. | You | Nothing. Use it as a source of NEAR |
 | `gd.glitch-edoye.testnet` | GD token contract | Nobody (contract) | Storage: every registered holder costs it a little |
 | `items.glitch-edoye.testnet` | Items contract (NEP-245 subset) | Nobody (contract) | Storage: every (account, token) balance costs it a little |
-| `market.glitch-edoye.testnet` | Ads and cycles contract | Nobody (contract) | Storage: bookings and cycle records |
+| `market.glitch-edoye.testnet` | Ads and cycles contract | Advertisers (`book_ad` via `/advertise`); server reads views only | Storage: bookings and cycle records |
 | `treasury.glitch-edoye.testnet` | Receives ad revenue from `market` | You, rarely | Nothing. It only accumulates |
 | `players.glitch-edoye.testnet` | **Server signer.** Parent of player accounts. Minter on `gd` and `items`. Operator on `market`. | The server (key in `server/.env.local` as `TREASURY_KEY`) | Funding each new player, gas for every mint, burn and transfer |
 | `<name>.players.glitch-edoye.testnet` | One per player. Created and signed by the server. | The server (encrypted key in SQLite) | Small starting balance only |
@@ -84,3 +88,5 @@ Cost per new player: about 0.05 NEAR (account funding), plus a little contract s
 - [ ] Treasury balance shows the test ad payment
 - [ ] `.env.local`, `server/data/` and every key file are ignored by git
 - [ ] README lists the contract addresses and explains the custodial, gasless model
+- [ ] `web/.env` (or `.env.local`) sets `VITE_MARKET_CONTRACT` for `/advertise` wallet bookings
+- [ ] Mock path still green: `npm test` && `npm run verify` with `CHAIN_MODE=mock`

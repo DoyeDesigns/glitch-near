@@ -3,15 +3,29 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { adminAuth, adminHealth } from './admin';
-import { AuthError, SESSION_COOKIE, SESSION_MAX_AGE_S, chainProofFor, loginPlayer, meForPlayer, playerFromSessionToken } from './auth';
+import { simulateCityFastForward } from '@glitch/shared';
+import {
+  AuthError,
+  SESSION_COOKIE,
+  SESSION_MAX_AGE_S,
+  chainProofFor,
+  loginPlayer,
+  loginWithGoogle,
+  meForPlayer,
+  playerFromSessionToken,
+} from './auth';
 import { config } from './config';
+import { installMockChain } from './near/mockLedger';
 import { getHealth, getStreamPayload } from './sim';
 import { openTrade, parseTradeDir, parseTradeStake, tradeSnapshot } from './trade';
 import { parsePostTake, publishPost } from './post';
+import { getAdsPayload, proxyCreative } from './ads';
 import { merchantsView } from './chef';
 import { forgeMint } from './forge';
 import { homeBuy, homePayRent } from './home';
+import { getLeaderboard } from './leaderboard';
 import { restPlayer } from './rest';
+import { buyListing, cancelListing, createListing, listOpenListings } from './listings';
 import { shopBuy } from './shop';
 import { cancelVault, finishVault, parseVaultStops, startVault } from './vault';
 
@@ -22,6 +36,7 @@ function clientIp(headers: Headers): string {
 }
 
 export function createApp() {
+  installMockChain();
   const app = new Hono();
 
   app.use(
@@ -61,9 +76,45 @@ export function createApp() {
       });
       return c.json({ name: player.name, accountId: player.account_id });
     } catch (err) {
-      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      if (err instanceof AuthError) return c.json({ error: err.message, ...err.extra }, err.status);
       const message = err instanceof Error ? err.message : String(err);
       console.error('[auth] login failed:', message);
+      return c.json({ error: message }, 502);
+    }
+  });
+
+  app.get('/auth/google/config', c => {
+    return c.json({ clientId: config.googleClientId || null });
+  });
+
+  app.post('/auth/google', async c => {
+    let body: { credential?: string; name?: string; inviteCode?: string } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    try {
+      const { token, player } = await loginWithGoogle({
+        credential: body.credential ?? '',
+        name: body.name,
+        inviteCode: body.inviteCode,
+        ip: clientIp(c.req.raw.headers),
+      });
+      setCookie(c, SESSION_COOKIE, token, {
+        httpOnly: true,
+        sameSite: 'Lax',
+        path: '/',
+        maxAge: SESSION_MAX_AGE_S,
+        secure: config.isProd,
+      });
+      return c.json({ name: player.name, accountId: player.account_id });
+    } catch (err) {
+      if (err instanceof AuthError) {
+        return c.json({ error: err.message, ...err.extra }, err.status);
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[auth] google login failed:', message);
       return c.json({ error: message }, 502);
     }
   });
@@ -213,6 +264,18 @@ export function createApp() {
     }
   });
 
+  app.get('/leaderboard', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(await getLeaderboard());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[leaderboard] failed:', message);
+      return c.json({ error: 'Could not load leaderboard' }, 502);
+    }
+  });
+
   app.get('/merchants', async c => {
     const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
     if (!player) return c.json({ error: 'Not signed in' }, 401);
@@ -223,6 +286,47 @@ export function createApp() {
       console.error('[merchants] failed');
       return c.json({ error: 'Could not load merchants' }, 502);
     }
+  });
+
+  app.get('/ads', async c => {
+    try {
+      return c.json(await getAdsPayload());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[ads] snapshot failed:', message);
+      return c.json({ error: 'Could not load ads', message }, 502);
+    }
+  });
+
+  app.get('/ads/creative', async c => {
+    const url = c.req.query('url') ?? '';
+    const result = await proxyCreative(url);
+    if (!result.ok) return c.json({ error: result.error }, result.status as 400 | 502);
+    return new Response(result.body, {
+      status: 200,
+      headers: {
+        'content-type': result.contentType,
+        'cache-control': 'public, max-age=300',
+      },
+    });
+  });
+
+  app.post('/sim/fast-forward', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { hours?: unknown; seed?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    if (typeof body.hours !== 'number' || !Number.isFinite(body.hours)) {
+      return c.json({ error: 'Bad hours' }, 400);
+    }
+    if (typeof body.seed !== 'number' || !Number.isFinite(body.seed)) {
+      return c.json({ error: 'Bad seed' }, 400);
+    }
+    return c.json(simulateCityFastForward(body.hours, body.seed));
   });
 
   app.post('/shop/buy', async c => {
@@ -241,6 +345,75 @@ export function createApp() {
       if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
       console.error('[shop] buy failed');
       return c.json({ error: 'Could not buy' }, 502);
+    }
+  });
+
+  app.get('/market', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json({ listings: listOpenListings() });
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[market] list failed');
+      return c.json({ error: 'Could not load market' }, 502);
+    }
+  });
+
+  app.post('/market/list', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { tokenId?: unknown; price?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    if (typeof body.tokenId !== 'string') return c.json({ error: 'Bad token' }, 400);
+    try {
+      return c.json(await createListing(player.id, body.tokenId, body.price));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[market] list failed');
+      return c.json({ error: 'Could not list item' }, 502);
+    }
+  });
+
+  app.post('/market/buy', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { listingId?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    if (typeof body.listingId !== 'string') return c.json({ error: 'Bad listing' }, 400);
+    try {
+      return c.json(await buyListing(player.id, body.listingId));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[market] buy failed');
+      return c.json({ error: 'Could not buy listing' }, 502);
+    }
+  });
+
+  app.post('/market/cancel', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { listingId?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    if (typeof body.listingId !== 'string') return c.json({ error: 'Bad listing' }, 400);
+    try {
+      return c.json(cancelListing(player.id, body.listingId));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[market] cancel failed');
+      return c.json({ error: 'Could not cancel listing' }, 502);
     }
   });
 

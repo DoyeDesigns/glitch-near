@@ -15,6 +15,10 @@
   },
   "dependencies": {
     "@glitch/shared": "*",
+    "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/modal-ui-js": "^10.1.4",
+    "@near-wallet-selector/my-near-wallet": "^10.1.4",
+    "near-api-js": "^7.4.0",
     "three": "^0.187.0"
   }
 }

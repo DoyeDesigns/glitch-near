@@ -7,6 +7,8 @@ export interface Look {
   glasses: boolean;
   glassC: number;
   gear: number;
+  /** Cap brim facing: 0 front, 1 back, 2 left, 3 right. */
+  capDir: number;
 }
 
 export const DEFAULT_LOOK: Look = {
@@ -18,6 +20,7 @@ export const DEFAULT_LOOK: Look = {
   glasses: true,
   glassC: 0,
   gear: 0,
+  capDir: 0,
 };
 
 export interface Needs {
@@ -25,10 +28,20 @@ export interface Needs {
   hunger: number;
 }
 
+/** Client-only room paint (floor / wall / accent). */
+export interface HomePaint {
+  id: string;
+  floor: number;
+  wall: number;
+  accent: number;
+}
+
 export interface Home {
   owned: boolean;
   paidUntil: number;
   items: string[];
+  /** Visual room colors; not on-chain. */
+  paint?: HomePaint;
 }
 
 export interface Nft {
@@ -101,8 +114,12 @@ export interface Station {
   z: number;
   col: number;
   locked?: string;
+  /** Outdoor-only legacy ring (park bench). Indoors use object highlights. */
   ring?: import('three').Mesh;
   beam?: import('three').Mesh;
+  label?: import('three').Sprite;
+  /** Exit / enter sign sprite for doors. */
+  sign?: import('three').Sprite;
 }
 
 export interface Event {

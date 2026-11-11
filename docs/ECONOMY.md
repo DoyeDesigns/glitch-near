@@ -10,7 +10,7 @@ See [`ONCHAIN.md`](./ONCHAIN.md) for the full map. Short rules that affect econo
 2. **`available = chainBalance − pendingBurns − escrowed`.** Every spend, stake, and maintenance payment checks `available`. `/me` returns `available`. Lazy `burn_from` flushes are capped at real chain balance.
 3. **Food is instant.** Pay chef, apply hunger server-side, **no food token mint** (catalog food rows are price/effect only).
 4. **Pay-then-deliver** for furniture / studio / gear with `pending_delivery` + reconcile; refund from merchant is last resort.
-5. **Signup protection:** per-IP limit, hourly global cap, optional `INVITE_CODE`, refuse if root/`players` NEAR &lt; 0.2.
+5. **Signup protection:** `SIGNUP_IP_PER_HOUR`, `SIGNUP_HOURLY_CAP`, optional `INVITE_CODE`, refuse if root/`players` NEAR &lt; 0.2 (testnet).
 
 ## Applied tuning (from prior proposals)
 
@@ -92,9 +92,9 @@ Starter balance: **START_GD = 60,000** (not skill pay).
 | Trade fee | 1% of stake | **burn** accrued **(b)** |
 | Trade loss | up to stake | **burn** accrued **(b)** |
 | Post half-burn | 5,000 of 10,000 | **burn** accrued **(b)** |
-| Fast travel gas | **200** GD | **burn** `GAS_GD` **(b)** |
-| Passive upkeep (holding tax) | **0.01%** / **10s** | **burn** `UPKEEP_RATE` **(b)** |
-| CIA fine (guilty) | `min(bal, loot * 1.25)` | **burn** **(b)** |
+| Fast travel gas | **200** GD | **client-only** display (`GAS_GD`) — not server burn yet |
+| Passive upkeep (holding tax) | **0.01%** / **10s** | **client-only** display (`UPKEEP_RATE`) — not server burn yet |
+| CIA fine (guilty) | `min(bal, loot * 1.25)` | **client-only** display — not server burn yet |
 | Furniture | catalog `priceGD` | **`ft_transfer` → dealer** **(a)** |
 | Studio buy | **90,000** GD | **`ft_transfer` → dealer** **(a)** |
 | Studio maintenance | **1,000** GD / **1 h** | **`ft_transfer` → dealer** **(a)** |

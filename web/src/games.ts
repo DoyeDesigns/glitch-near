@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   catalogById,
-  catalogByKind,
+  merchantRulesFor,
   HOMEP_GD,
   MAINTENANCE_GD,
   MAINTENANCE_MS as MAINTENANCE_PERIOD_MS,
@@ -17,18 +17,21 @@ import { applyChainItems, forgeItemIdForGear } from './itemsSync';
 import { L, save, S, weak } from './state';
 import { banner, post, px, TOK } from './market';
 import {
+  applyHomePaint,
   BOTC,
   buildFurn,
   buildLook,
   cam,
   comfort,
   crowdTo,
+  CAPDIRS,
   FURN,
   GEARS,
   GLASSC,
   HAIRC,
   HAIRS,
   hasF,
+  HOME_PAINT_PRESETS,
   nearStation,
   overdue,
   player,
@@ -37,7 +40,10 @@ import {
   setCustomizing,
   SKINS,
   TOPC,
-  vel,
+  isInside,
+  toggleBuilding,
+  exitBuilding,
+  warpIntoBuilding,
 } from './world';
 import {
   closeModal,
@@ -53,22 +59,24 @@ import {
   sheet,
   updateHud,
 } from './hud';
-import { LOCS } from './phone';
-
 export function useStation() {
   if (!nearStation || nearStation.locked || modalOpen()) return;
-  (
-    {
-      trade: tradeGame,
-      sec: secGame,
-      comm: commGame,
-      forge: forgeGame,
-      eat: dinerGame,
-      rest: benchRest,
-      bed: sleepGame,
-      door: exitHome,
-    } as Record<string, () => void>
-  )[nearStation.id]!();
+  const id = nearStation.id;
+  if (id.startsWith('bdoor-')) {
+    toggleBuilding(id.slice('bdoor-'.length));
+    return;
+  }
+  const handlers: Record<string, () => void> = {
+    trade: tradeGame,
+    sec: secGame,
+    comm: commGame,
+    forge: forgeGame,
+    eat: dinerGame,
+    rest: benchRest,
+    bed: sleepGame,
+    door: exitHome,
+  };
+  handlers[id]?.();
 }
 
 ($('#prompt') as HTMLButtonElement).addEventListener('click', useStation);
@@ -618,7 +626,7 @@ export function openCustomizer() {
           `<button class="sw ${S.look[k] === i ? 'on' : ''}" data-k="${k}" data-v="${i}" style="background:${hex(c)}" aria-label="${k} ${i + 1}"></button>`,
       )
       .join('');
-  const ch = (a: string[], k: 'hair' | 'gear') =>
+  const ch = (a: string[], k: 'hair' | 'gear' | 'capDir') =>
     a
       .map((n, i) => {
         const lk = k === 'gear' && !gearOwned(i);
@@ -626,10 +634,14 @@ export function openCustomizer() {
       })
       .join('');
   function render() {
+    const capRow =
+      S.look.gear === 1
+        ? `<small>Cap facing</small><div class="chips">${ch(CAPDIRS, 'capDir')}</div>`
+        : '';
     sheet.innerHTML = `<h2>Your look</h2><div class="cz"><small>Skin</small><div class="chips">${sw(SKINS, 'skin')}</div><small>Hair</small><div class="chips">${ch(HAIRS, 'hair')}</div><small>Hair colour</small><div class="chips">${sw(HAIRC, 'hairC')}</div>
     <small>Top</small><div class="chips">${sw(TOPC, 'top')}</div><small>Trousers</small><div class="chips">${sw(BOTC, 'bot')}</div>
     <small>Glasses</small><div class="chips"><button class="${S.look.glasses ? 'on' : ''}" data-k="glasses" data-v="1">On</button><button class="${S.look.glasses ? '' : 'on'}" data-k="glasses" data-v="0">Off</button>${S.look.glasses ? sw(GLASSC, 'glassC') : ''}</div>
-    <small>Gear</small><div class="chips">${ch(GEARS, 'gear')}</div></div><div class="acts"><button class="pri" id="cdone">Done</button></div>`;
+    <small>Gear</small><div class="chips">${ch(GEARS, 'gear')}</div>${capRow}</div><div class="acts"><button class="pri" id="cdone">Done</button></div>`;
     sheet.querySelectorAll('[data-k]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         const k = (b as HTMLElement).dataset.k as keyof typeof S.look;
@@ -783,11 +795,235 @@ async function lifeRequest<T>(path: string, body?: Record<string, unknown>): Pro
   return data;
 }
 
+export type CityDayPhase = 'idle' | 'loading' | 'playing' | 'done' | 'error';
+
+export type CityDayRow = {
+  itemId: string;
+  title: string;
+  /** Morning price, before any sales. */
+  open: number;
+  /** Highest sale price seen so far. */
+  high: number;
+  /** Price after the day finishes restocking. Stays at the open until playback ends. */
+  close: number;
+  sales: number;
+};
+
+export type CityDayShop = {
+  id: 'chef' | 'smith' | 'dealer';
+  name: string;
+  rows: CityDayRow[];
+};
+
+export type CityDayHeadline = {
+  t: number;
+  kind: 'pump' | 'rugPull';
+  title: string;
+};
+
+/** Playback board for one simulated city day. Live menus and GD are never written. */
+export type CityDayBoard = {
+  phase: CityDayPhase;
+  hours: number;
+  /** 0..1 through the simulated day. */
+  progress: number;
+  /** Simulated clock, HH:MM from midnight. */
+  clock: string;
+  /** Most recent sale, for the live line. */
+  latest: string;
+  error: string;
+  shops: CityDayShop[];
+  headlines: CityDayHeadline[];
+  shownHeadlines: number;
+  sales: number;
+  pumps: number;
+  rugs: number;
+};
+
+type SimPoint = { t: number; itemId: string; price: number };
+type TrackedRow = CityDayRow & { end: number; pts: SimPoint[]; idx: number };
+
+const SHOP_META = [
+  { id: 'chef', name: 'Diner' },
+  { id: 'smith', name: 'Forge' },
+  { id: 'dealer', name: 'Dealer' },
+] as const;
+
+function emptyCityDay(): CityDayBoard {
+  return {
+    phase: 'idle',
+    hours: 24,
+    progress: 0,
+    clock: '00:00',
+    latest: '',
+    error: '',
+    shops: [],
+    headlines: [],
+    shownHeadlines: 0,
+    sales: 0,
+    pumps: 0,
+    rugs: 0,
+  };
+}
+
+export let cityDay: CityDayBoard = emptyCityDay();
+
+/** Overlay-only city day playback (never mutates live menus / GD). */
+export let citySimPlaying = false;
+let citySimRaf = 0;
+
+const dayClock = (sec: number) => {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
+function tallyCityDay(): void {
+  let sales = 0;
+  for (const shop of cityDay.shops) {
+    for (const row of shop.rows) sales += row.sales;
+  }
+  const shown = cityDay.headlines.slice(0, cityDay.shownHeadlines);
+  cityDay.sales = sales;
+  cityDay.pumps = shown.filter(h => h.kind === 'pump').length;
+  cityDay.rugs = shown.filter(h => h.kind === 'rugPull').length;
+}
+
+export function stopCitySimPlayback(): void {
+  if (citySimRaf) cancelAnimationFrame(citySimRaf);
+  citySimRaf = 0;
+  citySimPlaying = false;
+}
+
+/**
+ * POST /sim/fast-forward and play ~60s as a day recap.
+ * Live stock and GD are untouched.
+ */
+export async function playCityDaySim(onTick?: () => void): Promise<void> {
+  if (citySimPlaying) return;
+  citySimPlaying = true;
+  cityDay = { ...emptyCityDay(), phase: 'loading', latest: 'Fetching the day…' };
+  onTick?.();
+  try {
+    const res = await lifeRequest<{
+      hours: number;
+      seed: number;
+      merchants: Record<
+        'chef' | 'smith' | 'dealer',
+        { timeline: SimPoint[]; ending: Record<string, { price: number }> }
+      >;
+      events: Array<{ t: number; kind: 'pump' | 'rugPull'; title: string }>;
+    }>('/sim/fast-forward', { hours: 24, seed: 42 });
+
+    const shops: CityDayShop[] = SHOP_META.map(meta => {
+      const merchant = res.merchants[meta.id];
+      const byItem = new Map<string, SimPoint[]>();
+      for (const p of merchant.timeline) {
+        const list = byItem.get(p.itemId) ?? [];
+        list.push(p);
+        byItem.set(p.itemId, list);
+      }
+      const rows: TrackedRow[] = merchantRulesFor(meta.id).map(rule => {
+        const pts = (byItem.get(rule.id) ?? []).slice().sort((a, b) => a.t - b.t);
+        return {
+          itemId: rule.id,
+          title: catalogById(rule.id)?.title ?? rule.id,
+          open: rule.basePrice,
+          high: rule.basePrice,
+          close: rule.basePrice,
+          end: merchant.ending[rule.id]?.price ?? rule.basePrice,
+          sales: 0,
+          pts,
+          idx: 0,
+        };
+      });
+      return { id: meta.id, name: meta.name, rows };
+    });
+
+    const headlines = res.events.slice().sort((a, b) => a.t - b.t);
+    cityDay = {
+      phase: 'playing',
+      hours: res.hours,
+      progress: 0,
+      clock: '00:00',
+      latest: 'The day is starting.',
+      error: '',
+      shops,
+      headlines,
+      shownHeadlines: 0,
+      sales: 0,
+      pumps: 0,
+      rugs: 0,
+    };
+    onTick?.();
+
+    const horizon = Math.max(1, res.hours * 3600);
+    const playMs = 60_000;
+    const started = performance.now();
+    let headIdx = 0;
+    let lastUi = 0;
+
+    const advance = (simT: number, final: boolean) => {
+      let latest = cityDay.latest;
+      for (const shop of cityDay.shops) {
+        for (const row of shop.rows as TrackedRow[]) {
+          while (row.idx < row.pts.length && row.pts[row.idx]!.t <= simT) {
+            const p = row.pts[row.idx]!;
+            if (p.price > row.high) row.high = p.price;
+            row.sales += 1;
+            row.idx += 1;
+            latest = `${shop.name} sold ${row.title} at ${fmtN(p.price)} GD`;
+          }
+          if (final) row.close = row.end;
+        }
+      }
+      while (headIdx < headlines.length && headlines[headIdx]!.t <= simT) headIdx += 1;
+      cityDay.shownHeadlines = headIdx;
+      cityDay.latest = final ? 'Live prices were not changed.' : latest;
+      cityDay.progress = final ? 1 : Math.min(1, simT / horizon);
+      cityDay.clock = dayClock(final ? horizon : simT);
+      tallyCityDay();
+    };
+
+    await new Promise<void>(resolve => {
+      const tick = (now: number) => {
+        const elapsed = now - started;
+        const done = elapsed >= playMs;
+        advance(done ? horizon : (elapsed / playMs) * horizon, done);
+        if (done) {
+          citySimPlaying = false;
+          citySimRaf = 0;
+          cityDay.phase = 'done';
+          banner('Day recap is ready. Live prices were not changed.', 'info');
+          onTick?.();
+          resolve();
+          return;
+        }
+        if (now - lastUi > 250) {
+          lastUi = now;
+          onTick?.();
+        }
+        citySimRaf = requestAnimationFrame(tick);
+      };
+      citySimRaf = requestAnimationFrame(tick);
+    });
+  } catch (err) {
+    stopCitySimPlayback();
+    cityDay = {
+      ...emptyCityDay(),
+      phase: 'error',
+      error: err instanceof Error ? err.message : 'Could not simulate',
+    };
+    onTick?.();
+    throw err;
+  }
+}
+
 let warnT = 0;
 /** Warnings and pose only. Hunger and energy come from the server. */
 export function lifeUpdate(dt: number) {
-  const n = S.needs,
-    home = player.position.x > 100;
+  const n = S.needs;
   warnT -= dt;
   if (warnT <= 0) {
     if (n.hunger < 10) {
@@ -800,7 +1036,7 @@ export function lifeUpdate(dt: number) {
   }
   const r = player.userData.rig as THREE.Object3D;
   r.rotation.x += ((weak() ? .14 : 0) - r.rotation.x) * Math.min(1, dt * 4);
-  rain.visible = !home;
+  rain.visible = !isInside();
 }
 
 export function progressModal(title: string, line: string, secs: number, done: () => void) {
@@ -826,36 +1062,72 @@ export function progressModal(title: string, line: string, secs: number, done: (
 export const meters = () =>
   `<div class="needs" style="margin:6px 0"><div><span>Energy ${Math.round(S.needs.energy)}</span><i><b style="width:${S.needs.energy}%;background:var(--amber)"></b></i></div><div><span>Hunger ${Math.round(S.needs.hunger)}</span><i><b style="width:${S.needs.hunger}%;background:var(--lime)"></b></i></div></div>`;
 
-type ChefMenuDish = {
+type MerchantMenuDish = {
   itemId: string;
   title: string;
   stock: number;
   price: number;
+  demandEma?: number;
   reasoning: { stockFactor: number; demandFactor: number; clamp: string; finalPrice: number };
+  shardsCost?: number;
+};
+
+/** @deprecated Alias. */
+type ChefMenuDish = MerchantMenuDish;
+
+/** Cached dealer / smith quotes from GET /merchants. */
+export let dealerQuotes: Record<string, MerchantMenuDish> = {};
+export let smithQuotes: Record<string, MerchantMenuDish> = {};
+
+export async function loadMerchantQuotes(): Promise<void> {
+  const res = await fetch('/merchants', { credentials: 'include' });
+  const data = (await res.json()) as {
+    error?: string;
+    dealer?: { menu: MerchantMenuDish[] };
+    smith?: { menu: MerchantMenuDish[] };
+  };
+  if (!res.ok) throw new Error(data.error || 'Could not load merchants');
+  dealerQuotes = Object.fromEntries((data.dealer?.menu ?? []).map(d => [d.itemId, d]));
+  smithQuotes = Object.fromEntries((data.smith?.menu ?? []).map(d => [d.itemId, d]));
+}
+
+const reasonHint = (d: Pick<MerchantMenuDish, 'reasoning' | 'stock'>) => {
+  const r = d.reasoning;
+  const bits = [
+    `stock ×${r.stockFactor.toFixed(2)}`,
+    `demand ×${r.demandFactor.toFixed(2)}`,
+    r.clamp !== 'none' ? `clamp ${r.clamp}` : null,
+    `left ${d.stock.toFixed(1)}`,
+  ].filter(Boolean);
+  return bits.join(' · ');
 };
 
 export function dinerGame() {
-  openModal('');
   let busy = false;
   let menu: ChefMenuDish[] = [];
-  const reasonHint = (d: ChefMenuDish) => {
-    const r = d.reasoning;
-    const bits = [
-      `stock ×${r.stockFactor.toFixed(2)}`,
-      `demand ×${r.demandFactor.toFixed(2)}`,
-      r.clamp !== 'none' ? `clamp ${r.clamp}` : null,
-      `left ${d.stock.toFixed(1)}`,
-    ].filter(Boolean);
-    return bits.join(' · ');
+  /** Simulated overlay prices by itemId (playback only; live menu stays underneath). */
+  let simPrices: Record<string, number> = {};
+  let simPlaying = false;
+  let simRaf = 0;
+  let simLastUi = 0;
+  const stopSim = () => {
+    if (simRaf) cancelAnimationFrame(simRaf);
+    simRaf = 0;
+    simPlaying = false;
+    simPrices = {};
   };
   const loadMenu = async () => {
     const res = await fetch('/merchants', { credentials: 'include' });
     const data = (await res.json()) as {
       error?: string;
       chef?: { menu: ChefMenuDish[] };
+      dealer?: { menu: MerchantMenuDish[] };
+      smith?: { menu: MerchantMenuDish[] };
     };
     if (!res.ok) throw new Error(data.error || 'Could not load menu');
     menu = data.chef?.menu ?? [];
+    dealerQuotes = Object.fromEntries((data.dealer?.menu ?? []).map(d => [d.itemId, d]));
+    smithQuotes = Object.fromEntries((data.smith?.menu ?? []).map(d => [d.itemId, d]));
   };
   const r = () => {
     const funds = fundsNow();
@@ -868,10 +1140,13 @@ export function dinerGame() {
               const h = item?.effect.hunger ?? 0;
               const e = item?.effect.energy ?? 0;
               const soldOut = d.stock < 1;
-              return `<div class="loc"><div><b>${esc(d.title)}</b><div class="hint">${esc(item?.effect.description ?? '')}${h ? `: +${h} hunger` : ''}${e ? `, +${e} energy` : ''}</div><div class="hint">${esc(reasonHint(d))}</div></div><button class="pri" data-id="${d.itemId}" ${soldOut || funds < d.price || busy ? 'disabled' : ''}>${soldOut ? 'Sold out' : `${fmtN(d.price)} GD`}</button></div>`;
+              const sim = simPrices[d.itemId];
+              const simHint =
+                sim != null ? `<div class="hint">sim ${fmtN(sim)} GD</div>` : '';
+              return `<div class="loc"><div><b>${esc(d.title)}</b><div class="hint">${esc(item?.effect.description ?? '')}${h ? `: +${h} hunger` : ''}${e ? `, +${e} energy` : ''}</div><div class="hint">${esc(reasonHint(d))}</div>${simHint}</div><button class="pri" data-id="${d.itemId}" ${soldOut || funds < d.price || busy ? 'disabled' : ''}>${soldOut ? 'Sold out' : `${fmtN(d.price)} GD`}</button></div>`;
             })
             .join('')
-    }<div class="acts"><button id="dx">Leave</button></div>`;
+    }<div class="acts"><button id="dsim" ${busy || simPlaying ? 'disabled' : ''}>${simPlaying ? 'Simulating…' : 'Simulate 1 day'}</button><button id="dx">Leave</button></div>`;
     sheet.querySelectorAll('[data-id]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         void (async () => {
@@ -912,8 +1187,71 @@ export function dinerGame() {
         })();
       };
     });
-    ($('#dx') as HTMLButtonElement).onclick = closeModal;
+    const simBtn = $('#dsim') as HTMLButtonElement | null;
+    if (simBtn) {
+      simBtn.onclick = () => {
+        if (busy || simPlaying) return;
+        void (async () => {
+          simPlaying = true;
+          r();
+          try {
+            const res = await lifeRequest<{
+              hours: number;
+              seed: number;
+              merchants: {
+                chef: {
+                  timeline: Array<{ t: number; itemId: string; price: number }>;
+                  ending: Record<string, { price: number }>;
+                };
+              };
+            }>('/sim/fast-forward', { hours: 24, seed: 42 });
+            const chef = res.merchants.chef;
+            const horizon = Math.max(1, res.hours * 3600);
+            const playMs = 60_000;
+            const started = performance.now();
+            const points = chef.timeline.slice().sort((a, b) => a.t - b.t);
+            let idx = 0;
+            const tick = (now: number) => {
+              const elapsed = now - started;
+              const simT = (elapsed / playMs) * horizon;
+              let changed = false;
+              while (idx < points.length && points[idx]!.t <= simT) {
+                const p = points[idx]!;
+                simPrices[p.itemId] = p.price;
+                idx += 1;
+                changed = true;
+              }
+              if (changed || now - simLastUi > 250) {
+                simLastUi = now;
+                r();
+              }
+              if (elapsed < playMs) {
+                simRaf = requestAnimationFrame(tick);
+              } else {
+                for (const [id, end] of Object.entries(chef.ending)) {
+                  simPrices[id] = end.price;
+                }
+                simPlaying = false;
+                simRaf = 0;
+                r();
+                banner('Day sim finished. Live prices unchanged.', 'info');
+              }
+            };
+            simRaf = requestAnimationFrame(tick);
+          } catch (err) {
+            stopSim();
+            banner(err instanceof Error ? err.message : 'Could not simulate', 'bad');
+            r();
+          }
+        })();
+      };
+    }
+    ($('#dx') as HTMLButtonElement).onclick = () => {
+      stopSim();
+      closeModal();
+    };
   };
+  openModal('', () => stopSim());
   void loadMenu()
     .then(() => r())
     .catch(err => {
@@ -954,33 +1292,49 @@ export const mmss = (ms: number) => {
 export function homeHtml(hdr: (title: string, back: string) => string) {
   const H = S.home;
   const funds = fundsNow();
+  const studioQ = dealerQuotes['studio-apartment'];
+  const studioPrice = studioQ?.price ?? HOMEP;
   if (!H.owned)
     return (
       hdr('My Home', 'home') +
-      `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Costs ${fmtN(HOMEP)} GD to buy. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div></div></div><div class="acts"><button class="pri" data-a="buyhome">Buy: ${fmtN(HOMEP)} GD + ${fmtN(MAINTENANCE)} GD maintenance</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
+      `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div>${studioQ ? `<div class="hint">${esc(reasonHint(studioQ))}</div>` : ''}</div></div><div class="acts"><button class="pri" data-a="buyhome" ${funds < studioPrice + MAINTENANCE ? 'disabled' : ''}>Buy: ${fmtN(studioPrice)} GD + ${fmtN(MAINTENANCE)} GD maintenance</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
     );
+  const paintId = H.paint?.id ?? 'midnight';
+  const paints = HOME_PAINT_PRESETS.map(
+    p =>
+      `<button type="button" class="paint-swatch${paintId === p.id ? ' on' : ''}" data-a="homepaint" data-v="${esc(p.id)}" title="${esc(p.name)}" style="--pf:#${p.floor.toString(16).padStart(6, '0')};--pw:#${p.wall.toString(16).padStart(6, '0')};--pa:#${p.accent.toString(16).padStart(6, '0')}"><span>${esc(p.name)}</span></button>`,
+  ).join('');
   return (
     hdr('My Home', 'home') +
     `<div class="loc"><div><b>Studio apartment</b><div class="hint">${overdue() ? '<span class="neg">MAINTENANCE OVERDUE. Your bed is locked until you pay.</span>' : 'Maintenance paid for ' + mmss(maintenanceLeft())} · Comfort ${comfort()}</div></div></div>
   <div class="acts"><button class="pri" data-a="gohome">Go home (free)</button><button data-a="paymaintenance" ${funds < MAINTENANCE || maintenanceLeft() > MAINTENANCE_MS * 2 ? 'disabled' : ''}>Pay maintenance ${fmtN(MAINTENANCE)} GD</button></div>
-  <small style="display:block;margin-top:10px">Furniture (paid in GD)</small>` +
+  <small style="display:block;margin-top:10px">Room colors</small><div class="paint-grid">${paints}</div>
+  <small style="display:block;margin-top:10px">Furniture</small>` +
     FURN.map(f => {
-      const price = catalogById(f.id)?.priceGD ?? f.price;
-      return `<div class="loc"><div><b>${f.name}</b><div class="hint">${f.d} · +${f.pts} comfort</div></div>${hasF(f.id) ? '<span class="tag">Owned</span>' : `<button data-a="furn" data-v="${f.id}" ${funds < price ? 'disabled' : ''}>${fmtN(price)}</button>`}</div>`;
+      const q = dealerQuotes[f.id];
+      const price = q?.price ?? catalogById(f.id)?.priceGD ?? f.price;
+      const soldOut = q != null && q.stock < 1;
+      const hint = q ? `${f.d} · +${f.pts} comfort · ${reasonHint(q)}` : `${f.d} · +${f.pts} comfort`;
+      return `<div class="loc"><div><b>${f.name}</b><div class="hint">${esc(hint)}</div></div>${hasF(f.id) ? '<span class="tag">Owned</span>' : `<button data-a="furn" data-v="${f.id}" ${soldOut || funds < price ? 'disabled' : ''}>${soldOut ? 'Sold out' : fmtN(price)}</button>`}</div>`;
     }).join('')
   );
 }
 
 export function homeAct(a: string, v?: string): boolean | void {
   const H = S.home;
+  if (a === 'homepaint') {
+    if (!H.owned || !v) return;
+    const preset = HOME_PAINT_PRESETS.find(p => p.id === v);
+    if (!preset) return;
+    H.paint = { id: preset.id, floor: preset.floor, wall: preset.wall, accent: preset.accent };
+    applyHomePaint(H.paint);
+    save();
+    return;
+  }
   if (a === 'gohome') {
     if (!H.owned) return;
     closeModal();
-    player.position.set(140, 0, 4);
-    vel.x = vel.z = 0;
-    cam.tx = 140;
-    cam.tz = 4;
-    cam.yaw = 0;
+    warpIntoBuilding('home', 140, 4);
     if (overdue()) banner('Maintenance is overdue. Pay it in the My Home app.', 'bad');
     return true;
   }
@@ -1058,11 +1412,7 @@ export function homeAct(a: string, v?: string): boolean | void {
 }
 
 export function exitHome() {
-  const l = LOCS[0]!;
-  player.position.set(l.sp[0], 0, l.sp[1]);
-  vel.x = vel.z = 0;
-  cam.tx = l.sp[0];
-  cam.tz = l.sp[1];
+  exitBuilding();
   banner('Back in the city', 'info');
 }
 
@@ -1092,16 +1442,25 @@ export function sleepGame() {
 
 export function forgeGame() {
   openModal('');
+  let busy = false;
   const r = () => {
+    const funds = fundsNow();
     sheet.innerHTML =
-      `<h2>Gear Forge</h2><p>Gear is an <b>NFT</b>: a one-of-a-kind item with its own number that only you own. Collect <b>Shards</b> from the Vault Cracker, then mint here.</p><div class="hint">You have <b>${S.shards}</b> shards and <b>${fmtN(fundsNow())}</b> GD.</div>` +
+      `<h2>Gear Forge</h2><p>Gear is an <b>NFT</b>: a one-of-a-kind item with its own number that only you own. Collect <b>Shards</b> from the Vault Cracker, then mint here. GD price is the smith quote.</p><div class="hint">You have <b>${S.shards}</b> shards and <b>${fmtN(funds)}</b> GD.</div>` +
       Object.keys(GEARINFO)
         .map(k => {
           const g = +k,
             i = GEARINFO[g]!,
+            itemId = forgeItemIdForGear(g),
+            q = itemId ? smithQuotes[itemId] : undefined,
             own = S.nfts.find(n => n.g === g),
-            tip = own ? `Owned: ${own.id.slice(-8)}` : `${i.shd} shards + ${fmtN(i.gd)} GD`;
-          return `<div class="loc"><div><b>${GEARS[g]}</b> <span class="tag">${i.rar}</span><div class="hint">${tip}</div></div>${own ? `<button data-e="${g}">${S.look.gear === g ? 'Wearing' : 'Wear'}</button>` : `<button class="pri" data-mint="${g}">Mint</button>`}</div>`;
+            gd = q?.price ?? i.gd,
+            shd = q?.shardsCost ?? i.shd,
+            soldOut = q != null && q.stock < 1,
+            tip = own
+              ? `Owned: ${own.id.slice(-8)}`
+              : `${shd} shards + ${fmtN(gd)} GD${q ? ` · ${reasonHint(q)}` : ''}`;
+          return `<div class="loc"><div><b>${GEARS[g]}</b> <span class="tag">${i.rar}</span><div class="hint">${esc(tip)}</div></div>${own ? `<button data-e="${g}">${S.look.gear === g ? 'Wearing' : 'Wear'}</button>` : `<button class="pri" data-mint="${g}" ${soldOut || busy || S.shards < shd || funds < gd ? 'disabled' : ''}>${soldOut ? 'Sold out' : 'Mint'}</button>`}</div>`;
         })
         .join('') +
       '<div class="acts"><button id="fx2">Leave</button></div>';
@@ -1118,6 +1477,7 @@ export function forgeGame() {
         const g = +(b as HTMLElement).dataset.mint!;
         const itemId = forgeItemIdForGear(g);
         if (!itemId) return;
+        busy = true;
         (b as HTMLButtonElement).disabled = true;
         void lifeRequest<{
           status: 'delivered' | 'settling';
@@ -1126,23 +1486,44 @@ export function forgeGame() {
           available: string;
           settling: string;
           items: Record<string, string>;
+          price?: number;
+          stock?: number;
+          demandEma?: number;
+          reasoning?: MerchantMenuDish['reasoning'];
         }>('/forge/mint', { itemId })
           .then(res => {
             applyFunds(res.available, res.settling);
             applyChainItems(res.items);
+            if (res.price != null && res.reasoning && res.stock != null) {
+              smithQuotes[itemId] = {
+                itemId,
+                title: GEARS[g] ?? itemId,
+                stock: res.stock,
+                price: res.reasoning.finalPrice,
+                demandEma: res.demandEma,
+                reasoning: res.reasoning,
+                shardsCost: GEARINFO[g]?.shd,
+              };
+            }
             if (res.status === 'settling') banner('Mint is still landing on chain…', 'info');
-            else banner(`${GEARS[g]} forged`, 'good');
+            else banner(`${GEARS[g]} forged${res.price != null ? ` for ${fmtN(res.price)} GD` : ''}`, 'good');
             save();
             updateHud();
-            r();
+            busy = false;
+            void loadMerchantQuotes()
+              .catch(() => {})
+              .finally(r);
           })
           .catch(err => {
             banner(err instanceof Error ? err.message : 'Could not mint', 'bad');
-            (b as HTMLButtonElement).disabled = false;
+            busy = false;
+            r();
           });
       };
     });
     ($('#fx2') as HTMLButtonElement).onclick = closeModal;
   };
-  r();
+  void loadMerchantQuotes()
+    .catch(err => banner(err instanceof Error ? err.message : 'Could not load forge prices', 'bad'))
+    .finally(r);
 }

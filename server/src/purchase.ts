@@ -9,7 +9,7 @@ import { getGDBalanceCached, pushTransfer, type TransferOutcome } from './near/g
 import { getItemBalances } from './near/items';
 import { getMerchant } from './near/merchants';
 import { resumeOrSend } from './near/mintTx';
-import { recordChefFoodSale } from './chef';
+import { recordChefFoodSale, recordDealerSale } from './chef';
 import { parseNeeds, syncNeedsDecay, writeNeeds } from './needs';
 
 export type PurchaseRow = {
@@ -157,9 +157,15 @@ async function deliverPurchase(purchaseId: string): Promise<boolean> {
     },
     {
       mark: () => {
-        db.prepare(
-          `UPDATE purchases SET delivered = 1, status = 'delivered' WHERE id = ? AND delivered = 0`,
-        ).run(purchaseId);
+        const apply = db.transaction(() => {
+          const fresh = getPurchase(purchaseId);
+          if (!fresh || fresh.delivered === 1) return;
+          recordDealerSale(paid.item_id);
+          db.prepare(
+            `UPDATE purchases SET delivered = 1, status = 'delivered' WHERE id = ? AND delivered = 0`,
+          ).run(purchaseId);
+        });
+        apply.immediate();
       },
       persist: (hash, at, attempts) => {
         db.prepare(
@@ -249,7 +255,8 @@ async function reserveAndTransfer(opts: {
  * Pay a catalog item. Reserves spend in one immediate SQLite transaction, then
  * transfers GD to the merchant. Success means paid and delivered. An ambiguous
  * transfer keeps the escrow and returns settling.
- * Food may pass `amountGd` from the chef quote; otherwise catalog `priceGD`.
+ * Food / furniture / studio may pass `amountGd` from the merchant quote;
+ * otherwise catalog `priceGD`.
  */
 export async function purchase(
   playerId: string,

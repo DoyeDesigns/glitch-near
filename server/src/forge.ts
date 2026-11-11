@@ -1,5 +1,6 @@
-import { catalogById, gearTokenId } from '@glitch/shared';
+import { catalogById, gearTokenId, type ChefPriceReasoning } from '@glitch/shared';
 import { AuthError, fundsView, ledgerTotals } from './auth';
+import { quoteSmithGear, recordSmithSale, smithGearSnapshot } from './chef';
 import { config } from './config';
 import { randomId } from './crypto';
 import { db } from './db';
@@ -42,6 +43,10 @@ export type ForgeMintResult = {
   available: string;
   settling: string;
   items: Record<string, string>;
+  price: number;
+  reasoning: ChefPriceReasoning;
+  stock: number;
+  demandEma: number;
 };
 
 const FORGE_COLS =
@@ -163,9 +168,15 @@ async function deliverForge(forgeId: string): Promise<boolean> {
     },
     {
       mark: () => {
-        db.prepare(
-          `UPDATE forges SET delivered = 1, status = 'delivered' WHERE id = ? AND delivered = 0`,
-        ).run(forgeId);
+        const apply = db.transaction(() => {
+          const fresh = getForge(forgeId);
+          if (!fresh || fresh.delivered === 1) return;
+          recordSmithSale(fresh.item_id);
+          db.prepare(
+            `UPDATE forges SET delivered = 1, status = 'delivered' WHERE id = ? AND delivered = 0`,
+          ).run(forgeId);
+        });
+        apply.immediate();
       },
       persist: (hash, at, attempts) => {
         db.prepare(
@@ -219,8 +230,11 @@ export async function forgeMint(playerId: string, itemId: string): Promise<Forge
   if (!merchant) throw new AuthError('Unknown merchant', 400);
 
   const shardsCost = item.effect.shardsCost;
-  const gdCost = BigInt(item.effect.gdCost);
-  if (shardsCost <= 0 || gdCost <= 0n) throw new AuthError('Invalid forge cost', 400);
+  if (shardsCost <= 0) throw new AuthError('Invalid forge cost', 400);
+
+  const quote = quoteSmithGear(item.id);
+  const gdCost = BigInt(quote.finalPrice);
+  if (gdCost <= 0n) throw new AuthError('Invalid forge cost', 400);
 
   await flushPlayer(playerId);
   const player = getPlayerById(playerId);
@@ -275,6 +289,7 @@ export async function forgeMint(playerId: string, itemId: string): Promise<Forge
   const settled = await settleOutcome(forgeId, outcome);
   const funds = await fundsView(getPlayerById(playerId)!);
   const nextItems = await getItemBalances(player.account_id);
+  const after = settled.delivered ? smithGearSnapshot(item.id) ?? quote : quote;
   return {
     status: settled.delivered ? 'delivered' : 'settling',
     forgeId,
@@ -282,6 +297,10 @@ export async function forgeMint(playerId: string, itemId: string): Promise<Forge
     tokenId,
     ...funds,
     items: nextItems,
+    price: quote.finalPrice,
+    reasoning: after.reasoning,
+    stock: after.stock,
+    demandEma: after.demandEma,
   };
 }
 

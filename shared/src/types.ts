@@ -53,6 +53,19 @@ export type SimEffect =
   | { kind: 'playerCaught'; caseNo: number; loot: number }
   | { kind: 'playerEscaped'; caseNo: number };
 
+export type EventArchetype = 'pump' | 'rugPull';
+
+export type Pressures = { euphoria: number; leverage: number };
+
+export type EventStage = {
+  archetype: EventArchetype;
+  phase: 'rumor' | 'live';
+  severity: number;
+  rumor: string;
+  fireAt: number;
+  sym?: string;
+};
+
 export interface World {
   seed: number;
   rng: Rng;
@@ -60,8 +73,14 @@ export interface World {
   time: number;
   /** Accumulator for 0.5s market ticks. */
   marketAcc: number;
-  /** Seconds until next weighted event. */
+  /** @deprecated Prefer eventCheckIn; kept 0 when unused. */
   nextEv: number;
+  /** Seconds until next pressure roll when idle. */
+  eventCheckIn: number;
+  /** Sim time when another archetype may start. */
+  eventCooldownUntil: number;
+  pressures: Pressures;
+  eventStage: EventStage | null;
   tokens: Token[];
   market: MarketState;
   cases: Case[];
@@ -77,6 +96,10 @@ export type WorldSnapshot = {
   time: number;
   marketAcc: number;
   nextEv: number;
+  eventCheckIn: number;
+  eventCooldownUntil: number;
+  pressures: Pressures;
+  eventStage: EventStage | null;
   market: MarketState;
   tokens: Token[];
   cases: Case[];

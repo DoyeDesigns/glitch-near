@@ -50,6 +50,12 @@ export function gearTokenId(type: string, uuid: string): string {
   return `gear-${type}-${uuid}`;
 }
 
+/** Player market listing price bounds (GD). */
+export const MARKET_LIST_MIN_GD = 100;
+export const MARKET_LIST_MAX_GD = 1_000_000;
+/** 2% fee on sale → pending burn. */
+export const MARKET_FEE_BPS = 200;
+
 /**
  * Full catalog. Gear rows are templates — mint creates `gear-<type>-<uuid>`
  * with max_supply 1. Do not seed gear types.
@@ -345,6 +351,44 @@ export function catalogByKind(kind: CatalogKind): CatalogItem[] {
 
 export function catalogById(id: string): CatalogItem | undefined {
   return CATALOG.find(i => i.id === id);
+}
+
+/** Catalog gear type from `gear-<type>-<uuid>`, or null. */
+export function gearTypeFromTokenId(tokenId: string): string | null {
+  if (!tokenId.startsWith('gear-')) return null;
+  const rest = tokenId.slice('gear-'.length);
+  for (const item of CATALOG) {
+    if (item.kind === 'gear' && !item.proposed && rest.startsWith(`${item.id}-`)) {
+      return item.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Furniture catalog ids and minted gear tokens may be listed peer-to-peer.
+ * House deeds, food, shards, and templates are not listable.
+ */
+export function isPlayerListableToken(tokenId: string): boolean {
+  const item = catalogById(tokenId);
+  if (item?.kind === 'furniture' && !item.proposed) return true;
+  return gearTypeFromTokenId(tokenId) != null;
+}
+
+export function marketFeeGd(price: bigint): bigint {
+  return (price * BigInt(MARKET_FEE_BPS)) / 10_000n;
+}
+
+/** Title for a listable token (furniture id or gear NFT). */
+export function listableTokenTitle(tokenId: string): string {
+  const furn = catalogById(tokenId);
+  if (furn?.kind === 'furniture') return furn.title;
+  const type = gearTypeFromTokenId(tokenId);
+  if (type) {
+    const gear = catalogById(type);
+    return gear ? `${gear.title} (${tokenId.slice(0, 18)}…)` : tokenId;
+  }
+  return tokenId;
 }
 
 /** Entries that should exist as on-chain token types (not unique gear, not proposed). */

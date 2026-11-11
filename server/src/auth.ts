@@ -1,15 +1,17 @@
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
 import { nearToYocto } from 'near-api-js';
 import { START_GD } from '@glitch/shared';
-import { config, requireNearConfig } from './config';
+import { config, isMockChain, requireNearConfig } from './config';
 import { randomId } from './crypto';
 import { db } from './db';
+import { GoogleCredentialError, verifyGoogleCredential } from './googleAuth';
 import {
   createPlayerAccount,
   formatNear,
   getItemBalances,
   getGDBalanceCached,
   getNearBalanceCached,
+  getPlayerByGoogleSub,
   getPlayerById,
   getPlayerByName,
   getProvider,
@@ -40,6 +42,7 @@ export class AuthError extends Error {
   constructor(
     message: string,
     readonly status: 400 | 401 | 403 | 409 | 429 | 503 = 400,
+    readonly extra?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'AuthError';
@@ -186,16 +189,34 @@ function assertSignupAllowed(ip: string, inviteCode: string | undefined): void {
     n: number;
   };
   if (global.n >= config.signupHourlyCap) {
-    throw new AuthError('New accounts are paused for this hour. Try again later.', 429);
+    throw new AuthError(
+      'New accounts are paused for this hour. Sign in with an existing name, or try again later.',
+      429,
+    );
   }
 }
 
+let rootFundedCheckForTests: (() => Promise<void>) | null = null;
+
+/** Test seam for the players-parent NEAR balance gate. */
+export function setRootFundedCheckForTests(fn: (() => Promise<void>) | null): void {
+  rootFundedCheckForTests = fn;
+}
+
 async function assertRootFunded(): Promise<void> {
+  if (rootFundedCheckForTests) {
+    await rootFundedCheckForTests();
+    return;
+  }
+  if (isMockChain()) return;
   requireNearConfig();
   const view = await getProvider().viewAccount({ accountId: config.rootAccount });
   const yocto = BigInt(view.amount);
   if (yocto < MIN_ROOT_NEAR) {
-    throw new AuthError('New accounts are paused. Try again later.', 503);
+    throw new AuthError(
+      'New accounts and guests are paused — the city is low on NEAR. Sign in with an existing account.',
+      503,
+    );
   }
 }
 
@@ -332,12 +353,22 @@ export async function loginPlayer(opts: {
   let row = getPlayerByName(name);
 
   if (opts.signup) {
-    if (row) {
-      recordAuthFailure(name, opts.ip);
-      throw new AuthError(AUTH_FAIL, 401);
+    if (row?.pin_hash) {
+      // Name is already registered — do not burn lockout attempts on this.
+      throw new AuthError('That name is taken. Use Sign in instead.', 409);
     }
-    row = await activateNamed(name, opts.ip, opts.inviteCode, pin);
+    if (row && !row.pin_hash) {
+      // Account row exists (e.g. chain create succeeded earlier) but PIN was never stored.
+      assertSignupAllowed(opts.ip, opts.inviteCode);
+      storePin(row.id, pin);
+      row = getPlayerById(row.id) ?? row;
+    } else {
+      row = await activateNamed(name, opts.ip, opts.inviteCode, pin);
+    }
   } else {
+    if (row && !row.pin_hash) {
+      throw new AuthError('This account has no PIN yet. Use Create account with the same name to set one.', 400);
+    }
     const ok = pinMatches(pin, row?.pin_salt ?? null, row?.pin_hash ?? null);
     if (!row || !ok) {
       recordAuthFailure(name, opts.ip);
@@ -356,6 +387,79 @@ export async function loginPlayer(opts: {
   clearAuthFailures(name, opts.ip);
   await ensureStarterMint(row);
   const fresh = getPlayerByName(name) ?? row;
+  return { token: issueSession(fresh.id), player: fresh };
+}
+
+/**
+ * Google Identity Services login. Same custodial player row + session cookie as name/PIN.
+ * First time: caller must supply a player name (never derived from email).
+ */
+export async function loginWithGoogle(opts: {
+  credential: string;
+  name?: string;
+  inviteCode?: string;
+  ip: string;
+}): Promise<{ token: string; player: PlayerRow }> {
+  if (!config.googleClientId) {
+    throw new AuthError('Google sign-in is not configured', 503);
+  }
+
+  let sub: string;
+  try {
+    ({ sub } = await verifyGoogleCredential(opts.credential));
+  } catch (err) {
+    if (err instanceof GoogleCredentialError) {
+      throw new AuthError(err.message, err.status);
+    }
+    throw err;
+  }
+
+  let row = getPlayerByGoogleSub(sub);
+  if (row) {
+    if (row.status !== 'active') {
+      await resumePendingAccount(row.name);
+      row = getPlayerByGoogleSub(sub);
+      if (!row || row.status !== 'active') throw new AuthError('Account is not ready', 503);
+    }
+    await ensureStarterMint(row);
+    const fresh = getPlayerByGoogleSub(sub) ?? row;
+    return { token: issueSession(fresh.id), player: fresh };
+  }
+
+  const name = (opts.name ?? '').trim().toLowerCase();
+  if (!name) {
+    throw new AuthError('Choose a player name', 400, { needsName: true });
+  }
+  try {
+    validatePlayerName(name);
+  } catch (err) {
+    throw new AuthError(err instanceof Error ? err.message : 'Invalid name', 400, { needsName: true });
+  }
+  if (getPlayerByName(name)) {
+    throw new AuthError('That name is taken', 409, { needsName: true });
+  }
+
+  assertSignupAllowed(opts.ip, opts.inviteCode);
+  await assertRootFunded();
+  try {
+    await createPlayerAccount(name, { googleSub: sub });
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('Duplicate player')) {
+      throw new AuthError('That name is taken', 409, { needsName: true });
+    }
+    throw err;
+  }
+  recordSignup(opts.ip);
+
+  row = getPlayerByGoogleSub(sub) ?? getPlayerByName(name);
+  if (!row) throw new AuthError('Account was not stored', 503);
+  if (row.status !== 'active') {
+    await resumePendingAccount(name);
+    row = getPlayerByGoogleSub(sub) ?? getPlayerByName(name);
+    if (!row || row.status !== 'active') throw new AuthError('Account is not ready', 503);
+  }
+  await ensureStarterMint(row);
+  const fresh = getPlayerByGoogleSub(sub) ?? getPlayerByName(name) ?? row;
   return { token: issueSession(fresh.id), player: fresh };
 }
 
@@ -430,6 +534,7 @@ export type ChainProof = {
   nearBalance: string;
   gdContract: string;
   itemsContract: string;
+  chainMode: 'mock' | 'testnet';
 };
 
 const proofCache = new Map<string, { until: number; value: ChainProof }>();
@@ -463,6 +568,7 @@ export async function chainProofFor(player: PlayerRow): Promise<ChainProof> {
     nearBalance: formatNear(nearYocto),
     gdContract: config.gdContract,
     itemsContract: config.itemsContract,
+    chainMode: config.chainMode,
   };
   proofCache.set(player.id, { until: now + PROOF_CACHE_MS, value });
   return value;

@@ -44,11 +44,21 @@ const isProd = nodeEnv === 'production';
 
 const nearNetwork = str('NEAR_NETWORK', 'testnet');
 const rpcUrls: Record<string, string> = {
-  testnet: 'https://test.rpc.fastnear.com',
-  mainnet: 'https://rpc.mainnet.fastnear.com',
+  testnet: 'https://near-testnet.drpc.org',
+  mainnet: 'https://free.rpc.fastnear.com',
 };
 
-const rootAccount = str('ROOT_ACCOUNT');
+/** mock | testnet. Unset or any other value → mock (clean clone default). */
+const chainModeRaw = str('CHAIN_MODE', 'mock').toLowerCase();
+const chainMode: 'mock' | 'testnet' = chainModeRaw === 'testnet' ? 'testnet' : 'mock';
+
+function mockDefault(name: string, fallback: string): string {
+  const v = str(name);
+  if (v) return v;
+  return chainMode === 'mock' ? fallback : '';
+}
+
+const rootAccount = mockDefault('ROOT_ACCOUNT', 'players.mock');
 /** Parent of players/treasury/merchants. ROOT_ACCOUNT is the players signer (`players.<root>`). */
 const chainRoot =
   str('CHAIN_ROOT') || (rootAccount.startsWith('players.') ? rootAccount.slice('players.'.length) : '');
@@ -62,11 +72,13 @@ export const config = {
   isProd,
   port: num('PORT', 8787),
   seed: num('SEED', 42) >>> 0,
+  /** mock = SQLite ledger, no RPC/keys. testnet = real NEAR. */
+  chainMode,
   nearNetwork,
   nearRpcUrl: str('NEAR_RPC_URL', rpcUrls[nearNetwork] ?? rpcUrls.testnet!),
-  gdContract: str('GD_CONTRACT'),
-  itemsContract: str('ITEMS_CONTRACT'),
-  marketContract: str('MARKET_CONTRACT'),
+  gdContract: mockDefault('GD_CONTRACT', 'gd.mock'),
+  itemsContract: mockDefault('ITEMS_CONTRACT', 'items.mock'),
+  marketContract: mockDefault('MARKET_CONTRACT', 'market.mock'),
   rootAccount,
   treasuryKey,
   keyEncryptionSecret: str('KEY_ENCRYPTION_SECRET'),
@@ -80,6 +92,8 @@ export const config = {
   signupHourlyCap: num('SIGNUP_HOURLY_CAP', 30),
   /** Empty = GET /admin/health is 404. Sent by the dashboard as the x-admin-token header. */
   adminToken: str('ADMIN_TOKEN'),
+  /** Google Identity Services client id (public). Empty disables Google sign-in. */
+  googleClientId: str('GOOGLE_CLIENT_ID'),
   /** Chain owner (`glitch-….testnet`), not the players signer. */
   chainRoot,
   treasuryAccount: str('TREASURY_ACCOUNT', chainRoot ? `treasury.${chainRoot}` : ''),
@@ -90,10 +104,14 @@ export const config = {
   topupFrom: str('TOPUP_ACCOUNT', chainRoot),
 };
 
-if (isProd && !config.keyEncryptionSecret) {
-  throw new Error('KEY_ENCRYPTION_SECRET is required in production');
+export function isMockChain(): boolean {
+  return config.chainMode === 'mock';
 }
-if (!isProd && !config.keyEncryptionSecret) {
+
+if (isProd && config.chainMode === 'testnet' && !config.keyEncryptionSecret) {
+  throw new Error('KEY_ENCRYPTION_SECRET is required in production testnet');
+}
+if (!isProd && !config.keyEncryptionSecret && config.chainMode === 'testnet') {
   console.warn('[config] KEY_ENCRYPTION_SECRET is empty (dev only)');
 }
 
@@ -129,6 +147,7 @@ export function readAdminToken(): string {
 }
 
 export function requireNearConfig(): void {
+  if (isMockChain()) return;
   const missing = (
     [
       ['ROOT_ACCOUNT', config.rootAccount],

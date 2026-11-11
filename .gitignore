@@ -22,6 +22,7 @@ contracts/target/
 
 # tooling caches
 .vite/
+**/.vite/
 *.tsbuildinfo
 
 # near CLI scratch (optional local)

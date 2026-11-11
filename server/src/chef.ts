@@ -5,77 +5,62 @@ import {
   CHEF_FOOD,
   CHEF_MIN_BALANCE,
   chefFoodRule,
+  DEALER_GOODS,
+  dealerItemRule,
+  MERCHANT_MIN_BALANCE,
+  merchantItemRule,
+  merchantRulesFor,
   quoteChefPrice,
+  SMITH_GEAR,
+  smithGearRule,
   type ChefPriceReasoning,
 } from '@glitch/shared';
 import { AuthError } from './auth';
 import { db } from './db';
 import { getGDBalanceCached } from './near/gd';
-import { getMerchant } from './near/merchants';
+import { getMerchant, MERCHANT_IDS } from './near/merchants';
 
-export type ChefInventoryRow = {
+type MerchantId = (typeof MERCHANT_IDS)[number];
+
+export type MerchantInventoryRow = {
+  merchant_id: string;
   item_id: string;
   stock: number;
   demand_ema: number;
   updated_at: number;
 };
 
-export type ChefMenuItem = {
+/** @deprecated Use MerchantInventoryRow. */
+export type ChefInventoryRow = Omit<MerchantInventoryRow, 'merchant_id'>;
+
+export type MerchantMenuItem = {
   itemId: string;
   title: string;
   stock: number;
   demandEma: number;
   price: number;
   reasoning: ChefPriceReasoning;
+  /** Smith forge only. */
+  shardsCost?: number;
+};
+
+/** @deprecated Use MerchantMenuItem. */
+export type ChefMenuItem = MerchantMenuItem;
+
+export type MerchantShopView = {
+  accountId: string;
+  gdBalance: string;
+  minBalance: number;
+  menu: MerchantMenuItem[];
 };
 
 export type MerchantsPayload = {
-  chef: {
-    accountId: string;
-    gdBalance: string;
-    minBalance: number;
-    menu: ChefMenuItem[];
-  };
+  chef: MerchantShopView;
+  smith: MerchantShopView;
+  dealer: MerchantShopView;
 };
 
-function ensureChefRows(now = Date.now()): void {
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO chef_inventory (item_id, stock, demand_ema, updated_at) VALUES (?, ?, 0, ?)`,
-  );
-  for (const rule of CHEF_FOOD) {
-    insert.run(rule.id, rule.targetStock, now);
-  }
-}
-
-function getRow(itemId: string): ChefInventoryRow | undefined {
-  return db
-    .prepare(`SELECT item_id, stock, demand_ema, updated_at FROM chef_inventory WHERE item_id = ?`)
-    .get(itemId) as ChefInventoryRow | undefined;
-}
-
-function writeRow(itemId: string, stock: number, demandEma: number, now: number): void {
-  db.prepare(
-    `UPDATE chef_inventory SET stock = ?, demand_ema = ?, updated_at = ? WHERE item_id = ?`,
-  ).run(stock, demandEma, now, itemId);
-}
-
-/** Apply timestamp restock/demand decay for every chef food row. */
-export function syncChefInventory(now = Date.now()): void {
-  ensureChefRows(now);
-  const rows = db
-    .prepare(`SELECT item_id, stock, demand_ema, updated_at FROM chef_inventory`)
-    .all() as ChefInventoryRow[];
-  for (const row of rows) {
-    const rule = chefFoodRule(row.item_id);
-    if (!rule) continue;
-    const elapsedSec = Math.max(0, (now - row.updated_at) / 1000);
-    if (elapsedSec <= 0) continue;
-    const next = applyChefRestock(row.stock, row.demand_ema, rule.targetStock, elapsedSec);
-    writeRow(row.item_id, next.stock, next.demandEma, now);
-  }
-}
-
-export type ChefQuote = {
+export type MerchantQuote = {
   itemId: string;
   stock: number;
   demandEma: number;
@@ -83,14 +68,84 @@ export type ChefQuote = {
   finalPrice: number;
 };
 
-/** Sync inventory, then quote. Rejects sold-out dishes. */
-export function quoteChefFood(itemId: string, now = Date.now()): ChefQuote {
-  const rule = chefFoodRule(itemId);
-  if (!rule) throw new AuthError('Unknown chef food', 400);
-  syncChefInventory(now);
-  const row = getRow(itemId);
-  if (!row) throw new AuthError('Unknown chef food', 400);
-  if (row.stock < 1) throw new AuthError('Sold out', 400);
+/** @deprecated Use MerchantQuote. */
+export type ChefQuote = MerchantQuote;
+
+function ensureMerchantRows(merchantId: MerchantId, now = Date.now()): void {
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO merchant_inventory (merchant_id, item_id, stock, demand_ema, updated_at)
+     VALUES (?, ?, ?, 0, ?)`,
+  );
+  for (const rule of merchantRulesFor(merchantId)) {
+    insert.run(merchantId, rule.id, rule.targetStock, now);
+  }
+}
+
+function getRow(merchantId: MerchantId, itemId: string): MerchantInventoryRow | undefined {
+  return db
+    .prepare(
+      `SELECT merchant_id, item_id, stock, demand_ema, updated_at
+       FROM merchant_inventory WHERE merchant_id = ? AND item_id = ?`,
+    )
+    .get(merchantId, itemId) as MerchantInventoryRow | undefined;
+}
+
+function writeRow(
+  merchantId: MerchantId,
+  itemId: string,
+  stock: number,
+  demandEma: number,
+  now: number,
+): void {
+  db.prepare(
+    `UPDATE merchant_inventory SET stock = ?, demand_ema = ?, updated_at = ?
+     WHERE merchant_id = ? AND item_id = ?`,
+  ).run(stock, demandEma, now, merchantId, itemId);
+}
+
+/** Apply timestamp restock/demand decay for one merchant. */
+export function syncMerchantInventory(merchantId: MerchantId, now = Date.now()): void {
+  ensureMerchantRows(merchantId, now);
+  const rows = db
+    .prepare(
+      `SELECT merchant_id, item_id, stock, demand_ema, updated_at
+       FROM merchant_inventory WHERE merchant_id = ?`,
+    )
+    .all(merchantId) as MerchantInventoryRow[];
+  for (const row of rows) {
+    const rule = merchantItemRule(merchantId, row.item_id);
+    if (!rule) continue;
+    const elapsedSec = Math.max(0, (now - row.updated_at) / 1000);
+    if (elapsedSec <= 0) continue;
+    const next = applyChefRestock(row.stock, row.demand_ema, rule.targetStock, elapsedSec);
+    writeRow(merchantId, row.item_id, next.stock, next.demandEma, now);
+  }
+}
+
+/** Sync all three merchants. */
+export function syncAllMerchantInventory(now = Date.now()): void {
+  syncMerchantInventory('chef', now);
+  syncMerchantInventory('smith', now);
+  syncMerchantInventory('dealer', now);
+}
+
+/** @deprecated Prefer syncMerchantInventory('chef'). */
+export function syncChefInventory(now = Date.now()): void {
+  syncMerchantInventory('chef', now);
+}
+
+function quoteFor(
+  merchantId: MerchantId,
+  itemId: string,
+  opts: { requireStock?: boolean },
+  now = Date.now(),
+): MerchantQuote {
+  const rule = merchantItemRule(merchantId, itemId);
+  if (!rule) throw new AuthError(`Unknown ${merchantId} item`, 400);
+  syncMerchantInventory(merchantId, now);
+  const row = getRow(merchantId, itemId);
+  if (!row) throw new AuthError(`Unknown ${merchantId} item`, 400);
+  if (opts.requireStock && row.stock < 1) throw new AuthError('Sold out', 400);
   const reasoning = quoteChefPrice({
     basePrice: rule.basePrice,
     targetStock: rule.targetStock,
@@ -107,23 +162,21 @@ export function quoteChefFood(itemId: string, now = Date.now()): ChefQuote {
   };
 }
 
-/** After a food purchase delivers: lower stock and bump demand. */
-export function recordChefFoodSale(itemId: string, now = Date.now()): void {
-  const rule = chefFoodRule(itemId);
+function recordSale(merchantId: MerchantId, itemId: string, now = Date.now()): void {
+  const rule = merchantItemRule(merchantId, itemId);
   if (!rule) return;
-  syncChefInventory(now);
-  const row = getRow(itemId);
+  syncMerchantInventory(merchantId, now);
+  const row = getRow(merchantId, itemId);
   if (!row) return;
   const next = applyChefSale(row.stock, row.demand_ema);
-  writeRow(itemId, next.stock, next.demandEma, now);
+  writeRow(merchantId, itemId, next.stock, next.demandEma, now);
 }
 
-/** Current stock/demand + quote (allows stock below 1 for display after a sale). */
-export function chefFoodSnapshot(itemId: string, now = Date.now()): ChefQuote | null {
-  const rule = chefFoodRule(itemId);
+function snapshotFor(merchantId: MerchantId, itemId: string, now = Date.now()): MerchantQuote | null {
+  const rule = merchantItemRule(merchantId, itemId);
   if (!rule) return null;
-  syncChefInventory(now);
-  const row = getRow(itemId);
+  syncMerchantInventory(merchantId, now);
+  const row = getRow(merchantId, itemId);
   if (!row) return null;
   const reasoning = quoteChefPrice({
     basePrice: rule.basePrice,
@@ -141,20 +194,61 @@ export function chefFoodSnapshot(itemId: string, now = Date.now()): ChefQuote | 
   };
 }
 
-/** Session GET /merchants payload (chef only). */
-export async function merchantsView(): Promise<MerchantsPayload> {
-  syncChefInventory();
-  const merchant = getMerchant('chef');
-  if (!merchant) throw new AuthError('Chef is not set up', 503);
+/** Sync inventory, then quote. Rejects sold-out dishes. */
+export function quoteChefFood(itemId: string, now = Date.now()): MerchantQuote {
+  if (!chefFoodRule(itemId)) throw new AuthError('Unknown chef food', 400);
+  return quoteFor('chef', itemId, { requireStock: true }, now);
+}
+
+export function quoteSmithGear(itemId: string, now = Date.now()): MerchantQuote {
+  if (!smithGearRule(itemId)) throw new AuthError('Unknown forge item', 400);
+  return quoteFor('smith', itemId, { requireStock: true }, now);
+}
+
+export function quoteDealerItem(itemId: string, now = Date.now()): MerchantQuote {
+  if (!dealerItemRule(itemId)) throw new AuthError('Unknown dealer item', 400);
+  return quoteFor('dealer', itemId, { requireStock: true }, now);
+}
+
+export function recordChefFoodSale(itemId: string, now = Date.now()): void {
+  recordSale('chef', itemId, now);
+}
+
+export function recordSmithSale(itemId: string, now = Date.now()): void {
+  recordSale('smith', itemId, now);
+}
+
+export function recordDealerSale(itemId: string, now = Date.now()): void {
+  recordSale('dealer', itemId, now);
+}
+
+export function chefFoodSnapshot(itemId: string, now = Date.now()): MerchantQuote | null {
+  return snapshotFor('chef', itemId, now);
+}
+
+export function smithGearSnapshot(itemId: string, now = Date.now()): MerchantQuote | null {
+  return snapshotFor('smith', itemId, now);
+}
+
+export function dealerItemSnapshot(itemId: string, now = Date.now()): MerchantQuote | null {
+  return snapshotFor('dealer', itemId, now);
+}
+
+async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
+  syncMerchantInventory(merchantId);
+  const merchant = getMerchant(merchantId);
+  if (!merchant) throw new AuthError(`${merchantId} is not set up`, 503);
   let gdBalance = '0';
   try {
     gdBalance = await getGDBalanceCached(merchant.account_id);
   } catch {
     gdBalance = '0';
   }
-  const menu: ChefMenuItem[] = [];
-  for (const rule of CHEF_FOOD) {
-    const row = getRow(rule.id);
+  const rules =
+    merchantId === 'chef' ? CHEF_FOOD : merchantId === 'smith' ? SMITH_GEAR : DEALER_GOODS;
+  const menu: MerchantMenuItem[] = [];
+  for (const rule of rules) {
+    const row = getRow(merchantId, rule.id);
     if (!row) continue;
     const item = catalogById(rule.id);
     const reasoning = quoteChefPrice({
@@ -164,21 +258,33 @@ export async function merchantsView(): Promise<MerchantsPayload> {
       stock: Math.max(row.stock, 1),
       demandEma: row.demand_ema,
     });
-    menu.push({
+    const entry: MerchantMenuItem = {
       itemId: rule.id,
       title: item?.title ?? rule.id,
       stock: row.stock,
       demandEma: row.demand_ema,
       price: reasoning.finalPrice,
       reasoning,
-    });
+    };
+    if (merchantId === 'smith' && item?.effect.shardsCost != null) {
+      entry.shardsCost = item.effect.shardsCost;
+    }
+    menu.push(entry);
   }
   return {
-    chef: {
-      accountId: merchant.account_id,
-      gdBalance,
-      minBalance: CHEF_MIN_BALANCE,
-      menu,
-    },
+    accountId: merchant.account_id,
+    gdBalance,
+    minBalance: merchantId === 'chef' ? CHEF_MIN_BALANCE : MERCHANT_MIN_BALANCE,
+    menu,
   };
+}
+
+/** Session GET /merchants payload (chef, smith, dealer). */
+export async function merchantsView(): Promise<MerchantsPayload> {
+  const [chef, smith, dealer] = await Promise.all([
+    shopView('chef'),
+    shopView('smith'),
+    shopView('dealer'),
+  ]);
+  return { chef, smith, dealer };
 }

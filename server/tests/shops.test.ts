@@ -1,18 +1,26 @@
 import { randomBytes } from 'node:crypto';
 import { KeyPair, nearToYocto } from 'near-api-js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { MAINTENANCE_MS } from '@glitch/shared';
+import { catalogById, CHEF_DEMAND_BUY, MAINTENANCE_MS } from '@glitch/shared';
 import { availableGd, spendableGd } from '../src/auth';
 import { config } from '../src/config';
 import { db } from '../src/db';
-import { quoteChefFood, recordChefFoodSale, syncChefInventory } from '../src/chef';
+import {
+  quoteChefFood,
+  quoteDealerItem,
+  quoteSmithGear,
+  recordChefFoodSale,
+  recordDealerSale,
+  recordSmithSale,
+  syncChefInventory,
+  syncMerchantInventory,
+} from '../src/chef';
 import { forgeMint, resumeForges } from '../src/forge';
 import { homeBuy, homePayRent } from '../src/home';
 import { syncNeedsDecay } from '../src/needs';
 import { purchase, resumePurchases } from '../src/purchase';
 import { restPlayer } from '../src/rest';
 import { shopBuy } from '../src/shop';
-import { CHEF_DEMAND_BUY } from '@glitch/shared';
 import {
   PLAYER_FUND_NEAR,
   PLAYER_NEAR_TOPUP_FLOOR,
@@ -140,6 +148,7 @@ beforeEach(() => {
   db.prepare(`DELETE FROM purchases`).run();
   db.prepare(`DELETE FROM forges`).run();
   db.prepare(`DELETE FROM chef_inventory`).run();
+  db.prepare(`DELETE FROM merchant_inventory`).run();
   db.prepare(`DELETE FROM trades`).run();
   setMintTxTestHooks({
     sign: async () => {
@@ -659,31 +668,35 @@ describe('chef prices', () => {
     expect(res.reasoning!.finalPrice).toBeGreaterThan(1_000);
   });
 
-  it('furniture still uses catalog priceGD', async () => {
-    const row = player('furn-cat');
+  it('furniture charges the dealer quote and lowers stock on deliver', async () => {
+    const row = player('furn-q');
     insertMerchant('dealer');
     fund(row.account_id!, 50_000n);
+    const quote = quoteDealerItem('plant');
+    expect(quote.finalPrice).toBe(catalogById('plant')!.priceGD);
     const res = await shopBuy(row.id, 'plant');
     expect(res.status).toBe('delivered');
-    expect(res.price).toBeUndefined();
-    expect(purchaseRow(row.id).amount).toBe(String(catalogById('plant')!.priceGD));
+    expect(res.price).toBe(quote.finalPrice);
+    expect(purchaseRow(row.id).amount).toBe(String(quote.finalPrice));
+    expect(res.stock).toBeCloseTo(19, 3);
+    expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 5);
   });
 
   it('rejects sold-out food and restocks across timestamps', async () => {
     insertMerchant('chef');
     syncChefInventory();
-    db.prepare(`UPDATE chef_inventory SET stock = 0.5, demand_ema = 0.4, updated_at = ? WHERE item_id = ?`).run(
-      Date.now(),
-      'suya-skewer',
-    );
+    db.prepare(
+      `UPDATE merchant_inventory SET stock = 0.5, demand_ema = 0.4, updated_at = ? WHERE merchant_id = 'chef' AND item_id = ?`,
+    ).run(Date.now(), 'suya-skewer');
     expect(() => quoteChefFood('suya-skewer')).toThrow(/Sold out/);
-    db.prepare(`UPDATE chef_inventory SET stock = 10, demand_ema = 0.4, updated_at = ? WHERE item_id = ?`).run(
-      Date.now() - 60_000,
-      'suya-skewer',
-    );
+    db.prepare(
+      `UPDATE merchant_inventory SET stock = 10, demand_ema = 0.4, updated_at = ? WHERE merchant_id = 'chef' AND item_id = ?`,
+    ).run(Date.now() - 60_000, 'suya-skewer');
     syncChefInventory();
     const snap = db
-      .prepare(`SELECT stock, demand_ema FROM chef_inventory WHERE item_id = ?`)
+      .prepare(
+        `SELECT stock, demand_ema FROM merchant_inventory WHERE merchant_id = 'chef' AND item_id = ?`,
+      )
       .get('suya-skewer') as { stock: number; demand_ema: number };
     expect(snap.stock).toBeGreaterThan(10);
     expect(snap.demand_ema).toBeLessThan(0.4);
@@ -692,14 +705,67 @@ describe('chef prices', () => {
   it('recordChefFoodSale bumps demand without minting', async () => {
     syncChefInventory();
     const before = db
-      .prepare(`SELECT stock, demand_ema FROM chef_inventory WHERE item_id = ?`)
+      .prepare(
+        `SELECT stock, demand_ema FROM merchant_inventory WHERE merchant_id = 'chef' AND item_id = ?`,
+      )
       .get('jollof-and-chicken') as { stock: number; demand_ema: number };
     recordChefFoodSale('jollof-and-chicken');
     const after = db
-      .prepare(`SELECT stock, demand_ema FROM chef_inventory WHERE item_id = ?`)
+      .prepare(
+        `SELECT stock, demand_ema FROM merchant_inventory WHERE merchant_id = 'chef' AND item_id = ?`,
+      )
       .get('jollof-and-chicken') as { stock: number; demand_ema: number };
     expect(after.stock).toBe(before.stock - 1);
     expect(after.demand_ema).toBeCloseTo(before.demand_ema + CHEF_DEMAND_BUY, 5);
+  });
+});
+
+describe('smith and dealer prices', () => {
+  it('forge charges smith quote and lowers template stock on deliver', async () => {
+    const row = player('forge-q');
+    const smith = insertMerchant('smith');
+    fund(row.account_id!, 50_000n);
+    fund(smith, 0n);
+    itemBalances.set(row.account_id!, { shard: '10' });
+    const quote = quoteSmithGear('cap');
+    expect(quote.finalPrice).toBe(catalogById('cap')!.effect.gdCost);
+    const res = await forgeMint(row.id, 'cap');
+    expect(res.status).toBe('delivered');
+    expect(res.price).toBe(quote.finalPrice);
+    expect(balances.get(smith)).toBe(BigInt(quote.finalPrice));
+    expect(res.stock).toBeCloseTo(19, 3);
+    expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 5);
+    expect(res.tokenId).toMatch(/^gear-cap-/);
+  });
+
+  it('rejects sold-out smith gear', () => {
+    insertMerchant('smith');
+    syncMerchantInventory('smith');
+    db.prepare(
+      `UPDATE merchant_inventory SET stock = 0.2, updated_at = ? WHERE merchant_id = 'smith' AND item_id = ?`,
+    ).run(Date.now(), 'cap');
+    expect(() => quoteSmithGear('cap')).toThrow(/Sold out/);
+  });
+
+  it('recordSmithSale and recordDealerSale bump demand', () => {
+    syncMerchantInventory('smith');
+    syncMerchantInventory('dealer');
+    recordSmithSale('chain');
+    recordDealerSale('sofa');
+    const smith = db
+      .prepare(
+        `SELECT stock, demand_ema FROM merchant_inventory WHERE merchant_id = 'smith' AND item_id = ?`,
+      )
+      .get('chain') as { stock: number; demand_ema: number };
+    const dealer = db
+      .prepare(
+        `SELECT stock, demand_ema FROM merchant_inventory WHERE merchant_id = 'dealer' AND item_id = ?`,
+      )
+      .get('sofa') as { stock: number; demand_ema: number };
+    expect(smith.stock).toBe(19);
+    expect(smith.demand_ema).toBeCloseTo(CHEF_DEMAND_BUY, 5);
+    expect(dealer.stock).toBe(19);
+    expect(dealer.demand_ema).toBeCloseTo(CHEF_DEMAND_BUY, 5);
   });
 });
 

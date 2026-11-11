@@ -4,16 +4,18 @@ import {
   TOKEN_DEFS,
   UPKEEP_RATE,
   type Case,
+  type EventStage,
   type FeedPost,
   type MarketState,
+  type Pressures,
   type Token,
 } from '@glitch/shared';
 import { $, clamp, fmtN, pick as pickUi, randn, rnd as rndUi } from './util';
 import { bannerT, burn, S, save, setBannerT, setLevelUpHandler } from './state';
 import { NPC_NAMES } from './constants';
-import { crowdTo, glitchFx, npcs, say, worldFx } from './world';
+import { crowdTo, glitchFx, worldFx } from './world';
 import { drawScreens, renderSide, sideTab, updateHud } from './hud';
-import { chatIn, locAt, phoneOpen, phoneRefresh } from './phone';
+import { chatIn, phoneOpen, phoneRefresh } from './phone';
 
 setLevelUpHandler((skill, level, name) => {
   banner(`${skill} skill up: level ${level}`, 'good');
@@ -34,6 +36,9 @@ export const TOK: Token[] = TOKEN_DEFS.map(d => ({
 export const market: MarketState = { mood: 0, heat: 0 };
 export const cases: Case[] = [];
 export const feed: FeedPost[] = [];
+/** Mirrored from /stream — no Pressure HUD yet. */
+export const pressures: Pressures = { euphoria: 0, leverage: 0 };
+export let eventStage: EventStage | null = null;
 
 export let serverTick = 0;
 
@@ -46,12 +51,19 @@ export type StreamPayload = {
   feed: FeedPost[];
   cases: Case[];
   activeEvents: ActiveEvent[];
+  pressures?: Pressures;
+  eventStage?: EventStage | null;
 };
 
 export function applyStreamState(data: StreamPayload): void {
   serverTick = data.tick;
   market.mood = data.market.mood;
   market.heat = data.market.heat;
+  if (data.pressures) {
+    pressures.euphoria = data.pressures.euphoria;
+    pressures.leverage = data.pressures.leverage;
+  }
+  eventStage = data.eventStage ?? null;
 
   for (const incoming of data.tokens) {
     const t = TOK.find(x => x.sym === incoming.sym);
@@ -177,17 +189,14 @@ const CHAT: Array<(t: Token) => string> = [
 ];
 
 export function chatter() {
-  const a = pickUi(npcs);
+  /* No walking NPCs — ambient feed lines only (demo chrome). */
+  const name = pickUi(NPC_NAMES);
+  const loc = pickUi(['plaza', 'wall', 'lab', 'tower', 'diner', 'forge'] as const);
   const txt = pickUi(CHAT)(pickUi(TOK));
-  chatIn(locAt(a.position.x, a.position.z).id, a.userData.npc.name as string, txt);
-  if (Math.random() < 0.35) post('npc', a.userData.npc.name as string, txt);
-  if (Math.random() < 0.6) say(a, txt.length > 24 ? txt.slice(0, 24) + '…' : txt);
+  chatIn(loc, name, txt);
+  if (Math.random() < 0.35) post('npc', name, txt);
 }
 
-export const board: Array<{ name: string; ret: number; me?: number }> = NPC_NAMES.map(n => ({
-  name: n,
-  ret: rndUi(-0.3, 2.2),
-}));
 export const metrics = { on: 1280, vis: 48213 };
 export let tickT = 0;
 export const addTickT = (_dt: number) => {
@@ -197,7 +206,7 @@ export const addTickT = (_dt: number) => {
 let upkeepT = 0,
   saveT = 0,
   chatT = 5,
-  boardT = 0,
+  metricsT = 0,
   drawT = 0;
 
 /** Client-local economy chrome only — market/events/cases/feed come from SSE. */
@@ -214,10 +223,9 @@ export function economyUpdate(dt: number) {
     upkeepT = 0;
     burn(Math.max(0, S.bal) * UPKEEP_RATE);
   }
-  boardT += dt;
-  if (boardT >= 4) {
-    boardT = 0;
-    for (const b of board) b.ret += randn() * 0.08;
+  metricsT += dt;
+  if (metricsT >= 4) {
+    metricsT = 0;
     metrics.on = clamp(metrics.on + randn() * 22, 700, 2600);
     metrics.vis += Math.floor(rndUi(0, 4));
   }

@@ -4,7 +4,7 @@ Source of truth: [`shared/src/catalog.ts`](../shared/src/catalog.ts), taken from
 
 MVP has **no USDG**. Former USDG prices use `USDG_TO_GD = 500` (prototype swap `RATE`). Unique **gear** is listed for reference but minted at forge time as `gear-<type>-<uuid>` (`max_supply` 1) — not seeded. Entries marked **proposed** are UI placeholders only.
 
-Sellers: **chef** (food), **smith** (forge/gear), **dealer** (furniture/housing).
+Sellers: **chef** (food), **smith** (forge/gear), **dealer** (furniture/housing). Player-to-player resale of owned furniture/gear uses `/market` listings (not these merchant accounts). Unique **poses** and home **paint** are client cosmetics only — not items.
 
 ## Gear
 

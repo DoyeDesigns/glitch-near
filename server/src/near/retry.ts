@@ -77,6 +77,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** A 429 must not be retried. Another attempt spends the same quota. */
+function isRateLimited(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes('Rate limits exceeded') || msg.includes('-429');
+}
+
 function failureId(): string {
   return createHash('sha256').update(randomBytes(16)).digest('hex').slice(0, 24);
 }
@@ -112,6 +118,7 @@ export async function withChainRetry<T>(fn: () => Promise<T>, opts: ChainRetryOp
         last = err;
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[near] ${label} attempt ${attempt}/${READ_ATTEMPTS} failed: ${msg}`);
+        if (isRateLimited(err)) break;
         if (attempt < READ_ATTEMPTS) await sleep(BASE_MS * 2 ** (attempt - 1));
       }
     }

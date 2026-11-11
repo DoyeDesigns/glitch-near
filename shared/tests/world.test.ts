@@ -38,6 +38,8 @@ describe('World determinism', () => {
     expect(w.tokens[0]!.hist.length).toBe(120);
     expect(w.market).toEqual({ mood: 0, heat: 0 });
     expect(w.caseNo).toBe(200);
-    expect(w.nextEv).toBe(14);
+    expect(w.eventCheckIn).toBe(14);
+    expect(w.pressures).toEqual({ euphoria: 0, leverage: 0 });
+    expect(w.eventStage).toBeNull();
   });
 });

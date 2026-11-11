@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles.css">
 </head>
 <body>
 <div id="app">
@@ -28,31 +29,58 @@
     </div>
     <div class="card" id="loc" style="padding:4px 12px;font:600 12px var(--mono);color:var(--cyan)"></div>
     <nav class="tabs">
+      <button data-tab="feed">Feed</button>
       <button data-tab="skills">Skills</button><button data-tab="rank">Rank</button><button id="aboutBtn">About</button>
     </nav>
   </section>
   <section id="mk" class="card"></section>
   <aside id="side" class="card" hidden></aside>
-  <button id="phoneBtn" class="pri" data-n="">Phone</button>
   <div id="banner" hidden></div>
   <div id="reconnect" hidden>Reconnecting…</div>
   <button id="prompt" class="pri" hidden></button>
   <div id="joy" hidden><i></i></div>
-  <div id="coach">Drag to look around. WASD or the stick to move. Step into a glowing ring, then press Use.</div>
+  <div id="assistHint" hidden>
+    <button type="button" id="assistHintHide" aria-label="Hide hints">×</button>
+    <span id="assistHintText"></span>
+  </div>
+  <div id="coach">Hold-drag to look. Click the floating assistant for menus (or press P). WASD to move. Step to a door or station, then press Use.</div>
   <div id="modal" hidden><div class="sheet" id="sheet"></div></div>
   <div id="intro">
     <div class="sheet">
       <h1>GLITCH</h1>
       <p>Become a glitch. Get rich. Rewrite the chain.</p>
-      <label for="nameIn"><small>Your name</small></label>
-      <input id="nameIn" type="text" maxlength="20" value="" placeholder="letters, digits, - or _" autocomplete="username">
-      <label for="pinIn"><small>PIN</small></label>
-      <input id="pinIn" type="password" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="4–6 digits">
+      <nav class="intro-tabs" role="tablist" aria-label="Account">
+        <button type="button" class="on" data-intro-tab="signin" role="tab" aria-selected="true">Sign in</button>
+        <button type="button" data-intro-tab="create" role="tab" aria-selected="false">Create account</button>
+        <button type="button" data-intro-tab="guest" role="tab" aria-selected="false">Play as guest</button>
+      </nav>
       <p id="introErr" class="hint" hidden></p>
-      <p>Free to play. You start with 60,000 GD.</p>
-      <button id="startBtn" class="pri" style="width:100%;padding:12px">Enter the city</button>
-      <button id="createBtn" style="width:100%;padding:12px;margin-top:8px">Create account</button>
-      <button id="guestBtn" style="width:100%;padding:12px;margin-top:8px">Play as guest</button>
+      <div id="introNamed">
+        <label for="nameIn"><small>Your name</small></label>
+        <input id="nameIn" type="text" maxlength="20" value="" placeholder="letters, digits, - or _" autocomplete="username">
+        <label for="pinIn"><small>PIN</small></label>
+        <input id="pinIn" type="password" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="4–6 digits">
+        <label id="inviteLabel" for="inviteIn" hidden><small>Invite code</small></label>
+        <input id="inviteIn" type="text" hidden maxlength="64" autocomplete="off" placeholder="invite code">
+        <button id="startBtn" class="pri" style="width:100%;padding:12px;margin-top:8px">Enter the city</button>
+        <button id="createBtn" class="pri" style="width:100%;padding:12px;margin-top:8px" hidden>Create account</button>
+        <div id="googleWrap" class="google-wrap" hidden>
+          <div id="googleBtn"></div>
+          <p id="googleNameHint" class="hint" hidden>First time with Google: pick a player name above, then Finish.</p>
+          <button id="googleFinishBtn" type="button" class="pri" hidden style="width:100%;padding:12px">Finish Google sign-in</button>
+        </div>
+      </div>
+      <div id="introGuest" hidden>
+        <p class="hint">Jump in with a temporary guest name. Free to play — you start with 60,000 GD.</p>
+        <button id="guestBtn" class="pri" style="width:100%;padding:12px">Play as guest</button>
+      </div>
+      <p class="intro-switch hint">
+        <button type="button" class="lnk" data-intro-tab="signin">Sign in</button>
+        ·
+        <button type="button" class="lnk" data-intro-tab="create">Create account</button>
+        ·
+        <button type="button" class="lnk" data-intro-tab="guest">Play as guest</button>
+      </p>
     </div>
   </div>
 </div>

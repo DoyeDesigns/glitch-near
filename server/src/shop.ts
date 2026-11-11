@@ -1,6 +1,11 @@
 import { catalogById, type ChefPriceReasoning } from '@glitch/shared';
 import { AuthError, fundsView } from './auth';
-import { chefFoodSnapshot, quoteChefFood } from './chef';
+import {
+  chefFoodSnapshot,
+  dealerItemSnapshot,
+  quoteChefFood,
+  quoteDealerItem,
+} from './chef';
 import { getPlayerById } from './near/accounts';
 import { syncNeedsDecay } from './needs';
 import { purchase } from './purchase';
@@ -11,14 +16,14 @@ export type ShopBuyResult = {
   available: string;
   settling: string;
   needs: { energy: number; hunger: number };
-  /** Quoted food price when kind is food. */
+  /** Quoted merchant price when food or furniture. */
   price?: number;
   reasoning?: ChefPriceReasoning;
   stock?: number;
   demandEma?: number;
 };
 
-/** Food or furniture only. Food charges the chef quote, not catalog priceGD. */
+/** Food or furniture. Charges the merchant quote, not catalog list price. */
 export async function shopBuy(playerId: string, itemId: string): Promise<ShopBuyResult> {
   const item = catalogById(itemId);
   if (!item || (item.kind !== 'food' && item.kind !== 'furniture')) {
@@ -26,33 +31,27 @@ export async function shopBuy(playerId: string, itemId: string): Promise<ShopBuy
   }
   syncNeedsDecay(playerId);
 
-  let quote: ReturnType<typeof quoteChefFood> | null = null;
-  let result;
-  if (item.kind === 'food') {
-    quote = quoteChefFood(itemId);
-    result = await purchase(playerId, itemId, { amountGd: BigInt(quote.finalPrice) });
-  } else {
-    result = await purchase(playerId, itemId);
-  }
+  const quote = item.kind === 'food' ? quoteChefFood(itemId) : quoteDealerItem(itemId);
+  const result = await purchase(playerId, itemId, { amountGd: BigInt(quote.finalPrice) });
 
   const player = getPlayerById(playerId);
   if (!player) throw new AuthError('Player not found', 400);
   const funds = await fundsView(player);
   const needs = syncNeedsDecay(playerId);
   const delivered = 'ok' in result && result.ok;
-  const after = quote && delivered ? chefFoodSnapshot(itemId) ?? quote : quote;
+  const after = delivered
+    ? item.kind === 'food'
+      ? chefFoodSnapshot(itemId) ?? quote
+      : dealerItemSnapshot(itemId) ?? quote
+    : quote;
   return {
     status: delivered ? 'delivered' : 'settling',
     purchaseId: result.purchaseId,
     ...funds,
     needs,
-    ...(after
-      ? {
-          price: quote!.finalPrice,
-          reasoning: after.reasoning,
-          stock: after.stock,
-          demandEma: after.demandEma,
-        }
-      : {}),
+    price: quote.finalPrice,
+    reasoning: after.reasoning,
+    stock: after.stock,
+    demandEma: after.demandEma,
   };
 }

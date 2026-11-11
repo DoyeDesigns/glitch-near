@@ -73,6 +73,7 @@ async function createMerchantAccount(id: string, accountId: string, publicKey: s
  * Create chef, smith, and dealer under the players account.
  * An account or a stored key skips creation. A GD balance already at the float skips the mint.
  * The mint registers the receiver on the GD contract.
+ * Player-to-player listings (`/market`) pay the seller account directly — not these merchants.
  */
 export async function setupMerchants(): Promise<{
   created: string[];

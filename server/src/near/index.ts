@@ -2,9 +2,11 @@
 export {
   createPlayerAccount,
   getPlayerByAccountId,
+  getPlayerByGoogleSub,
   getPlayerById,
   getPlayerByName,
   resumePendingAccount,
+  setCreatePlayerAccountForTests,
   validatePlayerName,
 } from './accounts';
 export type { PlayerRow } from './accounts';
@@ -32,5 +34,14 @@ export {
 } from './items';
 export type { TokenView } from './items';
 export { decryptPrivateKey, encryptPrivateKey } from './keys';
+export {
+  getCurrentAd,
+  getMarketConfig,
+  getPrice,
+  getQueue,
+  normalizeBooking,
+  setMarketViewsForTests,
+} from './market';
+export type { MarketBooking, MarketConfig } from './market';
 export { ChainWriteError, recordChainFailure, withChainRetry } from './retry';
 export type { ChainRetryOpts } from './retry';
