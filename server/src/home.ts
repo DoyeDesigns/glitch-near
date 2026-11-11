@@ -1,5 +1,6 @@
 import { AuthError, fundsView } from './auth';
 import { dealerItemSnapshot, quoteDealerItem } from './chef';
+import { assertMerchantOpen } from './merchantGate';
 import { getPlayerById } from './near/accounts';
 import { syncNeedsDecay } from './needs';
 import { ownsStudio, payMaintenance, purchase, type PurchaseResult } from './purchase';
@@ -26,6 +27,7 @@ export type HomeResult = {
 export async function homeBuy(playerId: string): Promise<HomeResult> {
   if (await ownsStudio(playerId)) throw new AuthError('You already own a studio', 409);
   syncNeedsDecay(playerId);
+  await assertMerchantOpen('dealer');
   const quote = quoteDealerItem('studio-apartment');
   const studio = await purchase(playerId, 'studio-apartment', {
     amountGd: BigInt(quote.finalPrice),

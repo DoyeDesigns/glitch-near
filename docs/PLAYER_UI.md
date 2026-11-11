@@ -33,8 +33,8 @@ Walk to a lit door or station, press **Use**.
 | Wall Street / Exchange | Timed UP/DOWN bet | `/trade/open`, `/trade` |
 | Vault Lab | Vault Cracker locks | `/vault/start`, `/finish`, `/cancel` |
 | Attention Tower | Paid post | `/post` |
-| Gear Forge | Mint gear NFT for shards + GD | `/forge/mint` |
-| Neon Diner | Buy food (hunger) | `/shop/buy`, `/merchants` |
+| Gear Forge | Mint gear NFT for shards + GD; invest if closed | `/forge/mint`, `/merchants/smith/invest` |
+| Neon Diner | Buy food (hunger); invest if closed | `/shop/buy`, `/merchants`, `/merchants/chef/invest` |
 | Park bench | Rest energy | `/rest` `{ kind: 'bench' }` |
 | My Home | Sleep / decorate (if owned) | `/rest` sleep, `/home/*`, furniture via `/shop/buy` |
 
@@ -48,12 +48,12 @@ Open: click the cyan square drone beside the player, or press **P**. Modules gri
 | --- | --- | --- |
 | Social | Local feed / following | Client feed chrome; posts that pay go through `/post` at the tower |
 | Chat | Here / DMs | Client-local NPC chat stub |
-| Map | Districts + Go | **Go** burns GD in the browser (fast travel — client-only gap) |
+| Map | Districts + Go | **Go** → `POST /travel` (`GAS_GD` pending burn); warp only on success |
 | Balance | Available GD, shards, skill-pay meter, city-day sim | `/me`; sim uses `/sim/fast-forward` (no chain write) |
 | Profile | Name / role card | Mostly client + `/me` |
 | Pose | 10 presets + custom (arm raise 0=ribs / spread / elbow·knee) | **Client-only**; `localStorage` key `glitch-custom-pose-v5` |
 | Settings | Rename, look, hint toggle, Advanced chain proof, reset | `/me/chain`; reset clears local save only |
-| My Home | Buy studio, maintenance, furniture, room paint | `/home/*`, `/shop/buy`; **paint is client-only** |
+| My Home | Buy studio, maintenance, furniture, room paint; invest if dealer closed | `/home/*`, `/shop/buy`, `/merchants/dealer/invest`; **paint is client-only** |
 | Market | List / buy / cancel gear or furniture | `/market`, `/market/list`, `/market/buy`, `/market/cancel` |
 
 Hints: level-tiered lines near the drone (`#assistHint`). Hide with ×; re-enable in Settings or Modules home.

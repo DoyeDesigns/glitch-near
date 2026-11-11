@@ -2,7 +2,6 @@ import {
   chg as sharedChg,
   EVENTS,
   TOKEN_DEFS,
-  UPKEEP_RATE,
   type Case,
   type EventStage,
   type FeedPost,
@@ -11,11 +10,12 @@ import {
   type Token,
 } from '@glitch/shared';
 import { $, clamp, fmtN, pick as pickUi, randn, rnd as rndUi } from './util';
-import { bannerT, burn, S, save, setBannerT, setLevelUpHandler } from './state';
+import { bannerT, S, save, setBannerT, setLevelUpHandler } from './state';
 import { NPC_NAMES } from './constants';
 import { crowdTo, glitchFx, worldFx } from './world';
 import { drawScreens, renderSide, sideTab, updateHud } from './hud';
 import { chatIn, phoneOpen, phoneRefresh } from './phone';
+import { refreshMe } from './session';
 
 setLevelUpHandler((skill, level, name) => {
   banner(`${skill} skill up: level ${level}`, 'good');
@@ -42,7 +42,7 @@ export let eventStage: EventStage | null = null;
 
 export let serverTick = 0;
 
-export type ActiveEvent = { id: string; kind: string; label: string; at: number };
+export type ActiveEvent = { id: string; kind: string; label: string; at: number; fine?: number };
 
 export type StreamPayload = {
   tick: number;
@@ -113,13 +113,14 @@ export function applyActiveEvents(events: ActiveEvent[]): void {
         glitchFx();
         break;
       case 'playerCaught': {
-        // Server-authoritative economy later; local fine for presentation parity.
-        const loot = 0;
-        const fine = Math.min(Math.max(S.bal, 0), loot * 1.25);
-        burn(fine);
+        const fine =
+          typeof e.fine === 'number'
+            ? e.fine
+            : Number((e.label.match(/caught:#\d+:(\d+)/) || [])[1] || 0);
         S.rep -= 3;
         S.wantedUntil = Date.now() + 120000;
         banner(`CIA caught you. -${fmtN(fine)} GD and -3 rep`, 'bad');
+        void refreshMe();
         break;
       }
       case 'playerEscaped':
@@ -203,13 +204,12 @@ export const addTickT = (_dt: number) => {
   /* market ticks come from the server stream */
 };
 
-let upkeepT = 0,
-  saveT = 0,
+let saveT = 0,
   chatT = 5,
   metricsT = 0,
   drawT = 0;
 
-/** Client-local economy chrome only — market/events/cases/feed come from SSE. */
+/** Client chrome only — market/events/cases/feed from SSE; holding tax is server-side. */
 export function economyUpdate(dt: number) {
   tickT = serverTick;
 
@@ -217,11 +217,6 @@ export function economyUpdate(dt: number) {
   if (chatT <= 0) {
     chatter();
     chatT = rndUi(6, 11);
-  }
-  upkeepT += dt;
-  if (upkeepT >= 10) {
-    upkeepT = 0;
-    burn(Math.max(0, S.bal) * UPKEEP_RATE);
   }
   metricsT += dt;
   if (metricsT >= 4) {

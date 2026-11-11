@@ -6,7 +6,7 @@ Constants: [`shared/src/economy.ts`](../shared/src/economy.ts). Catalog: [`share
 
 See [`ONCHAIN.md`](./ONCHAIN.md) for the full map. Short rules that affect economy design:
 
-1. **Purchases ≠ burns.** Food, furniture, studio, maintenance, and forge `gdCost` are player-signed **`ft_transfer` → merchant** (`chef` / `dealer` / `smith`). Burns are only for sinks (holding tax / upkeep, fees, trade loss, post cost, fines) and merchant COGS on restock.
+1. **Purchases ≠ burns.** Food, furniture, studio, maintenance, and forge `gdCost` are player-signed **`ft_transfer` → merchant** (`chef` / `dealer` / `smith`). Burns are only for sinks (holding tax / upkeep, fees, trade loss, post cost, fines) and merchant COGS on restock. Shops **close** when merchant GD is below `MERCHANT_MIN_BALANCE` (1,000); players reopen via `POST /merchants/:id/invest`.
 2. **`available = chainBalance − pendingBurns − escrowed`.** Every spend, stake, and maintenance payment checks `available`. `/me` returns `available`. Lazy `burn_from` flushes are capped at real chain balance.
 3. **Food is instant.** Pay chef, apply hunger server-side, **no food token mint** (catalog food rows are price/effect only).
 4. **Pay-then-deliver** for furniture / studio / gear with `pending_delivery` + reconcile; refund from merchant is last resort.
@@ -92,9 +92,9 @@ Starter balance: **START_GD = 60,000** (not skill pay).
 | Trade fee | 1% of stake | **burn** accrued **(b)** |
 | Trade loss | up to stake | **burn** accrued **(b)** |
 | Post half-burn | 5,000 of 10,000 | **burn** accrued **(b)** |
-| Fast travel gas | **200** GD | **client-only** display (`GAS_GD`) — not server burn yet |
-| Passive upkeep (holding tax) | **0.01%** / **10s** | **client-only** display (`UPKEEP_RATE`) — not server burn yet |
-| CIA fine (guilty) | `min(bal, loot * 1.25)` | **client-only** display — not server burn yet |
+| Fast travel gas | **200** GD | **burn** accrued **(b)** via `POST /travel` (`GAS_GD`) |
+| Passive upkeep (holding tax) | **0.01%** / **10s** | **burn** accrued **(b)** on `GET /me` catch-up (`UPKEEP_RATE`) |
+| CIA fine (guilty) | `min(available, floor(loot * 1.25))` | **burn** accrued **(b)** when player case resolves |
 | Furniture | catalog `priceGD` | **`ft_transfer` → dealer** **(a)** |
 | Studio buy | **90,000** GD | **`ft_transfer` → dealer** **(a)** |
 | Studio maintenance | **1,000** GD / **1 h** | **`ft_transfer` → dealer** **(a)** |

@@ -137,6 +137,7 @@ export interface Case {
   at: number;
   caught?: boolean;
   loot?: number;
+  playerId?: string;
 }
 
 export interface FeedPost {

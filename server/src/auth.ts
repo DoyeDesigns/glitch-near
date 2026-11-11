@@ -20,6 +20,7 @@ import {
   validatePlayerName,
   type PlayerRow,
 } from './near';
+import { applyHoldingTax } from './burns';
 import { syncNeedsDecay } from './needs';
 
 export const SESSION_COOKIE = 'glitch_session';
@@ -506,9 +507,10 @@ export async function assertCanSpend(player: PlayerRow, amount: bigint): Promise
   throw new AuthError('Not enough GD', 400);
 }
 
-/** available includes settling. Chain balance is cached 5s. Needs are decayed first. */
+/** available includes settling. Chain balance is cached 5s. Needs + holding tax first. */
 export async function meForPlayer(player: PlayerRow): Promise<MePayload> {
   if (!player.account_id) throw new AuthError('Player has no account', 503);
+  await applyHoldingTax(player.id);
   const needs = syncNeedsDecay(player.id);
   const fresh = getPlayerById(player.id) ?? player;
   const [parts, items] = await Promise.all([balanceParts(fresh), getItemBalances(fresh.account_id!)]);

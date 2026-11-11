@@ -37,6 +37,19 @@ function simTokens(): Token[] {
 
 export const CHEF_MIN_BALANCE = 1_000;
 export const MERCHANT_MIN_BALANCE = CHEF_MIN_BALANCE;
+
+/** Shop is open when merchant spendable GD is at least MERCHANT_MIN_BALANCE. */
+export function merchantShopOpen(gdBalance: number | bigint | string): boolean {
+  const bal = typeof gdBalance === 'bigint' ? gdBalance : BigInt(gdBalance);
+  return bal >= BigInt(MERCHANT_MIN_BALANCE);
+}
+
+/** GD still needed for the merchant to reopen (0 when already open). */
+export function merchantInvestToOpen(gdBalance: number | bigint | string): number {
+  const bal = typeof gdBalance === 'bigint' ? gdBalance : BigInt(gdBalance);
+  const need = BigInt(MERCHANT_MIN_BALANCE) - bal;
+  return need > 0n ? Number(need) : 0;
+}
 export const CHEF_PRICE_MIN_MULT = 0.5;
 export const CHEF_PRICE_MAX_MULT = 3;
 /** Stock units restored toward target per second. */

@@ -10,6 +10,7 @@ import {
   MERCHANT_MIN_BALANCE,
   merchantItemRule,
   merchantRulesFor,
+  merchantShopOpen,
   quoteChefPrice,
   SMITH_GEAR,
   smithGearRule,
@@ -51,6 +52,8 @@ export type MerchantShopView = {
   accountId: string;
   gdBalance: string;
   minBalance: number;
+  /** True when gdBalance is below MERCHANT_MIN_BALANCE. */
+  closed: boolean;
   menu: MerchantMenuItem[];
 };
 
@@ -271,10 +274,12 @@ async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
     }
     menu.push(entry);
   }
+  const minBalance = merchantId === 'chef' ? CHEF_MIN_BALANCE : MERCHANT_MIN_BALANCE;
   return {
     accountId: merchant.account_id,
     gdBalance,
-    minBalance: merchantId === 'chef' ? CHEF_MIN_BALANCE : MERCHANT_MIN_BALANCE,
+    minBalance,
+    closed: !merchantShopOpen(gdBalance),
     menu,
   };
 }

@@ -117,11 +117,6 @@ export function settle(stake: number, pnl: number) {
   return { credited: pnl, capped: false };
 }
 
-export const burn = (n: number) => {
-  S.bal -= n;
-  S.burned += n;
-};
-
 export function roleName() {
   if (Date.now() < S.wantedUntil) return 'Wanted';
   const t = L('trade'),

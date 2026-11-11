@@ -10,6 +10,7 @@ import {
   type Token,
   type World,
 } from '@glitch/shared';
+import { chargeCiaFine } from './burns';
 import { config } from './config';
 
 export type ActiveEvent = {
@@ -17,6 +18,8 @@ export type ActiveEvent = {
   kind: string;
   label: string;
   at: number;
+  /** GD charged when kind is playerCaught. */
+  fine?: number;
 };
 
 export type StreamToken = Omit<Token, 'hist'> & { hist: number[] };
@@ -50,34 +53,47 @@ function labelForEffect(e: SimEffect): string {
     case 'glitch':
       return 'glitch';
     case 'playerCaught':
-      return `caught:#${e.caseNo}`;
+      return e.fine != null ? `caught:#${e.caseNo}:${e.fine}` : `caught:#${e.caseNo}`;
     case 'playerEscaped':
       return `escaped:#${e.caseNo}`;
   }
 }
 
-function drainEffects(): void {
+/** Drain sim effects into the SSE feed; charge CIA fines before publishing playerCaught. */
+export async function drainEffects(): Promise<void> {
   const now = world.time;
-  for (const e of world.effects) {
+  const batch = world.effects.splice(0, world.effects.length);
+  for (const e of batch) {
+    let fine: number | undefined;
+    let effect = e;
+    if (e.kind === 'playerCaught' && e.playerId) {
+      fine = await chargeCiaFine(e.playerId, e.loot, e.caseNo);
+      effect = { ...e, fine };
+    }
     effectSeq += 1;
     activeEvents.unshift({
       id: `${Math.floor(now * 1000)}-${effectSeq}`,
-      kind: e.kind,
-      label: labelForEffect(e),
+      kind: effect.kind,
+      label: labelForEffect(effect),
       at: now,
+      ...(fine != null ? { fine } : {}),
     });
   }
-  world.effects.length = 0;
   while (activeEvents.length > MAX_ACTIVE) activeEvents.pop();
   for (let i = activeEvents.length - 1; i >= 0; i--) {
     if (now - activeEvents[i]!.at > ACTIVE_TTL_SEC) activeEvents.splice(i, 1);
   }
 }
 
+/** One sim step + effect drain (tests and the live loop). */
+export async function stepSim(dtSeconds = 0.5): Promise<void> {
+  stepWorld(world, dtSeconds);
+  await drainEffects();
+}
+
 export function startSimLoop(): void {
   setInterval(() => {
-    stepWorld(world, 0.5);
-    drainEffects();
+    void stepSim(0.5);
   }, 500);
   console.log(`[sim] stepping world seed=${config.seed} every 500ms`);
 }
@@ -115,4 +131,10 @@ export function getHealth() {
     time: world.time,
     chainMode: config.chainMode,
   };
+}
+
+/** Test helper: clear active event feed. */
+export function clearActiveEventsForTests(): void {
+  activeEvents.length = 0;
+  effectSeq = 0;
 }

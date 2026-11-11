@@ -98,9 +98,10 @@ Burns are **not** used for player purchases.
 | Trade loss | **(b)** | |
 | Post cost (burn half) | **(b)** | Escrow half separate |
 | Player market fee (2%) | **(b)** | Accrued on seller when GD transfer lands |
+| Fast travel gas | **(b)** | `GAS_GD` (200); `POST /travel` |
+| Passive holding tax | **(b)** | `UPKEEP_RATE` / `UPKEEP_INTERVAL_S`; catch-up on `GET /me` |
+| CIA fine (guilty) | **(b)** | `min(available, floor(loot * 1.25))` when player case resolves |
 | Merchant cost-of-goods on restock | **(a)** | Treasury/merchant burn when restocking inventory economics |
-
-**Still client-only display sinks** (browser balance chrome; not server `pending_burns` yet): passive holding tax (`UPKEEP_RATE` / 10s), fast-travel gas (`GAS_GD`), CIA fines.
 
 ### Escrow — server ledger **(b)**-adjacent
 

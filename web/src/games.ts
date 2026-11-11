@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   catalogById,
+  merchantInvestToOpen,
   merchantRulesFor,
   HOMEP_GD,
   MAINTENANCE_GD,
@@ -1075,18 +1076,44 @@ type MerchantMenuDish = {
 /** @deprecated Alias. */
 type ChefMenuDish = MerchantMenuDish;
 
+type MerchantShopMeta = { closed: boolean; gdBalance: string; minBalance: number };
+
 /** Cached dealer / smith quotes from GET /merchants. */
 export let dealerQuotes: Record<string, MerchantMenuDish> = {};
 export let smithQuotes: Record<string, MerchantMenuDish> = {};
+export let chefShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBalance: 1000 };
+export let smithShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBalance: 1000 };
+export let dealerShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBalance: 1000 };
+
+function shopMeta(raw: { closed?: boolean; gdBalance?: string; minBalance?: number } | undefined): MerchantShopMeta {
+  return {
+    closed: !!raw?.closed,
+    gdBalance: String(raw?.gdBalance ?? '0'),
+    minBalance: Number(raw?.minBalance ?? 1000) || 1000,
+  };
+}
+
+const CLOSED_MSG = 'Closed — merchant is out of GD';
+
+function investBlock(merchantId: 'chef' | 'smith' | 'dealer', shop: MerchantShopMeta): string {
+  if (!shop.closed) return '';
+  const need = merchantInvestToOpen(shop.gdBalance);
+  const def = Math.max(need, 1);
+  return `<div class="day" style="margin:8px 0"><b>${esc(CLOSED_MSG)}</b><p class="hint">Invest GD into this merchant to reopen (need ${fmtN(need)} GD more). Balance ${fmtN(Number(shop.gdBalance))} / ${fmtN(shop.minBalance)}.</p><div class="cmp"><input id="investAmt" type="number" min="1" step="1" value="${def}"><button class="pri" data-a="invest" data-v="${merchantId}" data-invest="${merchantId}">Invest</button></div></div>`;
+}
 
 export async function loadMerchantQuotes(): Promise<void> {
   const res = await fetch('/merchants', { credentials: 'include' });
   const data = (await res.json()) as {
     error?: string;
-    dealer?: { menu: MerchantMenuDish[] };
-    smith?: { menu: MerchantMenuDish[] };
+    chef?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
+    dealer?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
+    smith?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
   };
   if (!res.ok) throw new Error(data.error || 'Could not load merchants');
+  chefShop = shopMeta(data.chef);
+  dealerShop = shopMeta(data.dealer);
+  smithShop = shopMeta(data.smith);
   dealerQuotes = Object.fromEntries((data.dealer?.menu ?? []).map(d => [d.itemId, d]));
   smithQuotes = Object.fromEntries((data.smith?.menu ?? []).map(d => [d.itemId, d]));
 }
@@ -1120,18 +1147,57 @@ export function dinerGame() {
     const res = await fetch('/merchants', { credentials: 'include' });
     const data = (await res.json()) as {
       error?: string;
-      chef?: { menu: ChefMenuDish[] };
-      dealer?: { menu: MerchantMenuDish[] };
-      smith?: { menu: MerchantMenuDish[] };
+      chef?: { menu: ChefMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
+      dealer?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
+      smith?: { menu: MerchantMenuDish[]; closed?: boolean; gdBalance?: string; minBalance?: number };
     };
     if (!res.ok) throw new Error(data.error || 'Could not load menu');
     menu = data.chef?.menu ?? [];
+    chefShop = shopMeta(data.chef);
+    dealerShop = shopMeta(data.dealer);
+    smithShop = shopMeta(data.smith);
     dealerQuotes = Object.fromEntries((data.dealer?.menu ?? []).map(d => [d.itemId, d]));
     smithQuotes = Object.fromEntries((data.smith?.menu ?? []).map(d => [d.itemId, d]));
   };
+  const bindInvest = () => {
+    const btn = sheet.querySelector('[data-invest]') as HTMLButtonElement | null;
+    if (!btn) return;
+    btn.onclick = () => {
+      void (async () => {
+        if (busy) return;
+        const inp = $('#investAmt') as HTMLInputElement | null;
+        const amount = Math.floor(Number(inp?.value ?? 0));
+        if (!Number.isFinite(amount) || amount <= 0) {
+          banner('Enter a positive GD amount', 'bad');
+          return;
+        }
+        busy = true;
+        r();
+        try {
+          const res = await lifeRequest<{
+            closed: boolean;
+            gdBalance: string;
+            available: string;
+            settling: string;
+          }>(`/merchants/${btn.dataset.invest}/invest`, { amount });
+          applyFunds(res.available, res.settling);
+          chefShop = { ...chefShop, closed: res.closed, gdBalance: res.gdBalance };
+          banner(res.closed ? 'Invested. Shop still needs more GD.' : 'Shop reopened.', res.closed ? 'info' : 'good');
+          await loadMenu();
+          updateHud();
+        } catch (err) {
+          banner(err instanceof Error ? err.message : 'Could not invest', 'bad');
+        } finally {
+          busy = false;
+          r();
+        }
+      })();
+    };
+  };
   const r = () => {
     const funds = fundsNow();
-    sheet.innerHTML = `<h2>Neon Diner</h2><p>Paid in <b>GD</b>. Prices move with stock and demand. You have <b>${fmtN(funds)} GD</b>.</p>${meters()}${
+    const closed = chefShop.closed;
+    sheet.innerHTML = `<h2>Neon Diner</h2><p>Paid in <b>GD</b>. Prices move with stock and demand. You have <b>${fmtN(funds)} GD</b>.</p>${meters()}${investBlock('chef', chefShop)}${
       menu.length === 0
         ? '<p class="hint">Loading menu…</p>'
         : menu
@@ -1143,10 +1209,13 @@ export function dinerGame() {
               const sim = simPrices[d.itemId];
               const simHint =
                 sim != null ? `<div class="hint">sim ${fmtN(sim)} GD</div>` : '';
-              return `<div class="loc"><div><b>${esc(d.title)}</b><div class="hint">${esc(item?.effect.description ?? '')}${h ? `: +${h} hunger` : ''}${e ? `, +${e} energy` : ''}</div><div class="hint">${esc(reasonHint(d))}</div>${simHint}</div><button class="pri" data-id="${d.itemId}" ${soldOut || funds < d.price || busy ? 'disabled' : ''}>${soldOut ? 'Sold out' : `${fmtN(d.price)} GD`}</button></div>`;
+              const disable = closed || soldOut || funds < d.price || busy;
+              const label = closed ? 'Closed' : soldOut ? 'Sold out' : `${fmtN(d.price)} GD`;
+              return `<div class="loc"><div><b>${esc(d.title)}</b><div class="hint">${esc(item?.effect.description ?? '')}${h ? `: +${h} hunger` : ''}${e ? `, +${e} energy` : ''}</div><div class="hint">${esc(reasonHint(d))}</div>${simHint}</div><button class="pri" data-id="${d.itemId}" ${disable ? 'disabled' : ''}>${label}</button></div>`;
             })
             .join('')
-    }<div class="acts"><button id="dsim" ${busy || simPlaying ? 'disabled' : ''}>${simPlaying ? 'Simulating…' : 'Simulate 1 day'}</button><button id="dx">Leave</button></div>`;
+    }<div class="acts"><button id="dsim" ${busy || simPlaying || closed ? 'disabled' : ''}>${simPlaying ? 'Simulating…' : 'Simulate 1 day'}</button><button id="dx">Leave</button></div>`;
+    bindInvest();
     sheet.querySelectorAll('[data-id]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         void (async () => {
@@ -1292,12 +1361,15 @@ export const mmss = (ms: number) => {
 export function homeHtml(hdr: (title: string, back: string) => string) {
   const H = S.home;
   const funds = fundsNow();
+  const closed = dealerShop.closed;
   const studioQ = dealerQuotes['studio-apartment'];
   const studioPrice = studioQ?.price ?? HOMEP;
+  const closedBlock = investBlock('dealer', dealerShop);
   if (!H.owned)
     return (
       hdr('My Home', 'home') +
-      `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div>${studioQ ? `<div class="hint">${esc(reasonHint(studioQ))}</div>` : ''}</div></div><div class="acts"><button class="pri" data-a="buyhome" ${funds < studioPrice + MAINTENANCE ? 'disabled' : ''}>Buy: ${fmtN(studioPrice)} GD + ${fmtN(MAINTENANCE)} GD maintenance</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
+      closedBlock +
+      `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div>${studioQ ? `<div class="hint">${esc(reasonHint(studioQ))}</div>` : ''}</div></div><div class="acts"><button class="pri" data-a="buyhome" ${closed || funds < studioPrice + MAINTENANCE ? 'disabled' : ''}>${closed ? 'Closed' : `Buy: ${fmtN(studioPrice)} GD + ${fmtN(MAINTENANCE)} GD maintenance`}</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
     );
   const paintId = H.paint?.id ?? 'midnight';
   const paints = HOME_PAINT_PRESETS.map(
@@ -1306,8 +1378,9 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
   ).join('');
   return (
     hdr('My Home', 'home') +
+    closedBlock +
     `<div class="loc"><div><b>Studio apartment</b><div class="hint">${overdue() ? '<span class="neg">MAINTENANCE OVERDUE. Your bed is locked until you pay.</span>' : 'Maintenance paid for ' + mmss(maintenanceLeft())} · Comfort ${comfort()}</div></div></div>
-  <div class="acts"><button class="pri" data-a="gohome">Go home (free)</button><button data-a="paymaintenance" ${funds < MAINTENANCE || maintenanceLeft() > MAINTENANCE_MS * 2 ? 'disabled' : ''}>Pay maintenance ${fmtN(MAINTENANCE)} GD</button></div>
+  <div class="acts"><button class="pri" data-a="gohome">Go home (free)</button><button data-a="paymaintenance" ${closed || funds < MAINTENANCE || maintenanceLeft() > MAINTENANCE_MS * 2 ? 'disabled' : ''}>${closed ? 'Closed' : `Pay maintenance ${fmtN(MAINTENANCE)} GD`}</button></div>
   <small style="display:block;margin-top:10px">Room colors</small><div class="paint-grid">${paints}</div>
   <small style="display:block;margin-top:10px">Furniture</small>` +
     FURN.map(f => {
@@ -1315,13 +1388,41 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
       const price = q?.price ?? catalogById(f.id)?.priceGD ?? f.price;
       const soldOut = q != null && q.stock < 1;
       const hint = q ? `${f.d} · +${f.pts} comfort · ${reasonHint(q)}` : `${f.d} · +${f.pts} comfort`;
-      return `<div class="loc"><div><b>${f.name}</b><div class="hint">${esc(hint)}</div></div>${hasF(f.id) ? '<span class="tag">Owned</span>' : `<button data-a="furn" data-v="${f.id}" ${soldOut || funds < price ? 'disabled' : ''}>${soldOut ? 'Sold out' : fmtN(price)}</button>`}</div>`;
+      const disable = closed || soldOut || funds < price;
+      const label = closed ? 'Closed' : soldOut ? 'Sold out' : fmtN(price);
+      return `<div class="loc"><div><b>${f.name}</b><div class="hint">${esc(hint)}</div></div>${hasF(f.id) ? '<span class="tag">Owned</span>' : `<button data-a="furn" data-v="${f.id}" ${disable ? 'disabled' : ''}>${label}</button>`}</div>`;
     }).join('')
   );
 }
 
 export function homeAct(a: string, v?: string): boolean | void {
   const H = S.home;
+  if (a === 'invest') {
+    const merchantId = v === 'chef' || v === 'smith' || v === 'dealer' ? v : 'dealer';
+    const inp = $('#investAmt') as HTMLInputElement | null;
+    const amount = Math.floor(Number(inp?.value ?? 0));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      banner('Enter a positive GD amount', 'bad');
+      return;
+    }
+    void lifeRequest<{
+      closed: boolean;
+      gdBalance: string;
+      available: string;
+      settling: string;
+    }>(`/merchants/${merchantId}/invest`, { amount })
+      .then(async res => {
+        applyFunds(res.available, res.settling);
+        if (merchantId === 'dealer') dealerShop = { ...dealerShop, closed: res.closed, gdBalance: res.gdBalance };
+        if (merchantId === 'chef') chefShop = { ...chefShop, closed: res.closed, gdBalance: res.gdBalance };
+        if (merchantId === 'smith') smithShop = { ...smithShop, closed: res.closed, gdBalance: res.gdBalance };
+        banner(res.closed ? 'Invested. Shop still needs more GD.' : 'Shop reopened.', res.closed ? 'info' : 'good');
+        await loadMerchantQuotes().catch(() => {});
+        updateHud();
+      })
+      .catch(err => banner(err instanceof Error ? err.message : 'Could not invest', 'bad'));
+    return;
+  }
   if (a === 'homepaint') {
     if (!H.owned || !v) return;
     const preset = HOME_PAINT_PRESETS.find(p => p.id === v);
@@ -1445,8 +1546,9 @@ export function forgeGame() {
   let busy = false;
   const r = () => {
     const funds = fundsNow();
+    const closed = smithShop.closed;
     sheet.innerHTML =
-      `<h2>Gear Forge</h2><p>Gear is an <b>NFT</b>: a one-of-a-kind item with its own number that only you own. Collect <b>Shards</b> from the Vault Cracker, then mint here. GD price is the smith quote.</p><div class="hint">You have <b>${S.shards}</b> shards and <b>${fmtN(funds)}</b> GD.</div>` +
+      `<h2>Gear Forge</h2><p>Gear is an <b>NFT</b>: a one-of-a-kind item with its own number that only you own. Collect <b>Shards</b> from the Vault Cracker, then mint here. GD price is the smith quote.</p><div class="hint">You have <b>${S.shards}</b> shards and <b>${fmtN(funds)}</b> GD.</div>${investBlock('smith', smithShop)}` +
       Object.keys(GEARINFO)
         .map(k => {
           const g = +k,
@@ -1460,10 +1562,46 @@ export function forgeGame() {
             tip = own
               ? `Owned: ${own.id.slice(-8)}`
               : `${shd} shards + ${fmtN(gd)} GD${q ? ` · ${reasonHint(q)}` : ''}`;
-          return `<div class="loc"><div><b>${GEARS[g]}</b> <span class="tag">${i.rar}</span><div class="hint">${esc(tip)}</div></div>${own ? `<button data-e="${g}">${S.look.gear === g ? 'Wearing' : 'Wear'}</button>` : `<button class="pri" data-mint="${g}" ${soldOut || busy || S.shards < shd || funds < gd ? 'disabled' : ''}>${soldOut ? 'Sold out' : 'Mint'}</button>`}</div>`;
+          const disable = closed || soldOut || busy || S.shards < shd || funds < gd;
+          const label = closed ? 'Closed' : soldOut ? 'Sold out' : 'Mint';
+          return `<div class="loc"><div><b>${GEARS[g]}</b> <span class="tag">${i.rar}</span><div class="hint">${esc(tip)}</div></div>${own ? `<button data-e="${g}">${S.look.gear === g ? 'Wearing' : 'Wear'}</button>` : `<button class="pri" data-mint="${g}" ${disable ? 'disabled' : ''}>${label}</button>`}</div>`;
         })
         .join('') +
       '<div class="acts"><button id="fx2">Leave</button></div>';
+    const investBtn = sheet.querySelector('[data-invest]') as HTMLButtonElement | null;
+    if (investBtn) {
+      investBtn.onclick = () => {
+        void (async () => {
+          if (busy) return;
+          const inp = $('#investAmt') as HTMLInputElement | null;
+          const amount = Math.floor(Number(inp?.value ?? 0));
+          if (!Number.isFinite(amount) || amount <= 0) {
+            banner('Enter a positive GD amount', 'bad');
+            return;
+          }
+          busy = true;
+          r();
+          try {
+            const res = await lifeRequest<{
+              closed: boolean;
+              gdBalance: string;
+              available: string;
+              settling: string;
+            }>('/merchants/smith/invest', { amount });
+            applyFunds(res.available, res.settling);
+            smithShop = { ...smithShop, closed: res.closed, gdBalance: res.gdBalance };
+            banner(res.closed ? 'Invested. Shop still needs more GD.' : 'Shop reopened.', res.closed ? 'info' : 'good');
+            await loadMerchantQuotes();
+            updateHud();
+          } catch (err) {
+            banner(err instanceof Error ? err.message : 'Could not invest', 'bad');
+          } finally {
+            busy = false;
+            r();
+          }
+        })();
+      };
+    }
     sheet.querySelectorAll('[data-e]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         S.look.gear = +(b as HTMLElement).dataset.e!;

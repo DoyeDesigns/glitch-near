@@ -32,6 +32,8 @@ export interface Case {
   at: number;
   caught?: boolean;
   loot?: number;
+  /** Custodial player id when suspect === 'player'. */
+  playerId?: string;
 }
 
 export interface FeedPost {
@@ -50,7 +52,7 @@ export type SimEffect =
   | { kind: 'crowd'; zone: string; secs: number }
   | { kind: 'panic'; panic: number; siren: number }
   | { kind: 'glitch' }
-  | { kind: 'playerCaught'; caseNo: number; loot: number }
+  | { kind: 'playerCaught'; caseNo: number; loot: number; playerId?: string; fine?: number }
   | { kind: 'playerEscaped'; caseNo: number };
 
 export type EventArchetype = 'pump' | 'rugPull';

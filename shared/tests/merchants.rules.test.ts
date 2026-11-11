@@ -8,12 +8,31 @@ import {
   CHEF_PRICE_MIN_MULT,
   CHEF_SIM_MAX_HOURS,
   DEALER_GOODS,
+  MERCHANT_MIN_BALANCE,
+  merchantInvestToOpen,
+  merchantShopOpen,
   quoteChefPrice,
   simulateCityFastForward,
   SMITH_GEAR,
 } from '../src/merchants.rules';
 
 const zobo = CHEF_FOOD.find(r => r.id === 'zobo-drink')!;
+
+describe('merchant insolvency helpers', () => {
+  it('shop is closed below MERCHANT_MIN_BALANCE and open at or above', () => {
+    expect(merchantShopOpen(0)).toBe(false);
+    expect(merchantShopOpen(MERCHANT_MIN_BALANCE - 1)).toBe(false);
+    expect(merchantShopOpen(MERCHANT_MIN_BALANCE)).toBe(true);
+    expect(merchantShopOpen(BigInt(MERCHANT_MIN_BALANCE) + 50n)).toBe(true);
+  });
+
+  it('invest-to-open is the shortfall to the minimum', () => {
+    expect(merchantInvestToOpen(0)).toBe(MERCHANT_MIN_BALANCE);
+    expect(merchantInvestToOpen(MERCHANT_MIN_BALANCE - 250)).toBe(250);
+    expect(merchantInvestToOpen(MERCHANT_MIN_BALANCE)).toBe(0);
+    expect(merchantInvestToOpen(String(MERCHANT_MIN_BALANCE + 10))).toBe(0);
+  });
+});
 
 describe('chef quote', () => {
   it('at full stock with no demand quotes base price', () => {

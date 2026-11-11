@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { KeyPair, nearToYocto } from 'near-api-js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { catalogById, CHEF_DEMAND_BUY, MAINTENANCE_MS } from '@glitch/shared';
+import { catalogById, CHEF_DEMAND_BUY, MAINTENANCE_MS, MERCHANT_MIN_BALANCE } from '@glitch/shared';
 import { availableGd, spendableGd } from '../src/auth';
 import { config } from '../src/config';
 import { db } from '../src/db';
 import {
+  merchantsView,
   quoteChefFood,
   quoteDealerItem,
   quoteSmithGear,
@@ -17,8 +18,9 @@ import {
 } from '../src/chef';
 import { forgeMint, resumeForges } from '../src/forge';
 import { homeBuy, homePayRent } from '../src/home';
+import { MERCHANT_CLOSED_MSG } from '../src/merchantGate';
 import { syncNeedsDecay } from '../src/needs';
-import { purchase, resumePurchases } from '../src/purchase';
+import { investInMerchant, purchase, resumePurchases } from '../src/purchase';
 import { restPlayer } from '../src/rest';
 import { shopBuy } from '../src/shop';
 import {
@@ -27,7 +29,7 @@ import {
   enqueueTreasuryWrite,
   setNearFundingForTests,
 } from '../src/near/client';
-import { getGDBalanceCached, resumeTransfers, setGdChainForTests, ftTransfer } from '../src/near/gd';
+import { getGDBalanceCached, invalidateGdCache, resumeTransfers, setGdChainForTests, ftTransfer } from '../src/near/gd';
 import { setItemsChainForTests } from '../src/near/items';
 import { encryptPrivateKey } from '../src/near/keys';
 import { lastSignedCall, lastTreasuryCall, setMintTxTestHooks } from '../src/near/mintTx';
@@ -96,11 +98,13 @@ function state(id: string): { xp_json: string; needs_json: string; followers: nu
     .get(id) as { xp_json: string; needs_json: string; followers: number; pay_used: number };
 }
 
-function insertMerchant(id: 'chef' | 'smith' | 'dealer'): string {
+function insertMerchant(id: 'chef' | 'smith' | 'dealer', gd = MERCHANT_FLOAT): string {
   const accountId = merchantAccountId(id);
   db.prepare(
     `INSERT INTO merchants (id, account_id, enc_private_key, floated, created_at) VALUES (?, ?, ?, 1, ?)`,
   ).run(id, accountId, encryptPrivateKey(KeyPair.fromRandom('ed25519').toString()), Date.now());
+  fund(accountId, gd);
+  invalidateGdCache(accountId);
   return accountId;
 }
 
@@ -363,7 +367,7 @@ describe('spendable', () => {
     const result = await purchase(row.id, 'zobo-drink');
     expect(result).toEqual({ ok: true, purchaseId: expect.any(String), status: 'delivered' });
     expect(balances.get(row.account_id!)).toBe(0n);
-    expect(balances.get(merchantAccountId('chef'))).toBe(1_000n);
+    expect(balances.get(merchantAccountId('chef'))).toBe(MERCHANT_FLOAT + 1_000n);
   });
 });
 
@@ -463,7 +467,7 @@ describe('purchase', () => {
     expect(db.prepare(`SELECT COUNT(*) AS n FROM pending_burns WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
     expect(db.prepare(`SELECT COUNT(*) AS n FROM escrow WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
     expect(balances.get(row.account_id!)).toBe(600n);
-    expect(balances.get(chef)).toBe(1_000n);
+    expect(balances.get(chef)).toBe(MERCHANT_FLOAT + 1_000n);
     const bought = purchaseRow(row.id);
     expect(bought.status).toBe('delivered');
     expect(bought.delivered).toBe(1);
@@ -533,7 +537,7 @@ describe('purchase', () => {
     expect(done.delivered).toBe(1);
     expect(db.prepare(`SELECT COUNT(*) AS n FROM escrow WHERE id = ?`).get(paying.id)).toEqual({ n: 0 });
     expect(balances.get(row.account_id!)).toBe(2_000n);
-    expect(balances.get(merchantAccountId('dealer'))).toBe(8_000n);
+    expect(balances.get(merchantAccountId('dealer'))).toBe(MERCHANT_FLOAT + 8_000n);
     // One transfer sign earlier, then one item-mint sign on resume.
     expect(signs).toBe(transferSigns + 1);
     const mintSigns = signs;
@@ -553,7 +557,7 @@ describe('purchase', () => {
     expect(db.prepare(`SELECT COUNT(*) AS n FROM escrow WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
     expect(purchaseRow(row.id).status).toBe('failed');
     expect(balances.get(row.account_id!)).toBe(3_000n);
-    expect(balances.get(merchantAccountId('chef')) ?? 0n).toBe(0n);
+    expect(balances.get(merchantAccountId('chef')) ?? 0n).toBe(MERCHANT_FLOAT);
   });
 
   it('leaves the player row alone when the burn fails before reserve', async () => {
@@ -655,16 +659,15 @@ describe('chef prices', () => {
     const row = player('chef-q');
     const chef = insertMerchant('chef');
     fund(row.account_id!, 20_000n);
-    fund(chef, 0n);
     const quote = quoteChefFood('zobo-drink');
     expect(quote.finalPrice).toBe(1_000);
     const res = await shopBuy(row.id, 'zobo-drink');
     expect(res.status).toBe('delivered');
     expect(res.price).toBe(1_000);
-    expect(balances.get(chef)).toBe(1_000n);
+    expect(balances.get(chef)).toBe(MERCHANT_FLOAT + 1_000n);
     expect(purchaseRow(row.id).amount).toBe('1000');
-    expect(res.stock).toBeCloseTo(19, 3);
-    expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 5);
+    expect(res.stock).toBeCloseTo(19, 2);
+    expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 4);
     expect(res.reasoning!.finalPrice).toBeGreaterThan(1_000);
   });
 
@@ -678,8 +681,8 @@ describe('chef prices', () => {
     expect(res.status).toBe('delivered');
     expect(res.price).toBe(quote.finalPrice);
     expect(purchaseRow(row.id).amount).toBe(String(quote.finalPrice));
-    expect(res.stock).toBeCloseTo(19, 3);
-    expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 5);
+    expect(res.stock).toBeCloseTo(19, 2);
+    expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 4);
   });
 
   it('rejects sold-out food and restocks across timestamps', async () => {
@@ -725,16 +728,16 @@ describe('smith and dealer prices', () => {
     const row = player('forge-q');
     const smith = insertMerchant('smith');
     fund(row.account_id!, 50_000n);
-    fund(smith, 0n);
     itemBalances.set(row.account_id!, { shard: '10' });
     const quote = quoteSmithGear('cap');
     expect(quote.finalPrice).toBe(catalogById('cap')!.effect.gdCost);
     const res = await forgeMint(row.id, 'cap');
     expect(res.status).toBe('delivered');
     expect(res.price).toBe(quote.finalPrice);
-    expect(balances.get(smith)).toBe(BigInt(quote.finalPrice));
-    expect(res.stock).toBeCloseTo(19, 3);
-    expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 5);
+    expect(balances.get(smith)).toBe(MERCHANT_FLOAT + BigInt(quote.finalPrice));
+    // Open-gate + forge path can restock/decay slightly before the sale is recorded.
+    expect(res.stock).toBeCloseTo(19, 2);
+    expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 4);
     expect(res.tokenId).toMatch(/^gear-cap-/);
   });
 
@@ -774,14 +777,13 @@ describe('forge', () => {
     const row = player('forge');
     const smith = insertMerchant('smith');
     fund(row.account_id!, 50_000n);
-    fund(smith, 0n);
     itemBalances.set(row.account_id!, { shard: '10' });
     const signsBefore = signs;
     const res = await forgeMint(row.id, 'cap');
     expect(res.status).toBe('delivered');
     expect(res.itemId).toBe('cap');
     expect(res.tokenId).toMatch(/^gear-cap-[a-f0-9]+$/);
-    expect(balances.get(smith)).toBe(1_000n);
+    expect(balances.get(smith)).toBe(MERCHANT_FLOAT + 1_000n);
     expect(itemBalances.get(row.account_id!)?.shard).toBe('7');
     expect(itemBalances.get(row.account_id!)?.[res.tokenId]).toBe('1');
     // player ft_transfer + burn_from + create_token + mint
@@ -806,5 +808,48 @@ describe('forge', () => {
     fund(row.account_id!, 100n);
     await expect(forgeMint(row.id, 'cap')).rejects.toThrow(/Not enough GD/);
     await expect(forgeMint(row.id, 'headphones')).rejects.toThrow(/Unknown forge item/);
+  });
+});
+
+describe('merchant insolvency', () => {
+  it('marks shops closed below MERCHANT_MIN_BALANCE and refuses buy', async () => {
+    const row = player('insolvent');
+    const chef = insertMerchant('chef', BigInt(MERCHANT_MIN_BALANCE - 1));
+    insertMerchant('smith');
+    insertMerchant('dealer');
+    fund(row.account_id!, 50_000n);
+    syncMerchantInventory('chef');
+
+    const view = await merchantsView();
+    expect(view.chef.closed).toBe(true);
+    expect(Number(view.chef.gdBalance)).toBe(MERCHANT_MIN_BALANCE - 1);
+
+    const beforePlayer = balances.get(row.account_id!)!;
+    const beforeChef = balances.get(chef)!;
+    await expect(shopBuy(row.id, 'zobo-drink')).rejects.toThrow(MERCHANT_CLOSED_MSG);
+    expect(balances.get(row.account_id!)).toBe(beforePlayer);
+    expect(balances.get(chef)).toBe(beforeChef);
+  });
+
+  it('invest that crosses the minimum reopens the shop for the next buy', async () => {
+    const row = player('reopen');
+    const chef = insertMerchant('chef', BigInt(MERCHANT_MIN_BALANCE - 400));
+    insertMerchant('smith');
+    insertMerchant('dealer');
+    fund(row.account_id!, 50_000n);
+    syncMerchantInventory('chef');
+
+    await expect(shopBuy(row.id, 'zobo-drink')).rejects.toThrow(MERCHANT_CLOSED_MSG);
+
+    const invested = await investInMerchant(row.id, 'chef', 400n);
+    expect(invested.closed).toBe(false);
+    expect(BigInt(invested.gdBalance)).toBe(BigInt(MERCHANT_MIN_BALANCE));
+    expect(balances.get(chef)).toBe(BigInt(MERCHANT_MIN_BALANCE));
+
+    const view = await merchantsView();
+    expect(view.chef.closed).toBe(false);
+
+    const res = await shopBuy(row.id, 'zobo-drink');
+    expect(res.status).toBe('delivered');
   });
 });

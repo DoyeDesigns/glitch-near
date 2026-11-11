@@ -273,6 +273,9 @@ function migrate(): void {
   if (!cols.has('google_sub')) {
     db.exec(`ALTER TABLE players ADD COLUMN google_sub TEXT`);
   }
+  if (!cols.has('last_upkeep_at')) {
+    db.exec(`ALTER TABLE players ADD COLUMN last_upkeep_at INTEGER NOT NULL DEFAULT 0`);
+  }
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_name ON players(name);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_players_google_sub ON players(google_sub)

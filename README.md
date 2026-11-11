@@ -104,8 +104,9 @@ Session cookie required unless noted.
 | POST | `/auth/login` | Name / PIN / guest / signup |
 | GET | `/auth/google/config` | Public; `{ clientId }` or null |
 | POST | `/auth/google` | Google ID token → custodial account |
-| GET | `/me` | `available`, profile |
+| GET | `/me` | `available`, profile (applies holding tax catch-up) |
 | GET | `/me/chain` | On-chain / mock proof |
+| POST | `/travel` | Fast travel gas (`GAS_GD` pending burn) |
 | GET | `/leaderboard` | Top-20 by spendable GD (15s cache) |
 | GET | `/stream` | SSE world tick |
 | POST | `/trade/open`, GET `/trade` | Bets |
@@ -116,18 +117,15 @@ Session cookie required unless noted.
 | POST | `/rest` | Bench / sleep |
 | POST | `/forge/mint` | Gear |
 | GET/POST | `/market`, `/market/list`, `/market/buy`, `/market/cancel` | Player listings |
-| GET | `/merchants` | Dynamic quotes |
+| GET | `/merchants` | Dynamic quotes (`closed` when GD below min) |
+| POST | `/merchants/:id/invest` | Player pays GD to chef/smith/dealer to reopen |
 | POST | `/sim/fast-forward` | Deterministic city day (no chain write) |
 | GET | `/ads`, `/ads/creative` | Public billboards |
 | GET | `/admin/health` | `x-admin-token`; 404 if unset |
 
-## Client-only balance gaps
+## Client-only (non-balance)
 
-These change the **displayed** balance in the browser and are **not** the server purchase path:
-
-1. Fast travel (Map → Go)
-2. Passive holding tax
-3. CIA fines
+Paint, poses, and the assist drone stay **client cosmetic** (localStorage / presentation). They do not change server `available`.
 
 ## Known limitations
 
@@ -135,8 +133,7 @@ These change the **displayed** balance in the browser and are **not** the server
 - Merchant NPCs are rule-driven accounts with GD, not LLM agents.
 - Google sign-in appears only when `GOOGLE_CLIENT_ID` is set.
 - Floating assist companion, poses, home paint, and level hints are **client cosmetic** (localStorage); not minted.
-- Chef does not auto-close on low float; market contract prize-cycle methods are unused by the server.
-- Fast travel, holding tax, and CIA fines are still client-side (see above).
+- Market contract prize-cycle methods are unused by the server.
 
 ## Layout
 
@@ -145,6 +142,7 @@ These change the **displayed** balance in the browser and are **not** the server
 - `shared/` — economy, merchants, events, RNG (mulberry32).
 - `contracts/` — `gd`, `items`, `market` (deployed; do not rename methods).
 - `docs/` — [PLAYER_UI.md](docs/PLAYER_UI.md), [TEST.md](docs/TEST.md), [TRACK09.md](docs/TRACK09.md), [ONCHAIN.md](docs/ONCHAIN.md), [ECONOMY.md](docs/ECONOMY.md), [ITEMS.md](docs/ITEMS.md), [ACCOUNTS.md](docs/ACCOUNTS.md).
+- License — [MIT](LICENSE) (Copyright 2026 Edoye).
 
 ## Track 09 in one line
 

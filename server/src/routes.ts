@@ -24,8 +24,11 @@ import { merchantsView } from './chef';
 import { forgeMint } from './forge';
 import { homeBuy, homePayRent } from './home';
 import { getLeaderboard } from './leaderboard';
+import { isMerchantId } from './merchantGate';
 import { restPlayer } from './rest';
 import { buyListing, cancelListing, createListing, listOpenListings } from './listings';
+import { chargeTravel } from './burns';
+import { investInMerchant } from './purchase';
 import { shopBuy } from './shop';
 import { cancelVault, finishVault, parseVaultStops, startVault } from './vault';
 
@@ -264,6 +267,18 @@ export function createApp() {
     }
   });
 
+  app.post('/travel', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(await chargeTravel(player.id));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[travel] failed');
+      return c.json({ error: 'Could not travel' }, 502);
+    }
+  });
+
   app.get('/leaderboard', async c => {
     const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
     if (!player) return c.json({ error: 'Not signed in' }, 401);
@@ -285,6 +300,30 @@ export function createApp() {
       if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
       console.error('[merchants] failed');
       return c.json({ error: 'Could not load merchants' }, 502);
+    }
+  });
+
+  app.post('/merchants/:id/invest', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    const id = c.req.param('id');
+    if (!isMerchantId(id)) return c.json({ error: 'Unknown merchant' }, 400);
+    let body: { amount?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    const amount = typeof body.amount === 'number' ? body.amount : Number(body.amount);
+    if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount <= 0) {
+      return c.json({ error: 'Bad amount' }, 400);
+    }
+    try {
+      return c.json(await investInMerchant(player.id, id, BigInt(amount)));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[merchants] invest failed');
+      return c.json({ error: 'Could not invest' }, 502);
     }
   });
 

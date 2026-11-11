@@ -53,9 +53,15 @@ export function resolveCases(world: World): void {
     if (world.time < c.at) continue;
     world.cases.splice(world.cases.indexOf(c), 1);
     if (c.suspect === 'player') {
-      // Host applies wallet/rep mutations and player-facing banners from these effects.
-      if (c.caught) world.effects.push({ kind: 'playerCaught', caseNo: c.no, loot: c.loot ?? 0 });
-      else world.effects.push({ kind: 'playerEscaped', caseNo: c.no });
+      // Host applies pending burns / banners from these effects (playerId for custodial charge).
+      if (c.caught) {
+        world.effects.push({
+          kind: 'playerCaught',
+          caseNo: c.no,
+          loot: c.loot ?? 0,
+          playerId: c.playerId,
+        });
+      } else world.effects.push({ kind: 'playerEscaped', caseNo: c.no });
     } else if (world.rng.next() < 0.65) {
       const name = pick(world.rng, NPC_NAMES);
       pushFeed(world, 'sys', 'CIA', `Case #${c.no} closed: ${name} found guilty. Victims refunded with interest.`);

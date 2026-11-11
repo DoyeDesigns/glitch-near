@@ -6,7 +6,7 @@ import {
   MARKET_LIST_MIN_GD,
 } from '@glitch/shared';
 import { $, esc, fmt, fmtN, pick, rnd } from './util';
-import { burn, L, logTx, payCap, roleName, SAVE, save, S, txlog, weak } from './state';
+import { L, logTx, payCap, roleName, SAVE, save, S, txlog, weak } from './state';
 import { banner, feed, post, serverTick } from './market';
 import {
   assistantScreenPos,
@@ -24,7 +24,17 @@ import {
   type PoseLimbDraft,
 } from './world';
 import { NEUTRAL_POSE, poseSvgMarkup } from './posePreview';
-import { closeModal, introOpen, modalOpen, openModal, sheet, updateHud } from './hud';
+import {
+  closeModal,
+  hudAvailable,
+  introOpen,
+  modalOpen,
+  openModal,
+  setHudAvailable,
+  setHudSettling,
+  sheet,
+  updateHud,
+} from './hud';
 import {
   cityDay,
   citySimPlaying,
@@ -36,7 +46,6 @@ import {
   type CityDayBoard,
   type CityDayRow,
 } from './games';
-import { hudAvailable } from './hud';
 import { fetchChainProof, me, refreshMe, type ChainProof } from './session';
 
 type MarketListing = {
@@ -262,21 +271,35 @@ function npcReply(name: string, text: string) {
 function badge() {
   /* Unread shows on the Chat module; no HUD phone button. */
 }
-export function travel(id: string) {
+export async function travel(id: string) {
   const l = LOCS.find(x => x.id === id);
   if (!l) return;
-  if (S.bal < GAS) return banner('Not enough GD to travel', 'bad');
-  if (currentInterior) clearInterior();
-  burn(GAS);
-  logTx('out', GAS, 'Fast travel');
-  player.position.set(l.sp[0], 0, l.sp[1]);
-  vel.x = vel.z = 0;
-  cam.tx = l.sp[0];
-  cam.tz = l.sp[1];
-  closeModal();
-  banner(`Arrived at ${l.name}. ${GAS} GD`, 'info');
-  updateHud();
-  save();
+  try {
+    const res = await fetch('/travel', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ destination: id }),
+    });
+    const data = (await res.json()) as { available?: string; settling?: string; error?: string };
+    if (!res.ok) return banner(data.error || 'Not enough GD to travel', 'bad');
+    if (currentInterior) clearInterior();
+    const available = Number(data.available);
+    setHudAvailable(available);
+    if (data.settling != null) setHudSettling(Number(data.settling) || 0);
+    S.bal = available;
+    logTx('out', GAS, 'Fast travel');
+    player.position.set(l.sp[0], 0, l.sp[1]);
+    vel.x = vel.z = 0;
+    cam.tx = l.sp[0];
+    cam.tz = l.sp[1];
+    closeModal();
+    banner(`Arrived at ${l.name}. ${GAS} GD`, 'info');
+    updateHud();
+    save();
+  } catch {
+    banner('Travel failed', 'bad');
+  }
 }
 
 function refreshMyHomeQuotes() {
@@ -899,7 +922,7 @@ function renderPhone() {
       dmIn(dmWith!, x, true);
       npcReply(dmWith!, x);
     } else if (a === 'go') return travel(v!);
-    else if (['buyhome', 'paymaintenance', 'furn', 'gohome', 'homepaint'].includes(a)) {
+    else if (['buyhome', 'paymaintenance', 'furn', 'gohome', 'homepaint', 'invest'].includes(a)) {
       if (homeAct(a, v)) return;
     } else if (a === 'copyacct') {
       const id = chainProof?.accountId;
@@ -1008,7 +1031,9 @@ function renderPhone() {
       return location.reload();
     }
     renderPhone();
-    if ((a === 'app' && v === 'myhome') || a === 'buyhome' || a === 'furn') refreshMyHomeQuotes();
+    if ((a === 'app' && v === 'myhome') || a === 'buyhome' || a === 'furn' || a === 'invest') {
+      refreshMyHomeQuotes();
+    }
     const n = $('#pin') as HTMLInputElement | null;
     if (n && (a === 'post' || a === 'sendLoc' || a === 'sendDM')) {
       n.value = '';

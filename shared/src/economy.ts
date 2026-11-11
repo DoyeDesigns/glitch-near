@@ -86,6 +86,33 @@ export const PAY_CAP_PER_LEVEL = 25_000;
 /** Fast-travel gas fee (GD). */
 export const GAS_GD = 200;
 
+/**
+ * Total holding-tax GD for `ticks` intervals, applying floor(available * UPKEEP_RATE)
+ * sequentially so later ticks see prior charges. Never exceeds starting available.
+ */
+export function holdingTaxCharge(availableGd: number | bigint, ticks: number): number {
+  let available = typeof availableGd === 'bigint' ? Number(availableGd) : availableGd;
+  if (!Number.isFinite(available) || available <= 0 || ticks <= 0) return 0;
+  available = Math.floor(available);
+  let total = 0;
+  for (let i = 0; i < ticks; i++) {
+    if (available <= 0) break;
+    const charge = Math.min(Math.floor(available * UPKEEP_RATE), available);
+    if (charge <= 0) break;
+    total += charge;
+    available -= charge;
+  }
+  return total;
+}
+
+/** Guilty CIA fine: min(available, floor(loot * 1.25)). */
+export function ciaFineGd(availableGd: number | bigint, loot: number): number {
+  const available = typeof availableGd === 'bigint' ? Number(availableGd) : availableGd;
+  if (!Number.isFinite(available) || available <= 0) return 0;
+  const raw = Math.floor(Math.max(0, loot) * 1.25);
+  return Math.min(Math.floor(available), raw);
+}
+
 /** Furniture price overrides applied from ECONOMY.md (others stay prototype). */
 export const FURN_PRICE_GD: Record<string, number> = {
   bed2: 70_000, // was 150_000

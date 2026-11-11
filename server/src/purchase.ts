@@ -1,5 +1,5 @@
-import { catalogById, MAINTENANCE_GD, MAINTENANCE_MS } from '@glitch/shared';
-import { AuthError, ledgerTotals } from './auth';
+import { catalogById, MAINTENANCE_GD, MAINTENANCE_MS, merchantShopOpen } from '@glitch/shared';
+import { AuthError, fundsView, ledgerTotals } from './auth';
 import { config } from './config';
 import { randomId } from './crypto';
 import { db } from './db';
@@ -10,6 +10,7 @@ import { getItemBalances } from './near/items';
 import { getMerchant } from './near/merchants';
 import { resumeOrSend } from './near/mintTx';
 import { recordChefFoodSale, recordDealerSale } from './chef';
+import { assertMerchantOpen, isMerchantId, type MerchantId } from './merchantGate';
 import { parseNeeds, syncNeedsDecay, writeNeeds } from './needs';
 
 export type PurchaseRow = {
@@ -35,6 +36,8 @@ const PURCHASE_COLS =
   'id, player_id, merchant_id, item_id, amount, outbox_id, status, delivered, deliver_tx_hash, deliver_tx_at, deliver_attempts, created_at';
 
 const MAINTENANCE_ITEM = 'maintenance';
+/** Pay-then-deliver GD top-up to a merchant; no item mint. */
+export const INVEST_ITEM = 'invest';
 
 function getPurchase(id: string): PurchaseRow | undefined {
   return db.prepare(`SELECT ${PURCHASE_COLS} FROM purchases WHERE id = ?`).get(id) as PurchaseRow | undefined;
@@ -108,6 +111,18 @@ async function deliverPurchase(purchaseId: string): Promise<boolean> {
       const fresh = getPurchase(purchaseId);
       if (!fresh || fresh.delivered === 1) return;
       extendHomePaidUntil(paid.player_id);
+      db.prepare(
+        `UPDATE purchases SET delivered = 1, status = 'delivered' WHERE id = ? AND delivered = 0`,
+      ).run(purchaseId);
+    });
+    apply.immediate();
+    return getPurchase(purchaseId)?.delivered === 1;
+  }
+
+  if (paid.item_id === INVEST_ITEM) {
+    const apply = db.transaction(() => {
+      const fresh = getPurchase(purchaseId);
+      if (!fresh || fresh.delivered === 1) return;
       db.prepare(
         `UPDATE purchases SET delivered = 1, status = 'delivered' WHERE id = ? AND delivered = 0`,
       ).run(purchaseId);
@@ -288,6 +303,7 @@ export async function purchase(
 export async function payMaintenance(playerId: string): Promise<PurchaseResult> {
   const merchant = getMerchant('dealer');
   if (!merchant) throw new AuthError('Unknown merchant', 400);
+  await assertMerchantOpen('dealer');
   if (!(await ownsStudio(playerId))) throw new AuthError('You do not own a studio', 400);
   return reserveAndTransfer({
     playerId,
@@ -296,6 +312,55 @@ export async function payMaintenance(playerId: string): Promise<PurchaseResult> 
     itemId: MAINTENANCE_ITEM,
     amount: BigInt(MAINTENANCE_GD),
   });
+}
+
+/** Invest outcome + HUD funds. `settling` is the funds string (not PurchaseResult's settling flag). */
+export type MerchantInvestResult = {
+  purchaseId: string;
+  status: 'delivered' | 'settling';
+  closed: boolean;
+  gdBalance: string;
+  available: string;
+  settling: string;
+};
+
+/** Player pays GD to a merchant wallet so the shop can reopen at MERCHANT_MIN_BALANCE. */
+export async function investInMerchant(
+  playerId: string,
+  merchantId: string,
+  amount: bigint,
+): Promise<MerchantInvestResult> {
+  if (!isMerchantId(merchantId)) throw new AuthError('Unknown merchant', 400);
+  if (amount <= 0n || amount > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new AuthError('Amount must be positive', 400);
+  }
+  const merchant = getMerchant(merchantId as MerchantId);
+  if (!merchant) throw new AuthError(`${merchantId} is not set up`, 503);
+
+  const result = await reserveAndTransfer({
+    playerId,
+    merchantId,
+    merchantAccountId: merchant.account_id,
+    itemId: INVEST_ITEM,
+    amount,
+  });
+
+  let gdBalance = '0';
+  try {
+    gdBalance = await getGDBalanceCached(merchant.account_id);
+  } catch {
+    gdBalance = '0';
+  }
+  const player = getPlayerById(playerId);
+  if (!player) throw new AuthError('Player not found', 400);
+  const funds = await fundsView(player);
+  return {
+    purchaseId: result.purchaseId,
+    status: 'ok' in result ? 'delivered' : 'settling',
+    closed: !merchantShopOpen(gdBalance),
+    gdBalance,
+    ...funds,
+  };
 }
 
 /**

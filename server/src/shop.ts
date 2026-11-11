@@ -8,6 +8,7 @@ import {
 } from './chef';
 import { getPlayerById } from './near/accounts';
 import { syncNeedsDecay } from './needs';
+import { assertMerchantOpen } from './merchantGate';
 import { purchase } from './purchase';
 
 export type ShopBuyResult = {
@@ -30,6 +31,8 @@ export async function shopBuy(playerId: string, itemId: string): Promise<ShopBuy
     throw new AuthError('Unknown shop item', 400);
   }
   syncNeedsDecay(playerId);
+
+  await assertMerchantOpen(item.kind === 'food' ? 'chef' : 'dealer');
 
   const quote = item.kind === 'food' ? quoteChefFood(itemId) : quoteDealerItem(itemId);
   const result = await purchase(playerId, itemId, { amountGd: BigInt(quote.finalPrice) });

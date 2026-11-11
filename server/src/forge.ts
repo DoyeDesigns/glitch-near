@@ -9,6 +9,7 @@ import { flushPlayer } from './near/flush';
 import { getGDBalanceCached, pushTransfer, type TransferOutcome } from './near/gd';
 import { getItemBalances } from './near/items';
 import { getMerchant } from './near/merchants';
+import { assertMerchantOpen } from './merchantGate';
 import { resumeOrSend } from './near/mintTx';
 
 export type ForgeRow = {
@@ -228,6 +229,7 @@ export async function forgeMint(playerId: string, itemId: string): Promise<Forge
 
   const merchant = getMerchant('smith');
   if (!merchant) throw new AuthError('Unknown merchant', 400);
+  await assertMerchantOpen('smith');
 
   const shardsCost = item.effect.shardsCost;
   if (shardsCost <= 0) throw new AuthError('Invalid forge cost', 400);
