@@ -15,7 +15,7 @@ import {
 import { $, clamp, esc, fmt, fmtN, pick } from './util';
 import { applyChainItems, forgeItemIdForGear } from './itemsSync';
 import { L, save, S, weak } from './state';
-import { banner, post, px, setCityTradeGlance, TOK } from './market';
+import { banner, cityTradeGlance, post, px, setCityTradeGlance, TOK } from './market';
 import {
   applyHomePaint,
   BOTC,
@@ -1127,7 +1127,8 @@ type MerchantShopMeta = {
   lastTrade?: MerchantLastTrade;
 };
 
-/** Cached dealer / smith quotes from GET /merchants. */
+/** Cached menus / quotes from GET /merchants. */
+export let chefMenu: MerchantMenuDish[] = [];
 export let dealerQuotes: Record<string, MerchantMenuDish> = {};
 export let smithQuotes: Record<string, MerchantMenuDish> = {};
 export let chefShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBalance: 1000 };
@@ -1197,28 +1198,15 @@ export function formatCityTrade(t: MerchantLastTrade): string {
 }
 
 let cityTradePulse = 0;
-let lastSeenCityTradeAt = 0;
 
-/** Light world poll so on-chain merchant hops toast + show on the plaza card without opening a shop. */
+/** Light world poll so on-chain merchant hops show in the market strip (no toast). */
 export function startCityTradePulse(): void {
   if (cityTradePulse) return;
   const tick = () => {
-    void loadMerchantQuotes()
-      .then(() => {
-        const t = newestLastTrade();
-        if (!t) return;
-        const line = formatCityTrade(t);
-        setCityTradeGlance(line);
-        if (t.at > lastSeenCityTradeAt) {
-          if (lastSeenCityTradeAt > 0) banner(`City trade: ${line}`, 'info');
-          lastSeenCityTradeAt = t.at;
-        }
-        updateHud();
-      })
-      .catch(() => {});
+    void loadMerchantQuotes().catch(() => {});
   };
   tick();
-  cityTradePulse = window.setInterval(tick, 12_000);
+  cityTradePulse = window.setInterval(tick, 10_000);
 }
 
 export async function loadMerchantQuotes(): Promise<void> {
@@ -1251,10 +1239,15 @@ export async function loadMerchantQuotes(): Promise<void> {
   chefShop = shopMeta(data.chef);
   dealerShop = shopMeta(data.dealer);
   smithShop = shopMeta(data.smith);
+  chefMenu = data.chef?.menu ?? [];
   dealerQuotes = Object.fromEntries((data.dealer?.menu ?? []).map(d => [d.itemId, d]));
   smithQuotes = Object.fromEntries((data.smith?.menu ?? []).map(d => [d.itemId, d]));
   const latest = newestLastTrade();
-  if (latest) setCityTradeGlance(formatCityTrade(latest));
+  const line = latest ? formatCityTrade(latest) : null;
+  if (line !== cityTradeGlance) {
+    setCityTradeGlance(line);
+    updateHud();
+  }
 }
 
 const reasonHint = (d: Pick<MerchantMenuDish, 'reasoning' | 'stock'>) => {
@@ -1286,42 +1279,13 @@ export function dinerGame() {
     simPrices = {};
   };
   const loadMenu = async () => {
-    const res = await fetch('/merchants', { credentials: 'include' });
-    const data = (await res.json()) as {
-      error?: string;
-      chef?: {
-        menu: ChefMenuDish[];
-        closed?: boolean;
-        gdBalance?: string;
-        minBalance?: number;
-        lastTrade?: MerchantLastTrade;
-      };
-      dealer?: {
-        menu: MerchantMenuDish[];
-        closed?: boolean;
-        gdBalance?: string;
-        minBalance?: number;
-        lastTrade?: MerchantLastTrade;
-      };
-      smith?: {
-        menu: MerchantMenuDish[];
-        closed?: boolean;
-        gdBalance?: string;
-        minBalance?: number;
-        lastTrade?: MerchantLastTrade;
-      };
-    };
-    if (!res.ok) throw new Error(data.error || 'Could not load menu');
-    menu = data.chef?.menu ?? [];
-    chefShop = shopMeta(data.chef);
-    dealerShop = shopMeta(data.dealer);
-    smithShop = shopMeta(data.smith);
-    dealerQuotes = Object.fromEntries((data.dealer?.menu ?? []).map(d => [d.itemId, d]));
-    smithQuotes = Object.fromEntries((data.smith?.menu ?? []).map(d => [d.itemId, d]));
+    await loadMerchantQuotes();
+    menu = chefMenu;
   };
   const r = () => {
     const funds = fundsNow();
     const closed = chefShop.closed;
+    menu = chefMenu.length ? chefMenu : menu;
     sheet.innerHTML = `<h2>Neon Diner</h2><p>Paid in <b>GD</b>. Prices move with stock and demand. You have <b>${fmtN(funds)} GD</b>.</p>${meters()}${merchantWalletBlock('Chef', chefShop)}${
       menu.length === 0
         ? '<p class="hint">Loading menu…</p>'

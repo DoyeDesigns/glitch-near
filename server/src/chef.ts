@@ -260,11 +260,9 @@ export function dealerItemSnapshot(itemId: string, now = Date.now()): MerchantQu
 }
 
 async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
-  const deltas = syncMerchantInventoryWithDeltas(merchantId);
-  if (deltas.length) {
-    const { settleRestockSupply } = await import('./merchantEconomy');
-    await settleRestockSupply(deltas);
-  }
+  // Local stock/price sync only. On-chain restock pays run in runMerchantSupplyTick —
+  // awaiting ft_transfer here blocks GET /merchants (menus + balances) on testnet.
+  syncMerchantInventory(merchantId);
   const merchant = getMerchant(merchantId);
   if (!merchant) throw new AuthError(`${merchantId} is not set up`, 503);
   let gdBalance = '0';

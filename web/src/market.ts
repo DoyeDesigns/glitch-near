@@ -90,6 +90,10 @@ export function applyStreamState(data: StreamPayload): void {
     if (!feed.some(f => f.who === p.who && f.text === p.text)) feed.unshift(p);
   }
   while (feed.length > 60) feed.pop();
+
+  // Market strip: latest NPC hop from feed (survives server restart better than in-memory lastTrade).
+  const hop = feed.find(p => p.who === 'NPC' && p.text.includes('→') && p.text.includes('GD ·'));
+  if (hop && hop.text !== cityTradeGlance) setCityTradeGlance(hop.text);
 }
 
 export function applyActiveEvents(events: ActiveEvent[]): void {
