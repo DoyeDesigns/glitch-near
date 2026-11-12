@@ -18,15 +18,15 @@ describe('trade pnl', () => {
     expect(tradeFee(1999)).toBe(20);
   });
 
-  it('applies the daily cap and the weak cut before minting', () => {
-    const capped = faucetCredit(200, false, 150, 100);
-    expect(capped.capped).toBe(true);
-    // 50 at full rate, 150 over at 20% = 50 + 30
-    expect(capped.credited).toBe(80);
-    expect(capped.payUsed).toBe(150);
+  it('applies the weak cut and ignores the old daily cap', () => {
+    const full = faucetCredit(200, false, 150, 100);
+    expect(full.capped).toBe(false);
+    expect(full.credited).toBe(200);
+    expect(full.payUsed).toBe(100);
 
     const weak = faucetCredit(100, true, 150_000, 0);
     expect(weak.credited).toBe(60);
     expect(weak.capped).toBe(false);
+    expect(weak.payUsed).toBe(0);
   });
 });

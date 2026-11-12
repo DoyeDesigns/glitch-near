@@ -70,7 +70,7 @@ Flush = one treasury `burn_from(player, min(pending, chainBalance))`, then reduc
 | Movement | Amount (ref) | Notes |
 | --- | --- | --- |
 | New player seed | `START_GD` 60,000 | After account `active` |
-| Vault skill payout | 15k / 30k / 75k by hits | Validated result; daily cap / weak |
+| Vault skill payout | 15k / 30k / 75k by hits | Validated result; weak cut only |
 | Trade win (profit) | variable | Stake return is escrow release, not a mint |
 | Post profit | variable | After validated post |
 | Cycle / event prizes | event-defined | |

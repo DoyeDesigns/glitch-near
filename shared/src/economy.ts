@@ -79,8 +79,9 @@ export function applyRestEffect(needs: NeedsState, kind: 'bench' | 'sleep'): Nee
   });
 }
 
-/** Daily skill-pay cap: BASE + PER_LEVEL * (sumLevels - 3). */
+/** @deprecated Unused — skill pay no longer has a daily cap. Kept for old imports. */
 export const PAY_CAP_BASE = 150_000;
+/** @deprecated Unused — skill pay no longer has a daily cap. Kept for old imports. */
 export const PAY_CAP_PER_LEVEL = 25_000;
 
 /** Fast-travel gas fee (GD). */
@@ -130,9 +131,9 @@ export type SkillXp = { trade: number; sec: number; comm: number };
 /** Skill level from XP. Same curve the client HUD uses. */
 export const skillLevel = (xp: number) => 1 + Math.floor(Math.sqrt(Math.max(0, xp) / 40));
 
-export function payCapFor(xp: SkillXp): number {
-  const sum = skillLevel(xp.trade) + skillLevel(xp.sec) + skillLevel(xp.comm);
-  return PAY_CAP_BASE + PAY_CAP_PER_LEVEL * (sum - 3);
+/** @deprecated Always Infinity — daily skill-pay cap removed. */
+export function payCapFor(_xp: SkillXp): number {
+  return Number.POSITIVE_INFINITY;
 }
 
 /** 1% of the stake, nearest GD. */
@@ -163,22 +164,19 @@ export function applyFlow(token: { flow: number }, dir: 1 | -1, stake: number): 
 }
 
 /**
- * Daily faucet: weak cuts 40%, then the cap, then 20% of the overflow.
- * `payUsed` grows by the full-rate portion only (same as the client earn()).
+ * Skill payout credit: weak (tired/hungry) cuts 40%. No daily meter or soft cap.
+ * `cap` / `payUsed` are ignored (kept for call-site compatibility). `capped` is always false;
+ * `payUsed` is left unchanged so DB columns stay inert.
  */
 export function faucetCredit(
   amount: number,
   weak: boolean,
-  cap: number,
-  payUsed: number,
+  _cap = 0,
+  payUsed = 0,
 ): { credited: number; capped: boolean; payUsed: number } {
   let amt = amount;
   if (weak) amt *= 0.6;
-  const room = Math.max(0, cap - payUsed);
-  const full = Math.min(amt, room);
-  const over = amt - full;
-  const credited = Math.round(full + over * 0.2);
-  return { credited, capped: over > 0, payUsed: payUsed + full };
+  return { credited: Math.round(amt), capped: false, payUsed };
 }
 
 /** Vault Cracker. Widths shrink and the needle speeds up across the three locks. */

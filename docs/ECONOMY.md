@@ -37,29 +37,17 @@ export const USDG_TO_GD = 500; // prototype RATE
 
 ---
 
-## Earn sources (GD faucet via `earn()`)
+## Earn sources (GD via skill games)
 
-Skill pay: weak (−40% if energy&lt;15 or hunger&lt;10); daily cap; over-cap credits **20%**.
-
-### Daily skill-pay cap
-
-```
-payCap = PAY_CAP_BASE + PAY_CAP_PER_LEVEL * (L(trade) + L(sec) + L(comm) - 3)
-       = 150000 + 25000 * (sumLevels - 3)
-```
-
-| Skill levels (t+s+c) | Daily cap |
-| ---: | ---: |
-| 1+1+1 (new player) | **150,000** GD |
-| +1 total level | +25,000 GD |
+Skill pay: weak (−40% if energy&lt;15 or hunger&lt;10). **No daily meter or soft over-cap** — validated wins credit full (post-weak) GD.
 
 Starter balance: **START_GD = 60,000** (not skill pay).
 
 ### Vault Cracker (sec)
 
-`pay = hits * 15000 + (hits === 3 ? 30000 : 0)` then `earn(pay)`. Shards: `hits + (hits===3 ? 1 : 0)`.
+`pay = hits * 15000 + (hits === 3 ? 30000 : 0)` then credit via `faucetCredit` / mint. Shards: `hits + (hits===3 ? 1 : 0)`.
 
-| Hits | GD (before cap/weak) | Shards |
+| Hits | GD (before weak) | Shards |
 | ---: | ---: | ---: |
 | 0 | 0 | 0 |
 | 1 | 15,000 | 1 |

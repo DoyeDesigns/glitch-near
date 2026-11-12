@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { faucetCredit, payCapFor, tradePnl, vaultGross, vaultHit, vaultLockStart, vaultLocks, vaultXp } from '@glitch/shared';
+import { tradePnl, vaultHit, vaultLockStart, vaultLocks, vaultXp } from '@glitch/shared';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { assertCanSpend, availableGd, AuthError } from '../src/auth';
 import { config } from '../src/config';
@@ -83,7 +83,7 @@ describe('settlement', () => {
     expect(escrow.n).toBe(1);
   });
 
-  it('keeps XP and pay-cap usage when a trade and a vault settle together', async () => {
+  it('keeps XP when a trade and a vault settle together', async () => {
     const row = player('both');
     fund(row.account_id!, 100_000n);
     const token = world.tokens.find(t => t.sym === 'BTX');
@@ -112,10 +112,8 @@ describe('settlement', () => {
     const xp = JSON.parse(after?.xp_json || '{}') as { trade: number; sec: number; comm: number };
     expect(xp.trade).toBe(20);
     expect(xp.sec).toBe(vaultXp(3));
-    const cap = payCapFor({ trade: 0, sec: 0, comm: 0 });
-    const tradePay = faucetCredit(pnl, false, cap, 0).payUsed;
-    const vaultPay = faucetCredit(vaultGross(3), false, cap, 0).payUsed;
-    expect(after?.pay_used).toBe(tradePay + vaultPay);
+    // Daily skill-pay meter removed — pay_used stays inert.
+    expect(after?.pay_used).toBe(0);
   });
 
   it('rejects a stake the balance cannot cover', async () => {

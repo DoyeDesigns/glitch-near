@@ -35,7 +35,7 @@ function recordHop(pay: MerchantSupplyPayment, ok: boolean): void {
     world,
     'sys',
     'NPC',
-    `${labelName(pay.from)} paid ${labelName(pay.to)} ${pay.amount} GD (${pay.label}).`,
+    `${labelName(pay.from)} → ${labelName(pay.to)} ${pay.amount} GD · ${pay.label}`,
   );
 }
 

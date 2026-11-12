@@ -1,7 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import {
   faucetCredit,
-  payCapFor,
   VAULT_MAX_AGE_MS,
   VAULT_MAX_SKEW_MS,
   VAULT_PAUSE_MS,
@@ -95,10 +94,6 @@ function isWeak(raw: string): boolean {
   }
 }
 
-function dayKey(now = Date.now()): string {
-  return new Date(now).toISOString().slice(0, 10);
-}
-
 function readStops(row: VaultRow): number[] {
   const out: number[] = [];
   for (const value of [row.stop0, row.stop1, row.stop2]) {
@@ -145,13 +140,12 @@ function openVault(playerId: string): VaultRow | undefined {
 
 async function accountView(player: PlayerRow): Promise<{ available: string; settling: string; xp: SkillXp; payUsed: number }> {
   const fresh = getPlayerById(player.id) ?? player;
-  const today = dayKey();
   const funds = await fundsView(fresh);
   return {
     available: funds.available,
     settling: funds.settling,
     xp: parseXp(fresh.xp_json),
-    payUsed: fresh.pay_day === today ? fresh.pay_used : 0,
+    payUsed: 0,
   };
 }
 
@@ -267,33 +261,18 @@ export async function finishVault(player: PlayerRow, stops: number[]): Promise<V
     }
 
     const progress = db
-      .prepare(`SELECT xp_json, needs_json, pay_day, pay_used FROM players WHERE id = ?`)
-      .get(player.id) as
-      | { xp_json: string; needs_json: string; pay_day: string; pay_used: number }
-      | undefined;
+      .prepare(`SELECT xp_json, needs_json FROM players WHERE id = ?`)
+      .get(player.id) as { xp_json: string; needs_json: string } | undefined;
     if (!progress) return null;
-    const now = Date.now();
-    const today = dayKey(now);
     const xp = parseXp(progress.xp_json);
     xp.sec += vaultXp(hits);
-    const payUsed0 = progress.pay_day === today ? progress.pay_used : 0;
     const gross = vaultGross(hits);
     const shards = vaultShards(hits);
     let credited = 0;
-    let capped = false;
-    let payUsed = payUsed0;
     if (gross > 0) {
-      const next = faucetCredit(gross, isWeak(progress.needs_json), payCapFor(xp), payUsed0);
-      credited = next.credited;
-      capped = next.capped;
-      payUsed = next.payUsed;
+      credited = faucetCredit(gross, isWeak(progress.needs_json)).credited;
     }
-    db.prepare(`UPDATE players SET xp_json = ?, pay_day = ?, pay_used = ? WHERE id = ?`).run(
-      JSON.stringify(xp),
-      today,
-      payUsed,
-      player.id,
-    );
+    db.prepare(`UPDATE players SET xp_json = ? WHERE id = ?`).run(JSON.stringify(xp), player.id);
     db.prepare(
       `UPDATE vaults SET ${column} = ?, hits = ?, gross = ?, credited = ?, capped = ?, shards = ?, gd_minted = ?, shards_minted = ?, status = 'settled', chain_before = ?, shards_before = ? WHERE id = ?`,
     ).run(
@@ -301,7 +280,7 @@ export async function finishVault(player: PlayerRow, stops: number[]): Promise<V
       hits,
       String(gross),
       String(credited),
-      capped ? 1 : 0,
+      0,
       shards,
       credited > 0 ? 0 : 1,
       shards > 0 ? 0 : 1,

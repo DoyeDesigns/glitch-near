@@ -5,15 +5,16 @@ import {
   MARKET_LIST_MAX_GD,
   MARKET_LIST_MIN_GD,
 } from '@glitch/shared';
-import { $, esc, fmt, fmtN, pick, rnd } from './util';
-import { L, logTx, payCap, roleName, SAVE, save, S, txlog, weak } from './state';
-import { banner, feed, post, serverTick } from './market';
+import { $, esc, fmtN, pick, rnd } from './util';
+import { L, logTx, roleName, SAVE, save, S, txlog, weak } from './state';
+import { banner, cityTradeGlance, feed, post, serverTick } from './market';
 import {
   assistantScreenPos,
   cam,
   clearInterior,
   currentInterior,
   heldPoseId,
+  overdue,
   player,
   poseFromDraft,
   POSE_PRESETS,
@@ -40,9 +41,12 @@ import {
   citySimPlaying,
   homeAct,
   homeHtml,
+  chefShop,
+  dealerShop,
   loadMerchantQuotes,
   openCustomizer,
   playCityDaySim,
+  smithShop,
   startMerchantPoll,
   type CityDayBoard,
   type CityDayRow,
@@ -392,7 +396,7 @@ const BEGINNER_HINTS = [
   'Hold-drag to look. Click me anytime for modules.',
 ];
 const MID_HINTS = [
-  'Skill pay caps daily — after the meter fills you only get 20%.',
+  'Wins land as settling GD until the chain catches up — balance stays real.',
   'Market module lists furniture or gear for GD (2% sale fee).',
   'Forge mint prices follow the smith quote — check GD before minting.',
   'Home maintenance is due each period or the bed locks.',
@@ -401,7 +405,7 @@ const MID_HINTS = [
 const HIGH_HINTS = [
   'Tired or hungry cuts skill pay by 40% — eat and rest first.',
   'Listing fee is 2% — price above the floor for a clean sale.',
-  'Daily skill cap is based on your levels; bank wins as settling.',
+  'Merchant wallets trade GD on-chain — Feed and plaza show hops.',
   'Wanted status overrides your role until it expires.',
 ];
 
@@ -412,14 +416,41 @@ function skillTier(): 'beginner' | 'mid' | 'high' {
   return 'high';
 }
 
-function contextHint(): string | null {
-  const p = player.position;
-  const near = (x: number, z: number, r: number) => Math.hypot(p.x - x, p.z - z) < r;
-  if (near(34, 24, 14)) return 'Diner: Use the counter to buy food and refill hunger.';
-  if (near(20, -4, 14)) return 'Vault Lab: Use a terminal — locks pay GD and shards.';
-  if (near(0, -10, 12)) return 'Forge: mint gear NFTs when you have shards + GD.';
-  if (near(0, 6, 12)) return 'Plaza: check the Exchange screens, then open Map for places.';
-  if (S.home.owned && near(22, 32, 14)) return 'Home: Use the bed to sleep. Pay maintenance if overdue.';
+function nearSpot(x: number, z: number, r: number): boolean {
+  return Math.hypot(player.position.x - x, player.position.z - z) < r;
+}
+
+function locationHint(): string | null {
+  if (nearSpot(34, 24, 14)) return 'Diner: Use the counter to buy food and refill hunger.';
+  if (nearSpot(20, -4, 14)) return 'Vault Lab: Use a terminal — locks pay GD and shards.';
+  if (nearSpot(0, -10, 12)) return 'Forge: mint gear NFTs when you have shards + GD.';
+  if (nearSpot(0, 6, 12)) return 'Plaza: check the Exchange screens, then open Map for places.';
+  if (S.home.owned && nearSpot(22, 32, 14)) return 'Home: Use the bed to sleep. Pay maintenance if overdue.';
+  return null;
+}
+
+function needsHint(): string | null {
+  if (!weak()) return null;
+  if (S.needs.hunger < 10 && nearSpot(34, 24, 14)) return 'Hungry: buy food at this counter — skill pay is cut 40%.';
+  if (S.needs.energy < 15 && S.home.owned && nearSpot(22, 32, 14))
+    return 'Tired: Use the bed to sleep — skill pay is cut 40%.';
+  if (S.needs.hunger < 10) return 'Hungry: skill pay is cut 40%. Head to Neon Diner (east).';
+  if (S.needs.energy < 15) return 'Tired: skill pay is cut 40%. Rest on a bench or sleep at home.';
+  return 'Tired or hungry: skill pay is cut 40% until you eat or rest.';
+}
+
+function situationHint(): string | null {
+  if (S.home.owned && overdue()) return 'Home maintenance is overdue — bed is locked until you pay in My Home.';
+  const funds = hudAvailable ?? S.bal;
+  if (funds < 5_000) return 'Low on GD — Vault, Trade, or Post to earn. Starter was 60,000.';
+  if (chefShop.closed || smithShop.closed || dealerShop.closed)
+    return 'A merchant is closed (out of GD). City trades refill wallets — check Feed.';
+  if (S.shards > 0 && S.nfts.length === 0 && nearSpot(0, -10, 12))
+    return 'You have shards — Use the forge to mint gear.';
+  if (S.shards > 0 && S.nfts.length === 0) return 'You have shards — visit Gear Forge to mint an NFT.';
+  if (S.stats.trades === 0 && nearSpot(12, 8, 14)) return 'Try Trade Terminal: 10-second up/down bets for GD.';
+  if (S.xp.sec === 0 && nearSpot(20, -4, 14)) return 'First vault: tap STOP in the green zone for GD + shards.';
+  if (S.stats.posts === 0 && nearSpot(-8, 10, 14)) return 'Attention Booth: spend a little GD to post and maybe earn.';
   return null;
 }
 
@@ -443,8 +474,13 @@ export function setAssistHintsEnabled(on: boolean) {
 }
 
 export function currentAssistHint(): string {
-  const ctx = contextHint();
-  if (ctx && skillTier() === 'beginner') return ctx;
+  // Priority: needs → location (all tiers) → situation → rotating fallback.
+  const needs = needsHint();
+  if (needs) return needs;
+  const loc = locationHint();
+  if (loc) return loc;
+  const sit = situationHint();
+  if (sit) return sit;
   const pool = skillTier() === 'beginner' ? BEGINNER_HINTS : skillTier() === 'mid' ? MID_HINTS : HIGH_HINTS;
   const i = Math.floor(Date.now() / 12000) % pool.length;
   return pool[i]!;
@@ -790,6 +826,9 @@ function renderPhone() {
       <text x="${px}" y="${pz - 9}" text-anchor="middle" fill="#b8ff3d" font-size="7" font-family="sans-serif">you</text>
       </svg>
     <p class="hint">Walking is free. Fast travel costs ${GAS} GD.</p>` +
+      (cityTradeGlance
+        ? `<p class="hint">Last city trade: ${esc(cityTradeGlance)}</p>`
+        : '<p class="hint">City merchants trade GD on-chain — watch Feed for hops.</p>') +
       mapLocs
         .map(l => {
           const n = peopleAt(l.id).length + (l.id === L0.id ? 1 : 0);
@@ -799,7 +838,7 @@ function renderPhone() {
   } else if (phoneApp === 'wallet') {
     body =
       hdr('Balance', 'home') +
-      `<div class="res win" style="padding:6px 0"><small>Balance</small><b>${fmtN(hudAvailable ?? S.bal)} GD</b></div><div class="pstats"><span><b>${S.shards}</b><small>Shards</small></span><span><b>${S.nfts.length}</b><small>NFTs</small></span></div><div class="hint">Daily skill pay: ${fmt(S.payUsed)} of ${fmt(payCap())} used. After that it pays only 20%.${weak() ? ' <b class="neg">Tired or hungry: skill pay is cut by 40%.</b>' : ''}</div><div class="meter"><i style="width:${Math.min(100, (S.payUsed / payCap()) * 100)}%"></i></div>
+      `<div class="res win" style="padding:6px 0"><small>Balance</small><b>${fmtN(hudAvailable ?? S.bal)} GD</b></div><div class="pstats"><span><b>${S.shards}</b><small>Shards</small></span><span><b>${S.nfts.length}</b><small>NFTs</small></span></div><div class="hint">${weak() ? '<b class="neg">Tired or hungry: skill pay is cut by 40%.</b> Eat or sleep, then play.' : 'Skill games pay full GD when you win. Eat and rest so pay is not cut.'}</div>
     <div class="acts" style="margin-top:10px"><button data-a="citysim" ${citySimPlaying ? 'disabled' : ''}>${citySimBtn()}</button></div>
     ${cityDay.phase === 'idle' ? '<p class="hint">One minute of playback for 24 hours. Your balance and live shop prices stay real.</p>' : cityDayHtml()}` +
       `<small style="display:block;margin-top:10px">Activity (every move is recorded, like a block explorer)</small>` +

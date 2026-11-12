@@ -1,4 +1,4 @@
-import { payCapFor, skillLevel, START_GD } from '@glitch/shared';
+import { skillLevel, START_GD } from '@glitch/shared';
 import { DEFAULT_LOOK, type S as PlayerState, type TxEntry } from './types';
 
 export const START = START_GD;
@@ -74,7 +74,6 @@ export function addXp(k: keyof PlayerState['xp'], n: number) {
 }
 
 export const dayKey = () => new Date().toISOString().slice(0, 10);
-export const payCap = () => payCapFor(S.xp);
 export const txlog: TxEntry[] = [];
 export function logTx(kind: string, amt: number, note: string) {
   txlog.unshift({
@@ -86,20 +85,14 @@ export function logTx(kind: string, amt: number, note: string) {
   if (txlog.length > 40) txlog.pop();
 }
 
+/** Local skill credit (offline / demo). Server is the source of truth for minting. */
 export function earn(amount: number) {
   if (weak()) amount *= 0.6;
-  if (S.payDay !== dayKey()) {
-    S.payDay = dayKey();
-    S.payUsed = 0;
-  }
-  const full = Math.min(amount, Math.max(0, payCap() - S.payUsed));
-  const over = amount - full;
-  const credited = full + over * 0.2;
-  S.payUsed += full;
+  const credited = Math.round(amount);
   S.bal += credited;
   S.created += credited;
   logTx('in', credited, 'Skill pay');
-  return { credited, capped: over > 0 };
+  return { credited, capped: false };
 }
 
 export const escrow = (stake: number) => {

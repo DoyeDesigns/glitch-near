@@ -3,7 +3,6 @@ import {
   faucetCredit,
   LARGE_STAKE_GD,
   LEVERAGE_LARGE_BUMP,
-  payCapFor,
   TRADE_MAX_STAKE,
   TRADE_MIN_STAKE,
   TRADE_OPENS_PER_MIN,
@@ -85,10 +84,6 @@ function isWeak(raw: string): boolean {
   } catch {
     return false;
   }
-}
-
-function dayKey(now = Date.now()): string {
-  return new Date(now).toISOString().slice(0, 10);
 }
 
 function tokenPrice(sym: string): number | null {
@@ -190,14 +185,13 @@ export async function tradeSnapshot(player: PlayerRow): Promise<{
   payUsed: number;
 }> {
   const fresh = getPlayerById(player.id) ?? player;
-  const today = dayKey();
   const funds = await fundsView(fresh);
   return {
     bet: tradeViewFor(fresh.id),
     available: funds.available,
     settling: funds.settling,
     xp: parseXp(fresh.xp_json),
-    payUsed: fresh.pay_day === today ? fresh.pay_used : 0,
+    payUsed: 0,
   };
 }
 
@@ -333,28 +327,19 @@ export async function resolveTrade(id: string): Promise<void> {
     if (!player) return;
 
     const now = Date.now();
-    const today = dayKey(now);
     const chainBefore = await readGdBalanceForLog(player.account_id);
 
     const settled = db.transaction(() => {
       const fresh = db.prepare(`SELECT status FROM trades WHERE id = ?`).get(id) as { status: string } | undefined;
       if (!fresh || fresh.status !== 'open') return null;
       const progress = db
-        .prepare(`SELECT xp_json, needs_json, pay_day, pay_used FROM players WHERE id = ?`)
-        .get(row.player_id) as
-        | { xp_json: string; needs_json: string; pay_day: string; pay_used: number }
-        | undefined;
+        .prepare(`SELECT xp_json, needs_json FROM players WHERE id = ?`)
+        .get(row.player_id) as { xp_json: string; needs_json: string } | undefined;
       if (!progress) return null;
       const xp = parseXp(progress.xp_json);
-      const payUsed0 = progress.pay_day === today ? progress.pay_used : 0;
       let credited = 0;
-      let capped = false;
-      let payUsed = payUsed0;
       if (pnl > 0) {
-        const next = faucetCredit(pnl, isWeak(progress.needs_json), payCapFor(xp), payUsed0);
-        credited = next.credited;
-        capped = next.capped;
-        payUsed = next.payUsed;
+        credited = faucetCredit(pnl, isWeak(progress.needs_json)).credited;
         xp.trade += 20;
       } else {
         xp.trade += 12;
@@ -365,15 +350,10 @@ export async function resolveTrade(id: string): Promise<void> {
           `INSERT INTO pending_burns (id, player_id, amount, reason, created_at) VALUES (?, ?, ?, ?, ?)`,
         ).run(`tl-${id}`, row.player_id, String(-pnl), 'trade-loss', now);
       }
-      db.prepare(`UPDATE players SET xp_json = ?, pay_day = ?, pay_used = ? WHERE id = ?`).run(
-        JSON.stringify(xp),
-        today,
-        payUsed,
-        row.player_id,
-      );
+      db.prepare(`UPDATE players SET xp_json = ? WHERE id = ?`).run(JSON.stringify(xp), row.player_id);
       db.prepare(
         `UPDATE trades SET status = 'settled', price_out = ?, pnl = ?, credited = ?, capped = ?, minted = ?, chain_before = ? WHERE id = ?`,
-      ).run(String(price), String(pnl), String(credited), capped ? 1 : 0, credited > 0 ? 0 : 1, chainBefore, id);
+      ).run(String(price), String(pnl), String(credited), 0, credited > 0 ? 0 : 1, chainBefore, id);
       return credited;
     });
     const credited = settled.immediate();

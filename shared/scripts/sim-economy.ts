@@ -14,7 +14,6 @@ import {
   MAINTENANCE_GD,
   MAINTENANCE_MS,
   mulberry32,
-  payCapFor,
   POST_BURN,
   POST_COST,
   postProfit,
@@ -49,7 +48,6 @@ type Bot = {
   id: number;
   bal: number;
   xp: SkillXp;
-  payUsed: number;
   homeOwned: boolean;
   paidUntil: number; // sim ms
   furn: Set<string>;
@@ -112,7 +110,6 @@ function makeBots(rng: Rng): Bot[] {
       id: i,
       bal: START_GD,
       xp: { trade: 0, sec: 0, comm: 0 },
-      payUsed: 0,
       homeOwned: false,
       paidUntil: 0,
       furn: new Set(),
@@ -132,9 +129,7 @@ function credit(
   totalMinted: { n: number },
 ): void {
   if (amount <= 0) return;
-  const cap = payCapFor(bot.xp);
-  const r = faucetCredit(amount, weak, cap, bot.payUsed);
-  bot.payUsed = r.payUsed;
+  const r = faucetCredit(amount, weak);
   bot.bal += r.credited;
   weekMinted.n += r.credited;
   totalMinted.n += r.credited;
@@ -316,7 +311,6 @@ function run(): void {
 
     for (let d = 0; d < DAYS_PER_WEEK; d++) {
       for (const bot of bots) {
-        bot.payUsed = 0;
         dayVault(bot, rng, weekMinted, totalMinted);
         dayTrade(bot, rng, weekMinted, totalMinted, weekBurned, totalBurned);
         dayPost(bot, rng, weekMinted, totalMinted, weekBurned, totalBurned);

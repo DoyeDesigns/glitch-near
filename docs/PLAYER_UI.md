@@ -49,24 +49,24 @@ Open: click the cyan square drone beside the player, or press **P**. Modules gri
 | Social | Local feed / following | Client feed chrome; posts that pay go through `/post` at the tower |
 | Chat | Here / DMs | Client-local NPC chat stub |
 | Map | Districts + Go | **Go** → `POST /travel` (`GAS_GD` pending burn); warp only on success |
-| Balance | Available GD, shards, skill-pay meter, city-day sim | `/me`; sim uses `/sim/fast-forward` (no chain write) |
+| Balance | Available GD, shards, city-day sim | `/me`; sim uses `/sim/fast-forward` (no chain write) |
 | Profile | Name / role card | Mostly client + `/me` |
 | Pose | 10 presets + custom (arm raise 0=ribs / spread / elbow·knee) | **Client-only**; `localStorage` key `glitch-custom-pose-v5` |
 | Settings | Rename, look, hint toggle, Advanced chain proof, reset | `/me/chain`; reset clears local save only |
 | My Home | Buy studio, maintenance, furniture, room paint; dealer may be closed | `/home/*`, `/shop/buy`, `/merchants`; **paint is client-only** |
 | Market | List / buy / cancel gear or furniture | `/market`, `/market/list`, `/market/buy`, `/market/cancel` |
 
-Hints: level-tiered lines near the drone (`#assistHint`). Hide with ×; re-enable in Settings or Modules home.
+Hints: priority stack near the drone (`#assistHint`) — needs → location → situation → rotating tips. Hide with ×; re-enable in Settings or Modules home.
 
 ## HUD (always on)
 
 | Element | Content |
 | --- | --- |
-| Top-left card | Name, role, available GD, settling, return %, rep, energy/hunger, daily skill pay |
+| Top-left card | Name, role, available GD, settling, return %, rep, energy/hunger |
 | Top-right metrics | Online / district / visits (demo chrome) |
 | Location chip | Current `LOCS` place |
 | Tabs | Feed, Skills, Rank, About — toggle; × closes panel |
-| Market strip (`#mk`) | Token tickers from SSE |
+| Market strip (`#mk`) | Token tickers from SSE + last on-chain city trade |
 
 ### HUD tabs
 

@@ -198,6 +198,12 @@ export function chatter() {
   if (Math.random() < 0.35) post('npc', name, txt);
 }
 
+/** Latest on-chain merchant hop line for HUD / Map (set by city-trade pulse). */
+export let cityTradeGlance: string | null = null;
+export function setCityTradeGlance(text: string | null) {
+  cityTradeGlance = text;
+}
+
 export const metrics = { on: 1280, vis: 48213 };
 export let tickT = 0;
 export const addTickT = (_dt: number) => {

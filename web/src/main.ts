@@ -45,6 +45,7 @@ import {
   lifeUpdate,
   openCustomizer,
   secGame,
+  startCityTradePulse,
   tradeGame,
   useStation,
 } from './games';
@@ -128,6 +129,7 @@ function applyProfile(profile: Me) {
   save();
   updateHud();
   startMePoll();
+  startCityTradePulse();
   post('npc', S.name, 'just landed in the city. gm.');
   if (!S.styled) {
     S.styled = 1;

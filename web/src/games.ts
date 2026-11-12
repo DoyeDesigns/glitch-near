@@ -15,7 +15,7 @@ import {
 import { $, clamp, esc, fmt, fmtN, pick } from './util';
 import { applyChainItems, forgeItemIdForGear } from './itemsSync';
 import { L, save, S, weak } from './state';
-import { banner, post, px, TOK } from './market';
+import { banner, post, px, setCityTradeGlance, TOK } from './market';
 import {
   applyHomePaint,
   BOTC,
@@ -373,7 +373,7 @@ export function tradeGame() {
     resultCard(
       win,
       (shown > 0 ? '+' : '') + fmtN(shown) + ' GD',
-      `${pct >= 0 ? 'You won' : 'You lost'} ${Math.abs(pct).toFixed(0)}% of your bet${bet.capped ? ' (daily skill pay cap hit)' : ''}`,
+      `${pct >= 0 ? 'You won' : 'You lost'} ${Math.abs(pct).toFixed(0)}% of your bet`,
       `I bet ${side} on ${sym} in Glitch: ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% in 10 seconds.`,
       draw,
     );
@@ -512,7 +512,7 @@ export function secGame() {
     resultCard(
       hits >= 2,
       hits ? '+' + fmtN(credited) + ' GD' : 'Locked out',
-      `${hits} of 3 locks opened${hits === 3 ? '. PERFECT!' : ''}${shd ? ` · +${shd} shards` : ''}${state.capped ? ' (daily skill pay cap hit)' : ''}`,
+      `${hits} of 3 locks opened${hits === 3 ? '. PERFECT!' : ''}${shd ? ` · +${shd} shards` : ''}`,
       `I opened ${hits}/3 locks in the Glitch vault game.`,
     );
   }
@@ -749,7 +749,7 @@ export function commGame() {
       resultCard(
         shown >= 0,
         (shown >= 0 ? '+' : '') + fmt(shown) + ' GD',
-        `${state.viral ? 'VIRAL. ' : ''}+${state.followers} followers${state.capped ? ' (daily skill pay cap hit)' : ''}`,
+        `${state.viral ? 'VIRAL. ' : ''}+${state.followers} followers`,
         `My ${sym} take in Glitch ${state.viral ? 'went viral' : 'got ' + state.followers + ' new followers'}.`,
       );
       save();
@@ -1182,6 +1182,45 @@ export function startMerchantPoll(onUpdate: () => void): () => void {
   return () => window.clearInterval(id);
 }
 
+function newestLastTrade(): MerchantLastTrade | undefined {
+  let best: MerchantLastTrade | undefined;
+  for (const shop of [chefShop, smithShop, dealerShop]) {
+    const t = shop.lastTrade;
+    if (!t) continue;
+    if (!best || t.at > best.at) best = t;
+  }
+  return best;
+}
+
+export function formatCityTrade(t: MerchantLastTrade): string {
+  return `${roleLabel(t.from)} → ${roleLabel(t.to)} ${fmtN(t.amount)} GD · ${t.label}`;
+}
+
+let cityTradePulse = 0;
+let lastSeenCityTradeAt = 0;
+
+/** Light world poll so on-chain merchant hops toast + show on the plaza card without opening a shop. */
+export function startCityTradePulse(): void {
+  if (cityTradePulse) return;
+  const tick = () => {
+    void loadMerchantQuotes()
+      .then(() => {
+        const t = newestLastTrade();
+        if (!t) return;
+        const line = formatCityTrade(t);
+        setCityTradeGlance(line);
+        if (t.at > lastSeenCityTradeAt) {
+          if (lastSeenCityTradeAt > 0) banner(`City trade: ${line}`, 'info');
+          lastSeenCityTradeAt = t.at;
+        }
+        updateHud();
+      })
+      .catch(() => {});
+  };
+  tick();
+  cityTradePulse = window.setInterval(tick, 12_000);
+}
+
 export async function loadMerchantQuotes(): Promise<void> {
   const res = await fetch('/merchants', { credentials: 'include' });
   const data = (await res.json()) as {
@@ -1214,6 +1253,8 @@ export async function loadMerchantQuotes(): Promise<void> {
   smithShop = shopMeta(data.smith);
   dealerQuotes = Object.fromEntries((data.dealer?.menu ?? []).map(d => [d.itemId, d]));
   smithQuotes = Object.fromEntries((data.smith?.menu ?? []).map(d => [d.itemId, d]));
+  const latest = newestLastTrade();
+  if (latest) setCityTradeGlance(formatCityTrade(latest));
 }
 
 const reasonHint = (d: Pick<MerchantMenuDish, 'reasoning' | 'stock'>) => {

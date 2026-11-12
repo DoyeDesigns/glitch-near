@@ -1,7 +1,7 @@
 import { $, esc, fmt, fmtN } from './util';
 import { applyChainItems } from './itemsSync';
-import { lvl, payCap, roleName, S, SAVE, START, SK } from './state';
-import { cases, chg, feed, market, metrics, px, serverTick, TOK } from './market';
+import { lvl, roleName, S, SAVE, START, SK } from './state';
+import { cases, chg, cityTradeGlance, feed, market, metrics, px, serverTick, TOK } from './market';
 import { buildFurn, adTex, exTex, keys, labTex, releaseLookLock, towTex } from './world';
 import { refreshMe } from './session';
 
@@ -316,9 +316,6 @@ export function updateHud() {
   ($('#huB') as HTMLElement).style.background = hu < 20 ? 'var(--pink)' : 'var(--lime)';
   ($('#enT') as HTMLElement).textContent = String(Math.round(en));
   ($('#huT') as HTMLElement).textContent = String(Math.round(hu));
-  const used = Math.min(1, S.payUsed / payCap());
-  ($('#payBar') as HTMLElement).style.width = used * 100 + '%';
-  ($('#payTxt') as HTMLElement).textContent = fmt(S.payUsed) + ' / ' + fmt(payCap());
   ($('#mOn') as HTMLElement).textContent = fmtN(metrics.on);
   ($('#mDist') as HTMLElement).textContent = fmtN(1 + metrics.on / 40);
   ($('#mVis') as HTMLElement).textContent = fmtN(metrics.vis);
@@ -329,7 +326,10 @@ export function updateHud() {
       const c = chg(t);
       return `<div class="tk"><b>${t.sym}</b><span>${px(t.price)}</span><span class="${c >= 0 ? 'pos' : 'neg'}">${(c * 100).toFixed(1)}%</span></div>`;
     }).join('') +
-    `<div class="tk"><small>Regulator heat</small><span>${Math.round(market.heat * 100)}%</span></div>`;
+    `<div class="tk"><small>Regulator heat</small><span>${Math.round(market.heat * 100)}%</span></div>` +
+    (cityTradeGlance
+      ? `<div class="tk"><small>Last city trade</small><span style="text-transform:none;font-size:11px">${esc(cityTradeGlance)}</span></div>`
+      : '');
 }
 
 const hideCoach = () => {
@@ -410,7 +410,7 @@ export function renderSide() {
       head +
       `<p style="color:var(--mute)">Glitch is a free multiplayer city where web3 history becomes a game. This is a one-player slice: the market, other players and visitor counts are simulated. Your GD is custodial — the server settles earn/spend on NEAR testnet or a local mock ledger. Players never see a wallet. GD cannot be cashed out to mainnet.</p>
     <b>Economy health</b><div class="rk"><span>Created by skill pay</span><span class="pos">${fmt(S.created)}</span></div><div class="rk"><span>Burned (fees, losses, fines, holding tax)</span><span class="neg">${fmt(S.burned)}</span></div>
-    <p style="color:var(--mute)">Profits are capped daily and every loss is destroyed, so skill cannot print unlimited money.</p><button id="resetBtn">Reset progress</button>`;
+    <p style="color:var(--mute)">Tired or hungry cuts skill pay 40%. Losses burn. Starter is 60,000 GD.</p><button id="resetBtn">Reset progress</button>`;
     ($('#resetBtn') as HTMLButtonElement).onclick = () => {
       try {
         localStorage.removeItem(SAVE);

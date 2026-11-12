@@ -5,7 +5,6 @@ import {
   EUPHORIA_POST_BUMP,
   faucetCredit,
   mulberry32,
-  payCapFor,
   POST_BURN,
   POST_COOLDOWN_MS,
   POST_COST,
@@ -87,10 +86,6 @@ function isWeak(raw: string): boolean {
   }
 }
 
-function dayKey(now = Date.now()): string {
-  return new Date(now).toISOString().slice(0, 10);
-}
-
 export function parsePostTake(take: unknown): PostTake | null {
   if (take === 'hype' || take === 'warn' || take === 'meme') return take;
   return null;
@@ -129,13 +124,12 @@ async function accountView(
   player: PlayerRow,
 ): Promise<{ available: string; settling: string; xp: SkillXp; payUsed: number; followerTotal: number }> {
   const fresh = getPlayerById(player.id) ?? player;
-  const today = dayKey();
   const funds = await fundsView(fresh);
   return {
     available: funds.available,
     settling: funds.settling,
     xp: parseXp(fresh.xp_json),
-    payUsed: fresh.pay_day === today ? fresh.pay_used : 0,
+    payUsed: 0,
     followerTotal: fresh.followers || 0,
   };
 }
@@ -179,7 +173,6 @@ export async function publishPost(player: PlayerRow, input: { sym: string; take:
   const gained = Math.max(0, postFollowers(reach, level));
 
   const now = Date.now();
-  const today = dayKey(now);
   const id = randomId();
   const take = input.take;
   const chainBefore = await readGdBalanceForLog(player.account_id);
@@ -196,22 +189,14 @@ export async function publishPost(player: PlayerRow, input: { sym: string; take:
     const available = chain - held.pending - held.escrowed + held.settling;
     if (available < BigInt(POST_COST)) throw new AuthError('Not enough GD', 400);
     const progress = db
-      .prepare(`SELECT xp_json, needs_json, pay_day, pay_used FROM players WHERE id = ?`)
-      .get(player.id) as
-      | { xp_json: string; needs_json: string; pay_day: string; pay_used: number }
-      | undefined;
+      .prepare(`SELECT xp_json, needs_json FROM players WHERE id = ?`)
+      .get(player.id) as { xp_json: string; needs_json: string } | undefined;
     if (!progress) throw new AuthError('Player has no account', 503);
     const xp = parseXp(progress.xp_json);
     xp.comm += POST_XP;
-    const payUsed0 = progress.pay_day === today ? progress.pay_used : 0;
     let credited = 0;
-    let capped = false;
-    let payUsed = payUsed0;
     if (pnl > 0) {
-      const next = faucetCredit(pnl, isWeak(progress.needs_json), payCapFor(xp), payUsed0);
-      credited = next.credited;
-      capped = next.capped;
-      payUsed = next.payUsed;
+      credited = faucetCredit(pnl, isWeak(progress.needs_json)).credited;
     }
     db.prepare(
       `INSERT INTO posts (id, player_id, sym, take, reach, followers, pnl, credited, capped, minted, created_at, chain_before)
@@ -225,7 +210,7 @@ export async function publishPost(player: PlayerRow, input: { sym: string; take:
       gained,
       String(pnl),
       String(credited),
-      capped ? 1 : 0,
+      0,
       credited > 0 ? 0 : 1,
       now,
       chainBefore,
@@ -242,9 +227,11 @@ export async function publishPost(player: PlayerRow, input: { sym: string; take:
         `INSERT INTO pending_burns (id, player_id, amount, reason, created_at) VALUES (?, ?, ?, ?, ?)`,
       ).run(`pl-${id}`, player.id, String(-pnl), 'post-loss', now);
     }
-    db.prepare(
-      `UPDATE players SET xp_json = ?, pay_day = ?, pay_used = ?, followers = followers + ? WHERE id = ?`,
-    ).run(JSON.stringify(xp), today, payUsed, gained, player.id);
+    db.prepare(`UPDATE players SET xp_json = ?, followers = followers + ? WHERE id = ?`).run(
+      JSON.stringify(xp),
+      gained,
+      player.id,
+    );
   });
   try {
     insert.immediate();
