@@ -389,6 +389,10 @@ function addMintColumns(): void {
   addColumn('purchases', 'deliver_attempts', 'deliver_attempts INTEGER NOT NULL DEFAULT 0');
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS listings (
       id TEXT PRIMARY KEY,
       seller_id TEXT NOT NULL REFERENCES players(id),

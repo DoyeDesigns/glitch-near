@@ -6,7 +6,15 @@ import {
   type MerchantRoleId,
   type MerchantSupplyPayment,
 } from '@glitch/shared';
-import { getGDBalance } from './near/gd';
+import {
+  clearLatestCityTrade,
+  formatCityTradeLine,
+  getLatestCityTrade,
+  setLatestCityTrade,
+  type CityTradeHop,
+} from './cityTradeState';
+import { db } from './db';
+import { getGDBalanceCached } from './near/gd';
 import { getMerchant, MERCHANT_IDS } from './near/merchants';
 import { merchantFtTransfer } from './near/merchantTransfer';
 import { world } from './sim';
@@ -15,28 +23,55 @@ export type SupplyHopResult = MerchantSupplyPayment & { ok: boolean };
 
 export type MerchantLastTrade = MerchantSupplyPayment & { at: number };
 
+const LAST_TRADE_KEY = 'merchant_last_city_trade';
+
 const lastTradeByMerchant = new Map<MerchantRoleId, MerchantLastTrade>();
 
-function labelName(id: MerchantRoleId): string {
-  return id === 'chef' ? 'Chef' : id === 'smith' ? 'Smith' : 'Dealer';
+function loadPersistedLastTrade(): void {
+  try {
+    const row = db.prepare(`SELECT value FROM app_meta WHERE key = ?`).get(LAST_TRADE_KEY) as
+      | { value: string }
+      | undefined;
+    if (!row?.value) return;
+    const parsed = JSON.parse(row.value) as MerchantLastTrade;
+    if (!parsed?.from || !parsed?.to || !parsed?.amount || !parsed?.at) return;
+    setLatestCityTrade(parsed);
+    lastTradeByMerchant.set(parsed.from, parsed);
+    lastTradeByMerchant.set(parsed.to, parsed);
+  } catch {
+    /* ignore corrupt row */
+  }
 }
 
-export function getLastTrade(merchantId: MerchantRoleId): MerchantLastTrade | undefined {
-  return lastTradeByMerchant.get(merchantId);
+function persistLastTrade(entry: MerchantLastTrade): void {
+  db.prepare(
+    `INSERT INTO app_meta (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(LAST_TRADE_KEY, JSON.stringify(entry));
 }
+
+loadPersistedLastTrade();
+
+export function getLastTrade(merchantId: MerchantRoleId): MerchantLastTrade | undefined {
+  return lastTradeByMerchant.get(merchantId) ?? (getLatestCityTrade() as MerchantLastTrade | undefined);
+}
+
+export { getLatestCityTrade, formatCityTradeLine };
 
 function recordHop(pay: MerchantSupplyPayment, ok: boolean): void {
   if (!ok) return;
   const at = Date.now();
-  const entry = { ...pay, at };
+  const entry: MerchantLastTrade = { ...pay, at };
+  setLatestCityTrade(entry as CityTradeHop);
   lastTradeByMerchant.set(pay.from, entry);
   lastTradeByMerchant.set(pay.to, entry);
-  pushFeed(
-    world,
-    'sys',
-    'NPC',
-    `${labelName(pay.from)} → ${labelName(pay.to)} ${pay.amount} GD · ${pay.label}`,
-  );
+  try {
+    persistLastTrade(entry);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[merchants] could not persist last trade: ${msg.slice(0, 120)}`);
+  }
+  pushFeed(world, 'sys', 'NPC', formatCityTradeLine(entry));
 }
 
 async function payHop(pay: MerchantSupplyPayment): Promise<SupplyHopResult> {
@@ -69,7 +104,7 @@ export async function settleRestockSupply(
     if (!payer?.account_id) continue;
     let available = 0n;
     try {
-      available = await getGDBalance(payer.account_id);
+      available = BigInt(await getGDBalanceCached(payer.account_id));
     } catch {
       continue;
     }
@@ -91,7 +126,7 @@ export async function settleCityTrades(): Promise<SupplyHopResult[]> {
     if (!payer?.account_id) continue;
     let available = 0n;
     try {
-      available = await getGDBalance(payer.account_id);
+      available = BigInt(await getGDBalanceCached(payer.account_id));
     } catch {
       continue;
     }
@@ -125,4 +160,6 @@ export async function settleSupplyForTests(
 /** Test helper: clear last-trade memory. */
 export function clearLastTradesForTests(): void {
   lastTradeByMerchant.clear();
+  clearLatestCityTrade();
+  db.prepare(`DELETE FROM app_meta WHERE key = ?`).run(LAST_TRADE_KEY);
 }

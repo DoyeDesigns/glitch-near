@@ -1,7 +1,7 @@
 import type { KeyPairString } from 'near-api-js';
 import { config, isMockChain, requireNearConfig } from '../config';
-import { ONE_YOCTO, ensurePlayerNear, enqueueSignerWrite } from './client';
-import { getGDBalance, invalidateGdCache, transferGdViaHook } from './gd';
+import { ONE_YOCTO, RPC_WRITE_TIMEOUT_MS, ensurePlayerNear, enqueueSignerWrite, withTimeout } from './client';
+import { getGDBalanceCached, invalidateGdCache, transferGdViaHook } from './gd';
 import { decryptPrivateKey } from './keys';
 import { getMerchant } from './merchants';
 import { deliverSigned, signAccountCall } from './mintTx';
@@ -30,7 +30,12 @@ export async function merchantFtTransfer(
   const fromAccount = from.account_id;
   if (fromAccount === toAccountId) return 'failure';
 
-  const bal = await getGDBalance(fromAccount);
+  let bal = 0n;
+  try {
+    bal = BigInt(await getGDBalanceCached(fromAccount));
+  } catch {
+    return 'failure';
+  }
   if (bal < amount) return 'failure';
 
   if (await transferGdViaHook(fromAccount, toAccountId, amount)) return 'success';
@@ -40,22 +45,26 @@ export async function merchantFtTransfer(
   return enqueueSignerWrite(fromAccount, async () => {
     try {
       await ensurePlayerNear(fromAccount);
-      const outcome = await deliverSigned({
-        sign: () =>
-          signAccountCall({
-            accountId: fromAccount,
-            secretKey: secret,
-            contractId: config.gdContract,
-            methodName: 'ft_transfer',
-            args: {
-              receiver_id: toAccountId,
-              amount: amount.toString(),
-              memo: MEMO,
-            },
-            deposit: ONE_YOCTO,
-          }),
-        persistHash: () => undefined,
-      });
+      const outcome = await withTimeout(
+        deliverSigned({
+          sign: () =>
+            signAccountCall({
+              accountId: fromAccount,
+              secretKey: secret,
+              contractId: config.gdContract,
+              methodName: 'ft_transfer',
+              args: {
+                receiver_id: toAccountId,
+                amount: amount.toString(),
+                memo: MEMO,
+              },
+              deposit: ONE_YOCTO,
+            }),
+          persistHash: () => undefined,
+        }),
+        RPC_WRITE_TIMEOUT_MS,
+        'merchant.ft_transfer',
+      );
       if (outcome !== 'success') return 'failure';
       // Mock broadcast may not move balances; hooks already handled above.
       invalidateGdCache(fromAccount);

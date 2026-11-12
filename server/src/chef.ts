@@ -19,7 +19,7 @@ import {
 import { AuthError } from './auth';
 import { db } from './db';
 import { getGDBalanceCached } from './near/gd';
-import { getMerchant, MERCHANT_IDS } from './near/merchants';
+import { getMerchant, merchantAccountId, MERCHANT_IDS } from './near/merchants';
 
 type MerchantId = (typeof MERCHANT_IDS)[number];
 
@@ -264,48 +264,53 @@ async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
   // awaiting ft_transfer here blocks GET /merchants (menus + balances) on testnet.
   syncMerchantInventory(merchantId);
   const merchant = getMerchant(merchantId);
-  if (!merchant) throw new AuthError(`${merchantId} is not set up`, 503);
+  const accountId = merchant?.account_id ?? merchantAccountId(merchantId);
   let gdBalance = '0';
   try {
-    gdBalance = await getGDBalanceCached(merchant.account_id);
-  } catch {
+    gdBalance = await getGDBalanceCached(accountId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[merchants] ${merchantId} GD balance failed: ${msg.slice(0, 160)}`);
     gdBalance = '0';
   }
   const rules =
     merchantId === 'chef' ? CHEF_FOOD : merchantId === 'smith' ? SMITH_GEAR : DEALER_GOODS;
   const menu: MerchantMenuItem[] = [];
-  for (const rule of rules) {
-    const row = getRow(merchantId, rule.id);
-    if (!row) continue;
-    const item = catalogById(rule.id);
-    const reasoning = quoteChefPrice({
-      basePrice: rule.basePrice,
-      targetStock: rule.targetStock,
-      k: rule.k,
-      stock: Math.max(row.stock, 1),
-      demandEma: row.demand_ema,
-    });
-    const entry: MerchantMenuItem = {
-      itemId: rule.id,
-      title: item?.title ?? rule.id,
-      stock: row.stock,
-      demandEma: row.demand_ema,
-      price: reasoning.finalPrice,
-      reasoning,
-    };
-    if (merchantId === 'smith' && item?.effect.shardsCost != null) {
-      entry.shardsCost = item.effect.shardsCost;
+  if (merchant) {
+    for (const rule of rules) {
+      const row = getRow(merchantId, rule.id);
+      if (!row) continue;
+      const item = catalogById(rule.id);
+      const reasoning = quoteChefPrice({
+        basePrice: rule.basePrice,
+        targetStock: rule.targetStock,
+        k: rule.k,
+        stock: Math.max(row.stock, 1),
+        demandEma: row.demand_ema,
+      });
+      const entry: MerchantMenuItem = {
+        itemId: rule.id,
+        title: item?.title ?? rule.id,
+        stock: row.stock,
+        demandEma: row.demand_ema,
+        price: reasoning.finalPrice,
+        reasoning,
+      };
+      if (merchantId === 'smith' && item?.effect.shardsCost != null) {
+        entry.shardsCost = item.effect.shardsCost;
+      }
+      menu.push(entry);
     }
-    menu.push(entry);
   }
   const minBalance = merchantId === 'chef' ? CHEF_MIN_BALANCE : MERCHANT_MIN_BALANCE;
   const { getLastTrade } = await import('./merchantEconomy');
   const last = getLastTrade(merchantId);
   return {
-    accountId: merchant.account_id,
+    accountId,
     gdBalance,
     minBalance,
-    closed: !merchantShopOpen(gdBalance),
+    // Missing DB row ⇒ treat as closed for buys (keys needed); still show on-chain GD.
+    closed: !merchant || !merchantShopOpen(gdBalance),
     menu,
     ...(last
       ? {

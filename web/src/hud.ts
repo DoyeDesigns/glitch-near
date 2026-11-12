@@ -320,16 +320,17 @@ export function updateHud() {
   ($('#mDist') as HTMLElement).textContent = fmtN(1 + metrics.on / 40);
   ($('#mVis') as HTMLElement).textContent = fmtN(metrics.vis);
   const m = market.mood;
+  const tradeLine = cityTradeGlance
+    ? `<div class="tk city-trade"><small>Last city trade</small></div><div class="city-trade-line">${esc(cityTradeGlance)}</div>`
+    : '';
   ($('#mk') as HTMLElement).innerHTML =
+    tradeLine +
     `<div class="tk"><small>Market</small><b class="${m >= 0 ? 'pos' : 'neg'}">${m > .25 ? 'GREED' : m < -.25 ? 'FEAR' : 'CALM'}</b></div><div class="bar"><i style="width:${50 + m * 50}%;background:${m >= 0 ? 'var(--lime)' : 'var(--pink)'}"></i></div>` +
     TOK.map(t => {
       const c = chg(t);
       return `<div class="tk"><b>${t.sym}</b><span>${px(t.price)}</span><span class="${c >= 0 ? 'pos' : 'neg'}">${(c * 100).toFixed(1)}%</span></div>`;
     }).join('') +
-    `<div class="tk"><small>Regulator heat</small><span>${Math.round(market.heat * 100)}%</span></div>` +
-    (cityTradeGlance
-      ? `<div class="tk"><small>Last city trade</small><span style="text-transform:none;font-size:11px">${esc(cityTradeGlance)}</span></div>`
-      : '');
+    `<div class="tk"><small>Regulator heat</small><span>${Math.round(market.heat * 100)}%</span></div>`;
 }
 
 const hideCoach = () => {

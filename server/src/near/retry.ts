@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { db } from '../db';
-import { enqueueTreasuryWrite } from './client';
+import { enqueueTreasuryWrite, RPC_READ_TIMEOUT_MS, withTimeout } from './client';
 
-const READ_ATTEMPTS = 3;
-const BASE_MS = 250;
+const READ_ATTEMPTS = 2;
+const BASE_MS = 200;
 
 export type ChainRetryOpts = {
   /** true = view/read (up to 3 attempts). false = write (exactly 1 attempt, never retry). */
@@ -113,12 +113,13 @@ export async function withChainRetry<T>(fn: () => Promise<T>, opts: ChainRetryOp
     let last: unknown;
     for (let attempt = 1; attempt <= READ_ATTEMPTS; attempt++) {
       try {
-        return await fn();
+        return await withTimeout(fn(), RPC_READ_TIMEOUT_MS, label);
       } catch (err) {
         last = err;
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[near] ${label} attempt ${attempt}/${READ_ATTEMPTS} failed: ${msg}`);
         if (isRateLimited(err)) break;
+        if (msg.includes('timed out')) break; // hung RPC — more attempts won't help right now
         if (attempt < READ_ATTEMPTS) await sleep(BASE_MS * 2 ** (attempt - 1));
       }
     }

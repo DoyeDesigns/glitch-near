@@ -38,8 +38,9 @@ button[disabled]{opacity:.4;cursor:not-allowed}
 #tr{position:absolute;right:10px;top:var(--top);display:flex;flex-direction:column;gap:6px;align-items:flex-end;z-index:5}
 .metrics{display:flex;gap:14px;padding:8px 12px;align-items:center}.metrics div{display:flex;flex-direction:column}.metrics b{font:700 14px var(--mono)}
 .tabs{display:flex;gap:6px}.tabs button{padding:6px 10px}.tabs button.on{border-color:var(--cyan);color:var(--cyan)}
-#mk{position:absolute;left:10px;top:calc(var(--top) + 146px);padding:8px 10px;width:190px;font:12px var(--mono)}
+#mk{position:absolute;left:10px;top:calc(var(--top) + 118px);padding:8px 10px;width:210px;max-height:min(42vh,320px);overflow:auto;font:12px var(--mono);z-index:3}
 .tk{display:flex;justify-content:space-between;gap:8px;padding:2px 0}.tk b{font-weight:700}.pos{color:var(--lime)}.neg{color:var(--pink)}
+.city-trade{margin-bottom:2px}.city-trade-line{color:var(--cyan);font:600 11px/1.35 var(--mono);text-transform:none;letter-spacing:.01em;margin:0 0 8px;white-space:normal;word-break:break-word}
 .bar{height:4px;border-radius:2px;background:var(--panel2);margin:2px 0 6px;overflow:hidden}.bar i{display:block;height:100%}
 #side{position:absolute;right:10px;top:calc(var(--top) + 168px);width:310px;max-height:calc(100% - 280px);overflow:auto;padding:10px;touch-action:pan-y;z-index:4}
 #side .side-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px}
@@ -198,7 +199,7 @@ details.adv h3{margin:8px 0 4px;font-size:15px;color:var(--cyan)}
 @media (max-width:700px){
   #tl{min-width:0;padding:7px 9px}.bal{font-size:20px}
   .metrics{gap:8px;padding:6px 8px}.metrics b{font-size:12px}
-  #mk{top:auto;bottom:calc(var(--bot) + 150px);left:10px;width:160px;font-size:11px}
+  #mk{top:auto;bottom:calc(var(--bot) + 150px);left:10px;width:min(200px,46vw);max-height:28vh;font-size:11px}
   #side{left:0;right:0;top:auto;bottom:0;width:auto;max-height:46%;border-radius:14px 14px 0 0;padding-bottom:var(--bot)}
   #banner{top:calc(var(--top) + 100px);max-width:90vw;font-size:13px}
   .cap span:last-child{margin-left:8px}

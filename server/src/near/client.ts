@@ -18,6 +18,27 @@ export const PLAYER_FUND_NEAR = nearToYocto('0.05');
 /** Top up a player before a signed transfer when their NEAR is below this. */
 export const PLAYER_NEAR_TOPUP_FLOOR = nearToYocto('0.02');
 
+/** Hard ceiling for a single RPC view/call so Render/free RPC cannot hang the API forever. */
+export const RPC_READ_TIMEOUT_MS = 2_500;
+export const RPC_WRITE_TIMEOUT_MS = 25_000;
+
+/** Reject when `promise` does not settle within `ms`. */
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      err => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 let provider: JsonRpcProvider | null = null;
 let treasury: Account | null = null;
 

@@ -28,11 +28,18 @@ void ensureShardToken();
 if (process.env.VITEST !== 'true') {
   void import('./merchantEconomy').then(({ runMerchantSupplyTick }) => {
     void import('@glitch/shared').then(({ MERCHANT_CITY_TRADE_INTERVAL_MS }) => {
+      let supplyBusy = false;
       setInterval(() => {
-        void runMerchantSupplyTick().catch(err => {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.warn(`[merchants] supply tick failed: ${msg.slice(0, 160)}`);
-        });
+        if (supplyBusy) return;
+        supplyBusy = true;
+        void runMerchantSupplyTick()
+          .catch(err => {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[merchants] supply tick failed: ${msg.slice(0, 160)}`);
+          })
+          .finally(() => {
+            supplyBusy = false;
+          });
       }, MERCHANT_CITY_TRADE_INTERVAL_MS);
     });
   });
@@ -45,4 +52,15 @@ serve({ fetch: app.fetch, hostname: '0.0.0.0', port: config.port }, info => {
   console.log(`[server] listening on http://localhost:${info.port}`);
   console.log(`[server] CHAIN_MODE=${config.chainMode}`);
   console.log(`[server] NEAR_NETWORK=${config.nearNetwork || '(unset)'}`);
+  // Warm merchant GD cache so the first diner/forge open is not a cold RPC wait.
+  if (config.chainMode === 'testnet') {
+    void import('./near/gd').then(({ getGDBalanceCached }) =>
+      import('./near/merchants').then(({ MERCHANT_IDS, getMerchant, merchantAccountId }) => {
+        for (const id of MERCHANT_IDS) {
+          const accountId = getMerchant(id)?.account_id ?? merchantAccountId(id);
+          void getGDBalanceCached(accountId).catch(() => {});
+        }
+      }),
+    );
+  }
 });

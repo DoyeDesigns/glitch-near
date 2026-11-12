@@ -53,6 +53,7 @@ export type StreamPayload = {
   activeEvents: ActiveEvent[];
   pressures?: Pressures;
   eventStage?: EventStage | null;
+  lastCityTrade?: { from: string; to: string; amount: number; label: string; at: number; line: string } | null;
 };
 
 export function applyStreamState(data: StreamPayload): void {
@@ -91,9 +92,14 @@ export function applyStreamState(data: StreamPayload): void {
   }
   while (feed.length > 60) feed.pop();
 
-  // Market strip: latest NPC hop from feed (survives server restart better than in-memory lastTrade).
-  const hop = feed.find(p => p.who === 'NPC' && p.text.includes('→') && p.text.includes('GD ·'));
-  if (hop && hop.text !== cityTradeGlance) setCityTradeGlance(hop.text);
+  // Prefer SSE lastCityTrade (persisted on server), then NPC feed lines.
+  const fromStream = data.lastCityTrade?.line?.trim();
+  if (fromStream) {
+    if (fromStream !== cityTradeGlance) setCityTradeGlance(fromStream);
+  } else {
+    const hop = feed.find(p => p.who === 'NPC' && p.text.includes('→') && p.text.includes('GD ·'));
+    if (hop && hop.text !== cityTradeGlance) setCityTradeGlance(hop.text);
+  }
 }
 
 export function applyActiveEvents(events: ActiveEvent[]): void {

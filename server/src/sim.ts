@@ -11,6 +11,7 @@ import {
   type World,
 } from '@glitch/shared';
 import { chargeCiaFine } from './burns';
+import { formatCityTradeLine, getLatestCityTrade } from './cityTradeState';
 import { config } from './config';
 
 export type ActiveEvent = {
@@ -24,6 +25,15 @@ export type ActiveEvent = {
 
 export type StreamToken = Omit<Token, 'hist'> & { hist: number[] };
 
+export type StreamCityTrade = {
+  from: string;
+  to: string;
+  amount: number;
+  label: string;
+  at: number;
+  line: string;
+};
+
 export type StreamPayload = {
   tick: number;
   tokens: StreamToken[];
@@ -33,6 +43,8 @@ export type StreamPayload = {
   activeEvents: ActiveEvent[];
   pressures: Pressures;
   eventStage: EventStage | null;
+  /** Latest on-chain merchant hop (persisted). */
+  lastCityTrade?: StreamCityTrade | null;
 };
 
 export const world: World = createWorld(config.seed);
@@ -99,6 +111,17 @@ export function startSimLoop(): void {
 }
 
 export function getStreamPayload(): StreamPayload {
+  const hop = getLatestCityTrade();
+  const lastCityTrade: StreamCityTrade | null = hop
+    ? {
+        from: hop.from,
+        to: hop.to,
+        amount: hop.amount,
+        label: hop.label,
+        at: hop.at,
+        line: formatCityTradeLine(hop),
+      }
+    : null;
   return {
     tick: Math.floor(world.time * 2), // 0.5s ticks
     tokens: world.tokens.map(t => ({
@@ -120,6 +143,7 @@ export function getStreamPayload(): StreamPayload {
     activeEvents: activeEvents.map(e => ({ ...e })),
     pressures: { ...world.pressures },
     eventStage: world.eventStage ? { ...world.eventStage } : null,
+    lastCityTrade,
   };
 }
 

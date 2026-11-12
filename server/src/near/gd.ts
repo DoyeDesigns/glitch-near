@@ -6,11 +6,13 @@ import { getPlayerById } from './accounts';
 import {
   DEFAULT_GAS,
   ONE_YOCTO,
+  RPC_WRITE_TIMEOUT_MS,
   ensurePlayerNear,
   enqueueSignerWrite,
   getProvider,
   getTreasuryAccount,
   parseU128,
+  withTimeout,
 } from './client';
 import { decryptPrivateKey } from './keys';
 import { deliverSigned, lookupSignedTx, signAccountCall } from './mintTx';
@@ -23,7 +25,7 @@ function playerSecret(enc: string): KeyPairString {
   return decryptPrivateKey(enc) as KeyPairString;
 }
 
-const GD_CACHE_MS = 5_000;
+const GD_CACHE_MS = 15_000;
 const gdCache = new Map<string, { balance: string; until: number }>();
 
 let gdReader: ((accountId: string) => Promise<bigint>) | null = null;
@@ -110,14 +112,27 @@ export async function getGDBalance(accountId: string): Promise<bigint> {
   return parseU128(raw);
 }
 
-/** GD balance with 5s in-memory cache (for GET /me). */
+/**
+ * GD balance with in-memory cache.
+ * On RPC timeout/failure, returns the last known balance when available so menus
+ * and merchant gates do not hang or falsely close shops on Render.
+ */
 export async function getGDBalanceCached(accountId: string): Promise<string> {
   const hit = gdCache.get(accountId);
   const now = Date.now();
   if (hit && hit.until > now) return hit.balance;
-  const bal = (await getGDBalance(accountId)).toString();
-  gdCache.set(accountId, { balance: bal, until: now + GD_CACHE_MS });
-  return bal;
+  try {
+    const bal = (await getGDBalance(accountId)).toString();
+    gdCache.set(accountId, { balance: bal, until: now + GD_CACHE_MS });
+    return bal;
+  } catch (err) {
+    if (hit) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[near] stale GD for ${accountId}: ${msg.slice(0, 120)}`);
+      return hit.balance;
+    }
+    throw err;
+  }
 }
 
 /** Burn GD from a player (minter-only burn_from). Never retried. */
@@ -265,29 +280,33 @@ export async function pushTransfer(id: string): Promise<TransferOutcome> {
     const attempts = fresh.attempts + 1;
     let outcome: Awaited<ReturnType<typeof deliverSigned>>;
     try {
-      outcome = await deliverSigned({
-        sign: () =>
-          signAccountCall({
-            accountId,
-            secretKey: secret,
-            contractId: config.gdContract,
-            methodName: 'ft_transfer',
-            args: {
-              receiver_id: payload.to,
-              amount: payload.amount,
-              memo: payload.memo,
-            },
-            deposit: ONE_YOCTO,
-          }),
-        persistHash: (hash, at) => {
-          db.prepare(`UPDATE outbox SET tx_hash = ?, tx_at = ?, attempts = ? WHERE id = ?`).run(
-            hash,
-            at,
-            attempts,
-            id,
-          );
-        },
-      });
+      outcome = await withTimeout(
+        deliverSigned({
+          sign: () =>
+            signAccountCall({
+              accountId,
+              secretKey: secret,
+              contractId: config.gdContract,
+              methodName: 'ft_transfer',
+              args: {
+                receiver_id: payload.to,
+                amount: payload.amount,
+                memo: payload.memo,
+              },
+              deposit: ONE_YOCTO,
+            }),
+          persistHash: (hash, at) => {
+            db.prepare(`UPDATE outbox SET tx_hash = ?, tx_at = ?, attempts = ? WHERE id = ?`).run(
+              hash,
+              at,
+              attempts,
+              id,
+            );
+          },
+        }),
+        RPC_WRITE_TIMEOUT_MS,
+        'gd.ft_transfer',
+      );
     } catch (err) {
       const cwe =
         err instanceof ChainWriteError
