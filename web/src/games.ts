@@ -1122,6 +1122,7 @@ type MerchantLastTrade = {
 
 type MerchantShopMeta = {
   closed: boolean;
+  balanceKnown: boolean;
   gdBalance: string;
   minBalance: number;
   lastTrade?: MerchantLastTrade;
@@ -1131,14 +1132,15 @@ type MerchantShopMeta = {
 export let chefMenu: MerchantMenuDish[] = [];
 export let dealerQuotes: Record<string, MerchantMenuDish> = {};
 export let smithQuotes: Record<string, MerchantMenuDish> = {};
-export let chefShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBalance: 1000 };
-export let smithShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBalance: 1000 };
-export let dealerShop: MerchantShopMeta = { closed: false, gdBalance: '0', minBalance: 1000 };
+export let chefShop: MerchantShopMeta = { closed: false, balanceKnown: false, gdBalance: '0', minBalance: 1000 };
+export let smithShop: MerchantShopMeta = { closed: false, balanceKnown: false, gdBalance: '0', minBalance: 1000 };
+export let dealerShop: MerchantShopMeta = { closed: false, balanceKnown: false, gdBalance: '0', minBalance: 1000 };
 
 function shopMeta(
   raw:
     | {
         closed?: boolean;
+        balanceKnown?: boolean;
         gdBalance?: string;
         minBalance?: number;
         lastTrade?: MerchantLastTrade;
@@ -1147,6 +1149,7 @@ function shopMeta(
 ): MerchantShopMeta {
   return {
     closed: !!raw?.closed,
+    balanceKnown: raw?.balanceKnown === true,
     gdBalance: String(raw?.gdBalance ?? '0'),
     minBalance: Number(raw?.minBalance ?? 1000) || 1000,
     lastTrade: raw?.lastTrade,
@@ -1163,14 +1166,22 @@ function roleLabel(id: string): string {
 }
 
 function merchantWalletBlock(name: string, shop: MerchantShopMeta): string {
-  const status = shop.closed ? CLOSED_MSG : 'Open';
+  const status = shop.closed
+    ? CLOSED_MSG
+    : shop.balanceKnown
+      ? 'Open'
+      : 'Open · balance syncing…';
+  const bal =
+    shop.balanceKnown || Number(shop.gdBalance) > 0
+      ? `${fmtN(Number(shop.gdBalance))} GD`
+      : '—';
   const last = shop.lastTrade
     ? `<p class="hint">Last: ${esc(roleLabel(shop.lastTrade.from))} → ${esc(roleLabel(shop.lastTrade.to))} ${fmtN(shop.lastTrade.amount)} GD (${esc(shop.lastTrade.label)})</p>`
     : '';
   const closedHint = shop.closed
     ? `<p class="hint">NPC city trades and player sales refill this wallet (${fmtN(Number(shop.gdBalance))} / ${fmtN(shop.minBalance)}).</p>`
     : '';
-  return `<div class="day" style="margin:8px 0"><b>${esc(name)} wallet</b><p class="hint">${esc(status)} · ${fmtN(Number(shop.gdBalance))} GD</p>${last}${closedHint}</div>`;
+  return `<div class="day" style="margin:8px 0"><b>${esc(name)} wallet</b><p class="hint">${esc(status)} · ${bal}</p>${last}${closedHint}</div>`;
 }
 
 /** Poll GET /merchants while a merchant UI is open. */

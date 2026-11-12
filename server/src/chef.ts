@@ -52,7 +52,9 @@ export type MerchantShopView = {
   accountId: string;
   gdBalance: string;
   minBalance: number;
-  /** True when gdBalance is below MERCHANT_MIN_BALANCE. */
+  /** False when the chain balance could not be read (do not treat as insolvent). */
+  balanceKnown: boolean;
+  /** True when gdBalance is known and below MERCHANT_MIN_BALANCE. */
   closed: boolean;
   menu: MerchantMenuItem[];
   /** Most recent NPC supply/city trade touching this merchant. */
@@ -266,12 +268,13 @@ async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
   const merchant = getMerchant(merchantId);
   const accountId = merchant?.account_id ?? merchantAccountId(merchantId);
   let gdBalance = '0';
+  let balanceKnown = false;
   try {
     gdBalance = await getGDBalanceCached(accountId);
+    balanceKnown = true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[merchants] ${merchantId} GD balance failed: ${msg.slice(0, 160)}`);
-    gdBalance = '0';
   }
   const rules =
     merchantId === 'chef' ? CHEF_FOOD : merchantId === 'smith' ? SMITH_GEAR : DEALER_GOODS;
@@ -305,12 +308,15 @@ async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
   const minBalance = merchantId === 'chef' ? CHEF_MIN_BALANCE : MERCHANT_MIN_BALANCE;
   const { getLastTrade } = await import('./merchantEconomy');
   const last = getLastTrade(merchantId);
+  // Missing keys ⇒ closed for buys. Unknown balance must NOT look like insolvency —
+  // Render RPC timeouts were showing "out of GD" while wallets still held tens of k.
+  const closed = !merchant || (balanceKnown && !merchantShopOpen(gdBalance));
   return {
     accountId,
-    gdBalance,
+    gdBalance: balanceKnown ? gdBalance : '0',
+    balanceKnown,
     minBalance,
-    // Missing DB row ⇒ treat as closed for buys (keys needed); still show on-chain GD.
-    closed: !merchant || !merchantShopOpen(gdBalance),
+    closed,
     menu,
     ...(last
       ? {
