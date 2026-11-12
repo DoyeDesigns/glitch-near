@@ -13,6 +13,11 @@
     "typescript": "~7.0.2",
     "vite": "^8.3.5"
   },
+  "optionalDependencies": {
+    "@rolldown/binding-linux-x64-gnu": "1.2.16",
+    "@typescript/typescript-linux-x64": "7.0.2",
+    "lightningcss-linux-x64-gnu": "1.33.0"
+  },
   "dependencies": {
     "@glitch/shared": "*",
     "@near-wallet-selector/core": "^10.1.4",
