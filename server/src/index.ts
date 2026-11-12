@@ -3,6 +3,7 @@ import { config } from './config';
 import './db';
 import { installMockChain } from './near/mockLedger';
 import { createApp } from './routes';
+import { mountWeb } from './webStatic';
 import { startSimLoop } from './sim';
 import { resumePosts } from './post';
 import { resumeTrades } from './trade';
@@ -38,8 +39,9 @@ if (process.env.VITEST !== 'true') {
 }
 
 const app = createApp();
+mountWeb(app);
 
-serve({ fetch: app.fetch, port: config.port }, info => {
+serve({ fetch: app.fetch, hostname: '0.0.0.0', port: config.port }, info => {
   console.log(`[server] listening on http://localhost:${info.port}`);
   console.log(`[server] CHAIN_MODE=${config.chainMode}`);
   console.log(`[server] NEAR_NETWORK=${config.nearNetwork || '(unset)'}`);
