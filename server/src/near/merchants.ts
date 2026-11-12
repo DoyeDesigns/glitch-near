@@ -42,18 +42,15 @@ export function getMerchant(id: string): MerchantRow | undefined {
     .get(id) as MerchantRow | undefined;
 }
 
+export type MerchantKeyPlain = Partial<Record<(typeof MERCHANT_IDS)[number], string>>;
+
 /**
- * Insert missing merchant key rows from MERCHANT_*_KEY env (plaintext ed25519:…).
+ * Insert missing merchant key rows from plaintext ed25519 secrets.
  * Used when Render's SQLite was wiped but on-chain merchant accounts still exist.
  */
-export function ensureMerchantKeysFromEnv(): { restored: string[]; skipped: string[] } {
+export function restoreMerchantKeys(keys: MerchantKeyPlain): { restored: string[]; skipped: string[] } {
   const restored: string[] = [];
   const skipped: string[] = [];
-  const keys: Record<(typeof MERCHANT_IDS)[number], string> = {
-    chef: config.merchantChefKey,
-    smith: config.merchantSmithKey,
-    dealer: config.merchantDealerKey,
-  };
   const accountIds: Record<(typeof MERCHANT_IDS)[number], string> = {
     chef: config.merchantChef || merchantAccountId('chef'),
     smith: config.merchantSmith || merchantAccountId('smith'),
@@ -86,9 +83,27 @@ export function ensureMerchantKeysFromEnv(): { restored: string[]; skipped: stri
     );
   }
   // #region agent log
-  fetch('http://127.0.0.1:7748/ingest/96276866-f022-4fea-afaf-a35cfcf1e196',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'094547'},body:JSON.stringify({sessionId:'094547',hypothesisId:'A',location:'merchants.ts:ensureMerchantKeysFromEnv',message:'merchant key restore',data:{restored,skipped,missing,envPresent:{chef:!!config.merchantChefKey,smith:!!config.merchantSmithKey,dealer:!!config.merchantDealerKey}},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
+  fetch('http://127.0.0.1:7748/ingest/96276866-f022-4fea-afaf-a35cfcf1e196',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'094547'},body:JSON.stringify({sessionId:'094547',hypothesisId:'A',location:'merchants.ts:restoreMerchantKeys',message:'merchant key restore',data:{restored,skipped,missing,keyProvided:{chef:!!keys.chef,smith:!!keys.smith,dealer:!!keys.dealer}},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
   // #endregion
   return { restored, skipped };
+}
+
+/** Boot helper: restore from MERCHANT_*_KEY env when the SQLite merchants table is empty. */
+export function ensureMerchantKeysFromEnv(): { restored: string[]; skipped: string[] } {
+  return restoreMerchantKeys({
+    chef: config.merchantChefKey,
+    smith: config.merchantSmithKey,
+    dealer: config.merchantDealerKey,
+  });
+}
+
+/** Ops: which merchants have a custodial row (never returns key material). */
+export function merchantKeyPresence(): Record<(typeof MERCHANT_IDS)[number], boolean> {
+  return {
+    chef: !!getMerchant('chef'),
+    smith: !!getMerchant('smith'),
+    dealer: !!getMerchant('dealer'),
+  };
 }
 
 async function createMerchantAccount(id: string, accountId: string, publicKey: string): Promise<void> {

@@ -4,6 +4,7 @@ import { nearToYocto } from 'near-api-js';
 import { config, readAdminToken } from './config';
 import { db } from './db';
 import { formatNear, getNearBalanceCached } from './near';
+import { merchantKeyPresence } from './near/merchants';
 
 const HOUR_MS = 3_600_000;
 const LOW_05 = nearToYocto('0.5');
@@ -58,6 +59,8 @@ export type AdminHealth = {
     distinctIpsLastHour: number;
     ipPerHourCap: number;
   };
+  /** Whether custodial merchant rows exist (never key material). */
+  merchantKeys: { chef: boolean; smith: boolean; dealer: boolean };
 };
 
 function normalizeToken(raw: string): string {
@@ -201,5 +204,6 @@ export async function adminHealth(): Promise<AdminHealth> {
       distinctIpsLastHour: distinctIps,
       ipPerHourCap: config.signupIpPerHour,
     },
+    merchantKeys: merchantKeyPresence(),
   };
 }

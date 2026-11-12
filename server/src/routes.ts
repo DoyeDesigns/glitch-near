@@ -152,6 +152,35 @@ export function createApp() {
     }
   });
 
+  /**
+   * Restore missing merchants SQLite key rows from plaintext ed25519 secrets.
+   * Body: { chef?: string, smith?: string, dealer?: string }. Never echoes keys back.
+   */
+  app.post('/admin/merchants/restore-keys', async c => {
+    const auth = adminAuth(c.req.header('x-admin-token'));
+    if (auth === 'missing') return c.json({ error: 'Not found' }, 404);
+    if (auth === 'bad') return c.json({ error: 'Unauthorized' }, 401);
+    let body: { chef?: string; smith?: string; dealer?: string } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    try {
+      const { restoreMerchantKeys, merchantKeyPresence } = await import('./near/merchants');
+      const result = restoreMerchantKeys({
+        chef: typeof body.chef === 'string' ? body.chef : undefined,
+        smith: typeof body.smith === 'string' ? body.smith : undefined,
+        dealer: typeof body.dealer === 'string' ? body.dealer : undefined,
+      });
+      return c.json({ ...result, merchantKeys: merchantKeyPresence() });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[admin] merchants restore-keys failed:', message.slice(0, 160));
+      return c.json({ error: 'Could not restore merchant keys' }, 502);
+    }
+  });
+
   app.post('/trade/open', async c => {
     const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
     if (!player) return c.json({ error: 'Not signed in' }, 401);

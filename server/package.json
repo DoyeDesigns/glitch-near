@@ -13,7 +13,8 @@
     "verify": "tsx scripts/verify.ts",
     "items:seed": "tsx scripts/items-seed.ts",
     "merchants:setup": "tsx scripts/merchants-setup.ts",
-    "merchants:export-keys": "tsx scripts/merchants-export-keys.ts"
+    "merchants:export-keys": "tsx scripts/merchants-export-keys.ts",
+    "merchants:restore-remote": "tsx scripts/merchants-restore-remote.ts"
   },
   "dependencies": {
     "@glitch/shared": "*",
