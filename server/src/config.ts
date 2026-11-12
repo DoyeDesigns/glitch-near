@@ -101,6 +101,10 @@ export const config = {
   merchantChef: str('MERCHANT_CHEF', rootAccount ? `chef.${rootAccount}` : ''),
   merchantSmith: str('MERCHANT_SMITH', rootAccount ? `smith.${rootAccount}` : ''),
   merchantDealer: str('MERCHANT_DEALER', rootAccount ? `dealer.${rootAccount}` : ''),
+  /** Optional plaintext ed25519 secrets to restore custodial merchant rows after a wiped Render DB. */
+  merchantChefKey: str('MERCHANT_CHEF_KEY'),
+  merchantSmithKey: str('MERCHANT_SMITH_KEY'),
+  merchantDealerKey: str('MERCHANT_DEALER_KEY'),
   /** Sender account id in admin top-up commands. */
   topupFrom: str('TOPUP_ACCOUNT', chainRoot),
 };

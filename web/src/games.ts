@@ -1122,6 +1122,7 @@ type MerchantLastTrade = {
 
 type MerchantShopMeta = {
   closed: boolean;
+  closedReason?: 'no_keys' | 'insolvent';
   balanceKnown: boolean;
   gdBalance: string;
   minBalance: number;
@@ -1140,6 +1141,7 @@ function shopMeta(
   raw:
     | {
         closed?: boolean;
+        closedReason?: 'no_keys' | 'insolvent';
         balanceKnown?: boolean;
         gdBalance?: string;
         minBalance?: number;
@@ -1149,6 +1151,7 @@ function shopMeta(
 ): MerchantShopMeta {
   return {
     closed: !!raw?.closed,
+    closedReason: raw?.closedReason,
     balanceKnown: raw?.balanceKnown === true,
     gdBalance: String(raw?.gdBalance ?? '0'),
     minBalance: Number(raw?.minBalance ?? 1000) || 1000,
@@ -1156,7 +1159,8 @@ function shopMeta(
   };
 }
 
-const CLOSED_MSG = 'Closed — merchant is out of GD';
+const CLOSED_INSOLVENT = 'Closed — merchant is out of GD';
+const CLOSED_NO_KEYS = 'Closed — merchant keys missing on server';
 
 function roleLabel(id: string): string {
   if (id === 'chef') return 'Chef';
@@ -1167,7 +1171,9 @@ function roleLabel(id: string): string {
 
 function merchantWalletBlock(name: string, shop: MerchantShopMeta): string {
   const status = shop.closed
-    ? CLOSED_MSG
+    ? shop.closedReason === 'no_keys'
+      ? CLOSED_NO_KEYS
+      : CLOSED_INSOLVENT
     : shop.balanceKnown
       ? 'Open'
       : 'Open · balance syncing…';
@@ -1179,7 +1185,9 @@ function merchantWalletBlock(name: string, shop: MerchantShopMeta): string {
     ? `<p class="hint">Last: ${esc(roleLabel(shop.lastTrade.from))} → ${esc(roleLabel(shop.lastTrade.to))} ${fmtN(shop.lastTrade.amount)} GD (${esc(shop.lastTrade.label)})</p>`
     : '';
   const closedHint = shop.closed
-    ? `<p class="hint">NPC city trades and player sales refill this wallet (${fmtN(Number(shop.gdBalance))} / ${fmtN(shop.minBalance)}).</p>`
+    ? shop.closedReason === 'no_keys'
+      ? `<p class="hint">Chain wallet has GD, but this server DB has no custodial key. Sync merchants from local or set MERCHANT_*_KEY.</p>`
+      : `<p class="hint">NPC city trades and player sales refill this wallet (${fmtN(Number(shop.gdBalance))} / ${fmtN(shop.minBalance)}).</p>`
     : '';
   return `<div class="day" style="margin:8px 0"><b>${esc(name)} wallet</b><p class="hint">${esc(status)} · ${bal}</p>${last}${closedHint}</div>`;
 }

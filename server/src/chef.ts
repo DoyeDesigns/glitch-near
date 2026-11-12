@@ -54,8 +54,10 @@ export type MerchantShopView = {
   minBalance: number;
   /** False when the chain balance could not be read (do not treat as insolvent). */
   balanceKnown: boolean;
-  /** True when gdBalance is known and below MERCHANT_MIN_BALANCE. */
+  /** True when buys are blocked (missing custodial key row and/or insolvent). */
   closed: boolean;
+  /** Distinguishes missing server keys from a real empty wallet. */
+  closedReason?: 'no_keys' | 'insolvent';
   menu: MerchantMenuItem[];
   /** Most recent NPC supply/city trade touching this merchant. */
   lastTrade?: {
@@ -278,45 +280,50 @@ async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
   }
   const rules =
     merchantId === 'chef' ? CHEF_FOOD : merchantId === 'smith' ? SMITH_GEAR : DEALER_GOODS;
+  // Menu/stock live in merchant_inventory — do not require the merchants key row.
   const menu: MerchantMenuItem[] = [];
-  if (merchant) {
-    for (const rule of rules) {
-      const row = getRow(merchantId, rule.id);
-      if (!row) continue;
-      const item = catalogById(rule.id);
-      const reasoning = quoteChefPrice({
-        basePrice: rule.basePrice,
-        targetStock: rule.targetStock,
-        k: rule.k,
-        stock: Math.max(row.stock, 1),
-        demandEma: row.demand_ema,
-      });
-      const entry: MerchantMenuItem = {
-        itemId: rule.id,
-        title: item?.title ?? rule.id,
-        stock: row.stock,
-        demandEma: row.demand_ema,
-        price: reasoning.finalPrice,
-        reasoning,
-      };
-      if (merchantId === 'smith' && item?.effect.shardsCost != null) {
-        entry.shardsCost = item.effect.shardsCost;
-      }
-      menu.push(entry);
+  for (const rule of rules) {
+    const row = getRow(merchantId, rule.id);
+    if (!row) continue;
+    const item = catalogById(rule.id);
+    const reasoning = quoteChefPrice({
+      basePrice: rule.basePrice,
+      targetStock: rule.targetStock,
+      k: rule.k,
+      stock: Math.max(row.stock, 1),
+      demandEma: row.demand_ema,
+    });
+    const entry: MerchantMenuItem = {
+      itemId: rule.id,
+      title: item?.title ?? rule.id,
+      stock: row.stock,
+      demandEma: row.demand_ema,
+      price: reasoning.finalPrice,
+      reasoning,
+    };
+    if (merchantId === 'smith' && item?.effect.shardsCost != null) {
+      entry.shardsCost = item.effect.shardsCost;
     }
+    menu.push(entry);
   }
   const minBalance = merchantId === 'chef' ? CHEF_MIN_BALANCE : MERCHANT_MIN_BALANCE;
   const { getLastTrade } = await import('./merchantEconomy');
   const last = getLastTrade(merchantId);
-  // Missing keys ⇒ closed for buys. Unknown balance must NOT look like insolvency —
-  // Render RPC timeouts were showing "out of GD" while wallets still held tens of k.
-  const closed = !merchant || (balanceKnown && !merchantShopOpen(gdBalance));
+  // Insolvent only when balance is known and below floor. Missing custodial key rows
+  // must not look like "out of GD" (Render often has chain float but empty merchants table).
+  const insolvent = balanceKnown && !merchantShopOpen(gdBalance);
+  const closed = !merchant || insolvent;
+  // #region agent log
+  fetch('http://127.0.0.1:7748/ingest/96276866-f022-4fea-afaf-a35cfcf1e196',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'094547'},body:JSON.stringify({sessionId:'094547',hypothesisId:'A',location:'chef.ts:shopView',message:'shopView result',data:{merchantId,hasMerchantRow:!!merchant,accountId,balanceKnown,gdBalance:balanceKnown?gdBalance:'unknown',insolvent,closed,closedReason:!merchant?'no_keys':insolvent?'insolvent':undefined,menuLen:menu.length},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
+  // #endregion
   return {
     accountId,
     gdBalance: balanceKnown ? gdBalance : '0',
     balanceKnown,
     minBalance,
     closed,
+    /** Why the shop is closed — UI should not say "out of GD" for missing keys. */
+    closedReason: !merchant ? 'no_keys' : insolvent ? 'insolvent' : undefined,
     menu,
     ...(last
       ? {

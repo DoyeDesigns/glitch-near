@@ -42,6 +42,55 @@ export function getMerchant(id: string): MerchantRow | undefined {
     .get(id) as MerchantRow | undefined;
 }
 
+/**
+ * Insert missing merchant key rows from MERCHANT_*_KEY env (plaintext ed25519:…).
+ * Used when Render's SQLite was wiped but on-chain merchant accounts still exist.
+ */
+export function ensureMerchantKeysFromEnv(): { restored: string[]; skipped: string[] } {
+  const restored: string[] = [];
+  const skipped: string[] = [];
+  const keys: Record<(typeof MERCHANT_IDS)[number], string> = {
+    chef: config.merchantChefKey,
+    smith: config.merchantSmithKey,
+    dealer: config.merchantDealerKey,
+  };
+  const accountIds: Record<(typeof MERCHANT_IDS)[number], string> = {
+    chef: config.merchantChef || merchantAccountId('chef'),
+    smith: config.merchantSmith || merchantAccountId('smith'),
+    dealer: config.merchantDealer || merchantAccountId('dealer'),
+  };
+  for (const id of MERCHANT_IDS) {
+    if (getMerchant(id)) {
+      skipped.push(id);
+      continue;
+    }
+    const secret = keys[id]?.trim();
+    if (!secret || !secret.startsWith('ed25519:')) {
+      skipped.push(id);
+      continue;
+    }
+    db.prepare(
+      `INSERT INTO merchants (id, account_id, enc_private_key, floated, created_at)
+       VALUES (?, ?, ?, 1, ?)`,
+    ).run(id, accountIds[id], encryptPrivateKey(secret), Date.now());
+    restored.push(id);
+  }
+  if (restored.length) {
+    console.log(`[merchants] restored key rows from env: ${restored.join(', ')}`);
+  }
+  const missing = MERCHANT_IDS.filter(id => !getMerchant(id));
+  if (missing.length) {
+    console.warn(
+      `[merchants] missing custodial key rows (shops stay closed for buys): ${missing.join(', ')}. ` +
+        `Set MERCHANT_CHEF_KEY / MERCHANT_SMITH_KEY / MERCHANT_DEALER_KEY or copy server/data merchants from local.`,
+    );
+  }
+  // #region agent log
+  fetch('http://127.0.0.1:7748/ingest/96276866-f022-4fea-afaf-a35cfcf1e196',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'094547'},body:JSON.stringify({sessionId:'094547',hypothesisId:'A',location:'merchants.ts:ensureMerchantKeysFromEnv',message:'merchant key restore',data:{restored,skipped,missing,envPresent:{chef:!!config.merchantChefKey,smith:!!config.merchantSmithKey,dealer:!!config.merchantDealerKey}},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
+  // #endregion
+  return { restored, skipped };
+}
+
 async function createMerchantAccount(id: string, accountId: string, publicKey: string): Promise<void> {
   if (merchantChain) {
     await merchantChain.create(accountId, MERCHANT_NEAR);

@@ -12,7 +12,8 @@
     "smoke": "tsx scripts/near-smoke.ts",
     "verify": "tsx scripts/verify.ts",
     "items:seed": "tsx scripts/items-seed.ts",
-    "merchants:setup": "tsx scripts/merchants-setup.ts"
+    "merchants:setup": "tsx scripts/merchants-setup.ts",
+    "merchants:export-keys": "tsx scripts/merchants-export-keys.ts"
   },
   "dependencies": {
     "@glitch/shared": "*",

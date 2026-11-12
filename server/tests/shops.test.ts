@@ -39,7 +39,14 @@ import { getGDBalanceCached, invalidateGdCache, resumeTransfers, setGdChainForTe
 import { setItemsChainForTests } from '../src/near/items';
 import { encryptPrivateKey } from '../src/near/keys';
 import { lastSignedCall, lastTreasuryCall, setMintTxTestHooks } from '../src/near/mintTx';
-import { MERCHANT_FLOAT, merchantAccountId, setMerchantChainForTests, setupMerchants } from '../src/near/merchants';
+import {
+  MERCHANT_FLOAT,
+  ensureMerchantKeysFromEnv,
+  getMerchant,
+  merchantAccountId,
+  setMerchantChainForTests,
+  setupMerchants,
+} from '../src/near/merchants';
 import { ChainWriteError, recordChainFailure } from '../src/near/retry';
 import { getPlayerById, type PlayerRow } from '../src/near/accounts';
 import { openTrade } from '../src/trade';
@@ -814,6 +821,57 @@ describe('forge', () => {
     fund(row.account_id!, 100n);
     await expect(forgeMint(row.id, 'cap')).rejects.toThrow(/Not enough GD/);
     await expect(forgeMint(row.id, 'headphones')).rejects.toThrow(/Unknown forge item/);
+  });
+});
+
+describe('merchant key restore', () => {
+  it('restores missing rows from MERCHANT_*_KEY and opens the shop view', async () => {
+    const secret = KeyPair.fromRandom('ed25519').toString();
+    const prev = {
+      chef: config.merchantChefKey,
+      smith: config.merchantSmithKey,
+      dealer: config.merchantDealerKey,
+    };
+    config.merchantChefKey = secret;
+    config.merchantSmithKey = '';
+    config.merchantDealerKey = '';
+    try {
+      db.prepare(`DELETE FROM merchants`).run();
+      expect(getMerchant('chef')).toBeUndefined();
+
+      const result = ensureMerchantKeysFromEnv();
+      expect(result.restored).toEqual(['chef']);
+      expect(getMerchant('chef')?.account_id).toBe(merchantAccountId('chef'));
+
+      fund(merchantAccountId('chef'), 50_000n);
+      insertMerchant('smith');
+      insertMerchant('dealer');
+      syncMerchantInventory('chef');
+
+      const view = await merchantsView();
+      expect(view.chef.closed).toBe(false);
+      expect(view.chef.closedReason).toBeUndefined();
+      expect(view.chef.menu.length).toBeGreaterThan(0);
+    } finally {
+      config.merchantChefKey = prev.chef;
+      config.merchantSmithKey = prev.smith;
+      config.merchantDealerKey = prev.dealer;
+    }
+  });
+
+  it('reports closedReason no_keys when the custodial row is missing', async () => {
+    db.prepare(`DELETE FROM merchants`).run();
+    insertMerchant('smith');
+    insertMerchant('dealer');
+    fund(merchantAccountId('chef'), 50_000n);
+    invalidateGdCache(merchantAccountId('chef'));
+    syncMerchantInventory('chef');
+
+    const view = await merchantsView();
+    expect(view.chef.closed).toBe(true);
+    expect(view.chef.closedReason).toBe('no_keys');
+    expect(view.chef.menu.length).toBeGreaterThan(0);
+    expect(Number(view.chef.gdBalance)).toBe(50_000);
   });
 });
 

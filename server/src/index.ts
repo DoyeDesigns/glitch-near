@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { config } from './config';
 import './db';
 import { installMockChain } from './near/mockLedger';
+import { ensureMerchantKeysFromEnv } from './near/merchants';
 import { createApp } from './routes';
 import { mountWeb } from './webStatic';
 import { startSimLoop } from './sim';
@@ -14,6 +15,10 @@ import { resumePurchases } from './purchase';
 import { ensureShardToken, resumeVaults } from './vault';
 
 installMockChain();
+// Before listen: Render often boots with empty SQLite while on-chain merchants still hold GD.
+if (config.chainMode === 'testnet') {
+  ensureMerchantKeysFromEnv();
+}
 
 startSimLoop();
 resumeTrades();
