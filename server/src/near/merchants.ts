@@ -82,9 +82,6 @@ export function restoreMerchantKeys(keys: MerchantKeyPlain): { restored: string[
         `Set MERCHANT_CHEF_KEY / MERCHANT_SMITH_KEY / MERCHANT_DEALER_KEY or copy server/data merchants from local.`,
     );
   }
-  // #region agent log
-  fetch('http://127.0.0.1:7748/ingest/96276866-f022-4fea-afaf-a35cfcf1e196',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'094547'},body:JSON.stringify({sessionId:'094547',hypothesisId:'A',location:'merchants.ts:restoreMerchantKeys',message:'merchant key restore',data:{restored,skipped,missing,keyProvided:{chef:!!keys.chef,smith:!!keys.smith,dealer:!!keys.dealer}},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
-  // #endregion
   return { restored, skipped };
 }
 

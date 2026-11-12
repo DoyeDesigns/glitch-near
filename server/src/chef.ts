@@ -313,9 +313,6 @@ async function shopView(merchantId: MerchantId): Promise<MerchantShopView> {
   // must not look like "out of GD" (Render often has chain float but empty merchants table).
   const insolvent = balanceKnown && !merchantShopOpen(gdBalance);
   const closed = !merchant || insolvent;
-  // #region agent log
-  fetch('http://127.0.0.1:7748/ingest/96276866-f022-4fea-afaf-a35cfcf1e196',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'094547'},body:JSON.stringify({sessionId:'094547',hypothesisId:'A',location:'chef.ts:shopView',message:'shopView result',data:{merchantId,hasMerchantRow:!!merchant,accountId,balanceKnown,gdBalance:balanceKnown?gdBalance:'unknown',insolvent,closed,closedReason:!merchant?'no_keys':insolvent?'insolvent':undefined,menuLen:menu.length},timestamp:Date.now(),runId:'post-fix'})}).catch(()=>{});
-  // #endregion
   return {
     accountId,
     gdBalance: balanceKnown ? gdBalance : '0',
