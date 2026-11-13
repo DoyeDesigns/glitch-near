@@ -1186,7 +1186,7 @@ function merchantWalletBlock(name: string, shop: MerchantShopMeta): string {
     : '';
   const closedHint = shop.closed
     ? shop.closedReason === 'no_keys'
-      ? `<p class="hint">Chain wallet has GD, but this server DB has no custodial key. Sync merchants from local or set MERCHANT_*_KEY.</p>`
+      ? `<p class="hint">This shop is closed right now.</p>`
       : `<p class="hint">NPC city trades and player sales refill this wallet (${fmtN(Number(shop.gdBalance))} / ${fmtN(shop.minBalance)}).</p>`
     : '';
   return `<div class="day" style="margin:8px 0"><b>${esc(name)} wallet</b><p class="hint">${esc(status)} · ${bal}</p>${last}${closedHint}</div>`;
@@ -1280,8 +1280,25 @@ const reasonHint = (d: Pick<MerchantMenuDish, 'reasoning' | 'stock'>) => {
   return bits.join(' · ');
 };
 
+/** Which merchant purchase button is waiting. Read by the home screen. */
+export let merchantBusy = '';
+
+function refreshOpenPhone(): void {
+  void import('./phone').then(m => m.phoneRefresh());
+}
+
+async function finishMerchantBuy(): Promise<void> {
+  merchantBusy = '';
+  try {
+    await loadMerchantQuotes();
+  } catch {
+    /* keep the last shop balances */
+  }
+  refreshOpenPhone();
+}
+
 export function dinerGame() {
-  let busy = false;
+  let busyId = '';
   let menu: ChefMenuDish[] = [];
   /** Simulated overlay prices by itemId (playback only; live menu stays underneath). */
   let simPrices: Record<string, number> = {};
@@ -1289,7 +1306,7 @@ export function dinerGame() {
   let simRaf = 0;
   let simLastUi = 0;
   const stopPoll = startMerchantPoll(() => {
-    if (!busy) r();
+    if (!busyId) r();
   });
   const stopSim = () => {
     if (simRaf) cancelAnimationFrame(simRaf);
@@ -1317,17 +1334,18 @@ export function dinerGame() {
               const sim = simPrices[d.itemId];
               const simHint =
                 sim != null ? `<div class="hint">sim ${fmtN(sim)} GD</div>` : '';
-              const disable = closed || soldOut || funds < d.price || busy;
+              const spinning = busyId === d.itemId;
+              const disable = closed || soldOut || funds < d.price || !!busyId;
               const label = closed ? 'Closed' : soldOut ? 'Sold out' : `${fmtN(d.price)} GD`;
-              return `<div class="loc"><div><b>${esc(d.title)}</b><div class="hint">${esc(item?.effect.description ?? '')}${h ? `: +${h} hunger` : ''}${e ? `, +${e} energy` : ''}</div><div class="hint">${esc(reasonHint(d))}</div>${simHint}</div><button class="pri" data-id="${d.itemId}" ${disable ? 'disabled' : ''}>${label}</button></div>`;
+              return `<div class="loc"><div><b>${esc(d.title)}</b><div class="hint">${esc(item?.effect.description ?? '')}${h ? `: +${h} hunger` : ''}${e ? `, +${e} energy` : ''}</div><div class="hint">${esc(reasonHint(d))}</div>${simHint}</div><button class="pri${spinning ? ' is-busy' : ''}" data-id="${d.itemId}" ${disable ? 'disabled' : ''}>${label}</button></div>`;
             })
             .join('')
-    }<div class="acts"><button id="dsim" ${busy || simPlaying || closed ? 'disabled' : ''}>${simPlaying ? 'Simulating…' : 'Simulate 1 day'}</button><button id="dx">Leave</button></div>`;
+    }<div class="acts"><button id="dsim" ${busyId || simPlaying || closed ? 'disabled' : ''}>${simPlaying ? 'Simulating…' : 'Simulate 1 day'}</button><button id="dx">Leave</button></div>`;
     sheet.querySelectorAll('[data-id]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         void (async () => {
-          if (busy) return;
-          busy = true;
+          if (busyId) return;
+          busyId = (b as HTMLElement).dataset.id ?? '';
           r();
           try {
             const res = await lifeRequest<{
@@ -1343,7 +1361,7 @@ export function dinerGame() {
             applyFunds(res.available, res.settling);
             applyNeeds(res.needs);
             const item = catalogById((b as HTMLElement).dataset.id!);
-            if (res.status === 'settling') banner('Payment is still landing on chain…', 'info');
+            if (res.status === 'settling') banner('Payment is processing.', 'info');
             else banner(`Ate ${item?.title ?? 'food'}${res.price != null ? ` for ${fmtN(res.price)} GD` : ''}.`, 'good');
             crowdTo('eat', 8);
             await loadMenu();
@@ -1357,7 +1375,7 @@ export function dinerGame() {
               /* keep last menu */
             }
           } finally {
-            busy = false;
+            busyId = '';
             r();
           }
         })();
@@ -1366,7 +1384,7 @@ export function dinerGame() {
     const simBtn = $('#dsim') as HTMLButtonElement | null;
     if (simBtn) {
       simBtn.onclick = () => {
-        if (busy || simPlaying) return;
+        if (busyId || simPlaying) return;
         void (async () => {
           simPlaying = true;
           r();
@@ -1485,7 +1503,7 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
     return (
       hdr('My Home', 'home') +
       dealerWallet +
-      `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div>${studioQ ? `<div class="hint">${esc(reasonHint(studioQ))}</div>` : ''}</div></div><div class="acts"><button class="pri" data-a="buyhome" ${closed || funds < studioPrice + MAINTENANCE ? 'disabled' : ''}>${closed ? 'Closed' : `Buy: ${fmtN(studioPrice)} GD + ${fmtN(MAINTENANCE)} GD maintenance`}</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
+      `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div>${studioQ ? `<div class="hint">${esc(reasonHint(studioQ))}</div>` : ''}</div></div><div class="acts"><button class="pri${merchantBusy === 'buyhome' ? ' is-busy' : ''}" data-a="buyhome" ${closed || !!merchantBusy || funds < studioPrice + MAINTENANCE ? 'disabled' : ''}>${closed ? 'Closed' : `Buy: ${fmtN(studioPrice)} GD + ${fmtN(MAINTENANCE)} GD maintenance`}</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
     );
   const paintId = H.paint?.id ?? 'midnight';
   const paints = HOME_PAINT_PRESETS.map(
@@ -1496,7 +1514,7 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
     hdr('My Home', 'home') +
     dealerWallet +
     `<div class="loc"><div><b>Studio apartment</b><div class="hint">${overdue() ? '<span class="neg">MAINTENANCE OVERDUE. Your bed is locked until you pay.</span>' : 'Maintenance paid for ' + mmss(maintenanceLeft())} · Comfort ${comfort()}</div></div></div>
-  <div class="acts"><button class="pri" data-a="gohome">Go home (free)</button><button data-a="paymaintenance" ${closed || funds < MAINTENANCE || maintenanceLeft() > MAINTENANCE_MS * 2 ? 'disabled' : ''}>${closed ? 'Closed' : `Pay maintenance ${fmtN(MAINTENANCE)} GD`}</button></div>
+  <div class="acts"><button class="pri" data-a="gohome" ${merchantBusy ? 'disabled' : ''}>Go home (free)</button><button class="${merchantBusy === 'paymaintenance' ? 'is-busy' : ''}" data-a="paymaintenance" ${closed || !!merchantBusy || funds < MAINTENANCE || maintenanceLeft() > MAINTENANCE_MS * 2 ? 'disabled' : ''}>${closed ? 'Closed' : `Pay maintenance ${fmtN(MAINTENANCE)} GD`}</button></div>
   <small style="display:block;margin-top:10px">Room colors</small><div class="paint-grid">${paints}</div>
   <small style="display:block;margin-top:10px">Furniture</small>` +
     FURN.map(f => {
@@ -1504,9 +1522,10 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
       const price = q?.price ?? catalogById(f.id)?.priceGD ?? f.price;
       const soldOut = q != null && q.stock < 1;
       const hint = q ? `${f.d} · +${f.pts} comfort · ${reasonHint(q)}` : `${f.d} · +${f.pts} comfort`;
-      const disable = closed || soldOut || funds < price;
+      const spinning = merchantBusy === f.id;
+      const disable = closed || soldOut || funds < price || !!merchantBusy;
       const label = closed ? 'Closed' : soldOut ? 'Sold out' : fmtN(price);
-      return `<div class="loc"><div><b>${f.name}</b><div class="hint">${esc(hint)}</div></div>${hasF(f.id) ? '<span class="tag">Owned</span>' : `<button data-a="furn" data-v="${f.id}" ${disable ? 'disabled' : ''}>${label}</button>`}</div>`;
+      return `<div class="loc"><div><b>${f.name}</b><div class="hint">${esc(hint)}</div></div>${hasF(f.id) ? '<span class="tag">Owned</span>' : `<button class="${spinning ? 'is-busy' : ''}" data-a="furn" data-v="${f.id}" ${disable ? 'disabled' : ''}>${label}</button>`}</div>`;
     }).join('')
   );
 }
@@ -1530,6 +1549,8 @@ export function homeAct(a: string, v?: string): boolean | void {
     return true;
   }
   if (a === 'buyhome') {
+    if (merchantBusy) return;
+    merchantBusy = 'buyhome';
     void lifeRequest<{
       studioStatus?: 'delivered' | 'settling';
       maintenanceStatus?: 'delivered' | 'settling';
@@ -1544,8 +1565,8 @@ export function homeAct(a: string, v?: string): boolean | void {
         H.owned = true;
         H.paidUntil = res.homePaidUntil;
         buildFurn();
-        if (res.studioStatus === 'settling') banner('Studio payment is still landing…', 'info');
-        else if (res.maintenanceStatus === 'settling') banner('Studio bought. Maintenance is still landing…', 'info');
+        if (res.studioStatus === 'settling') banner('Studio payment is processing.', 'info');
+        else if (res.maintenanceStatus === 'settling') banner('Studio bought. Maintenance is still processing.', 'info');
         else if ((res.homePaidUntil ?? 0) <= Date.now()) banner('Studio bought. Pay maintenance to unlock your bed.', 'info');
         else {
           banner('You bought a Studio! Tap Go home.', 'good');
@@ -1554,10 +1575,15 @@ export function homeAct(a: string, v?: string): boolean | void {
         save();
         updateHud();
       })
-      .catch(err => banner(err instanceof Error ? err.message : 'Could not buy home', 'bad'));
+      .catch(err => banner(err instanceof Error ? err.message : 'Could not buy home', 'bad'))
+      .finally(() => {
+        void finishMerchantBuy();
+      });
     return;
   }
   if (a === 'paymaintenance') {
+    if (merchantBusy) return;
+    merchantBusy = 'paymaintenance';
     void lifeRequest<{
       homePaidUntil: number;
       available: string;
@@ -1569,16 +1595,20 @@ export function homeAct(a: string, v?: string): boolean | void {
         applyFunds(res.available, res.settling);
         applyNeeds(res.needs);
         H.paidUntil = res.homePaidUntil;
-        if (res.maintenanceStatus === 'settling') banner('Maintenance is still landing on chain…', 'info');
+        if (res.maintenanceStatus === 'settling') banner('Maintenance payment is processing.', 'info');
         else banner('Maintenance paid', 'good');
         save();
         updateHud();
       })
-      .catch(err => banner(err instanceof Error ? err.message : 'Could not pay', 'bad'));
+      .catch(err => banner(err instanceof Error ? err.message : 'Could not pay', 'bad'))
+      .finally(() => {
+        void finishMerchantBuy();
+      });
     return;
   }
   if (a === 'furn') {
-    if (!v || hasF(v)) return;
+    if (!v || hasF(v) || merchantBusy) return;
+    merchantBusy = v;
     void lifeRequest<{
       status: 'delivered' | 'settling';
       available: string;
@@ -1588,7 +1618,7 @@ export function homeAct(a: string, v?: string): boolean | void {
       .then(res => {
         applyFunds(res.available, res.settling);
         applyNeeds(res.needs);
-        if (res.status === 'settling') banner('Payment is still landing on chain…', 'info');
+        if (res.status === 'settling') banner('Payment is processing.', 'info');
         else {
           if (!H.items.includes(v)) H.items.push(v);
           buildFurn();
@@ -1598,7 +1628,10 @@ export function homeAct(a: string, v?: string): boolean | void {
         save();
         updateHud();
       })
-      .catch(err => banner(err instanceof Error ? err.message : 'Could not buy', 'bad'));
+      .catch(err => banner(err instanceof Error ? err.message : 'Could not buy', 'bad'))
+      .finally(() => {
+        void finishMerchantBuy();
+      });
   }
 }
 
@@ -1632,7 +1665,7 @@ export function sleepGame() {
 }
 
 export function forgeGame() {
-  let busy = false;
+  let busyGear: number | null = null;
   let stopPoll = () => {};
   const r = () => {
     const funds = fundsNow();
@@ -1652,9 +1685,10 @@ export function forgeGame() {
             tip = own
               ? `Owned: ${own.id.slice(-8)}`
               : `${shd} shards + ${fmtN(gd)} GD${q ? ` · ${reasonHint(q)}` : ''}`;
-          const disable = closed || soldOut || busy || S.shards < shd || funds < gd;
+          const spinning = busyGear === g;
+          const disable = closed || soldOut || !!busyGear || S.shards < shd || funds < gd;
           const label = closed ? 'Closed' : soldOut ? 'Sold out' : 'Mint';
-          return `<div class="loc"><div><b>${GEARS[g]}</b> <span class="tag">${i.rar}</span><div class="hint">${esc(tip)}</div></div>${own ? `<button data-e="${g}">${S.look.gear === g ? 'Wearing' : 'Wear'}</button>` : `<button class="pri" data-mint="${g}" ${disable ? 'disabled' : ''}>${label}</button>`}</div>`;
+          return `<div class="loc"><div><b>${GEARS[g]}</b> <span class="tag">${i.rar}</span><div class="hint">${esc(tip)}</div></div>${own ? `<button data-e="${g}" ${busyGear ? 'disabled' : ''}>${S.look.gear === g ? 'Wearing' : 'Wear'}</button>` : `<button class="pri${spinning ? ' is-busy' : ''}" data-mint="${g}" ${disable ? 'disabled' : ''}>${label}</button>`}</div>`;
         })
         .join('') +
       '<div class="acts"><button id="fx2">Leave</button></div>';
@@ -1670,9 +1704,9 @@ export function forgeGame() {
       (b as HTMLButtonElement).onclick = () => {
         const g = +(b as HTMLElement).dataset.mint!;
         const itemId = forgeItemIdForGear(g);
-        if (!itemId) return;
-        busy = true;
-        (b as HTMLButtonElement).disabled = true;
+        if (!itemId || busyGear) return;
+        busyGear = g;
+        r();
         void lifeRequest<{
           status: 'delivered' | 'settling';
           tokenId: string;
@@ -1699,18 +1733,18 @@ export function forgeGame() {
                 shardsCost: GEARINFO[g]?.shd,
               };
             }
-            if (res.status === 'settling') banner('Mint is still landing on chain…', 'info');
+            if (res.status === 'settling') banner('Mint is processing.', 'info');
             else banner(`${GEARS[g]} forged${res.price != null ? ` for ${fmtN(res.price)} GD` : ''}`, 'good');
             save();
             updateHud();
-            busy = false;
+            busyGear = null;
             void loadMerchantQuotes()
               .catch(() => {})
               .finally(r);
           })
           .catch(err => {
             banner(err instanceof Error ? err.message : 'Could not mint', 'bad');
-            busy = false;
+            busyGear = null;
             r();
           });
       };
@@ -1722,7 +1756,7 @@ export function forgeGame() {
   };
   openModal('', () => stopPoll());
   stopPoll = startMerchantPoll(() => {
-    if (!busy) r();
+    if (busyGear == null) r();
   });
   void loadMerchantQuotes()
     .catch(err => banner(err instanceof Error ? err.message : 'Could not load forge prices', 'bad'))

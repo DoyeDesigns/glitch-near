@@ -502,7 +502,7 @@ export async function assertCanSpend(player: PlayerRow, amount: bigint): Promise
   const parts = await balanceParts(player);
   if ((await spendableGd(player)) >= amount) return;
   if (parts.spendable + parts.settling >= amount) {
-    throw new AuthError('Winnings are still landing on chain. Wait and try again.', 400);
+    throw new AuthError('Some of your GD is still on the way. Wait a moment and try again.', 400);
   }
   throw new AuthError('Not enough GD', 400);
 }

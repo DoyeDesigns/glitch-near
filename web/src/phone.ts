@@ -396,7 +396,7 @@ const BEGINNER_HINTS = [
   'Hold-drag to look. Click me anytime for modules.',
 ];
 const MID_HINTS = [
-  'Wins land as settling GD until the chain catches up — balance stays real.',
+  'Wins show on your balance as soon as the round ends.',
   'Market module lists furniture or gear for GD (2% sale fee).',
   'Forge mint prices follow the smith quote — check GD before minting.',
   'Home maintenance is due each period or the bed locks.',
@@ -405,7 +405,7 @@ const MID_HINTS = [
 const HIGH_HINTS = [
   'Tired or hungry cuts skill pay by 40% — eat and rest first.',
   'Listing fee is 2% — price above the floor for a clean sale.',
-  'Merchant wallets trade GD on-chain — Feed and plaza show hops.',
+  'Merchant shops trade GD with each other. The plaza market shows the latest hop.',
   'Wanted status overrides your role until it expires.',
 ];
 
@@ -828,7 +828,7 @@ function renderPhone() {
     <p class="hint">Walking is free. Fast travel costs ${GAS} GD.</p>` +
       (cityTradeGlance
         ? `<p class="hint">Last city trade: ${esc(cityTradeGlance)}</p>`
-        : '<p class="hint">City merchants trade GD on-chain — watch Feed for hops.</p>') +
+        : '<p class="hint">City merchants trade GD with each other. The plaza market shows the latest hop.</p>') +
       mapLocs
         .map(l => {
           const n = peopleAt(l.id).length + (l.id === L0.id ? 1 : 0);

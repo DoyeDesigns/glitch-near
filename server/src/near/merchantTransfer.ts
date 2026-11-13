@@ -1,7 +1,7 @@
 import type { KeyPairString } from 'near-api-js';
 import { config, isMockChain, requireNearConfig } from '../config';
 import { ONE_YOCTO, RPC_WRITE_TIMEOUT_MS, ensurePlayerNear, enqueueSignerWrite, withTimeout } from './client';
-import { getGDBalanceCached, invalidateGdCache, transferGdViaHook } from './gd';
+import { getGDBalanceCached, applyGdDelta, transferGdViaHook } from './gd';
 import { decryptPrivateKey } from './keys';
 import { getMerchant } from './merchants';
 import { deliverSigned, signAccountCall } from './mintTx';
@@ -37,6 +37,11 @@ export async function merchantFtTransfer(
     return 'failure';
   }
   if (bal < amount) return 'failure';
+  try {
+    await getGDBalanceCached(toAccountId);
+  } catch {
+    /* payee balance updates on the next chain read */
+  }
 
   if (await transferGdViaHook(fromAccount, toAccountId, amount)) return 'success';
 
@@ -66,9 +71,8 @@ export async function merchantFtTransfer(
         'merchant.ft_transfer',
       );
       if (outcome !== 'success') return 'failure';
-      // Mock broadcast may not move balances; hooks already handled above.
-      invalidateGdCache(fromAccount);
-      invalidateGdCache(toAccountId);
+      applyGdDelta(fromAccount, -amount);
+      applyGdDelta(toAccountId, amount);
       return 'success';
     } catch (err) {
       const cwe =

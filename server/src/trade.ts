@@ -16,7 +16,7 @@ import { config } from './config';
 import { randomId } from './crypto';
 import { db } from './db';
 import { getPlayerById, type PlayerRow } from './near';
-import { getGDBalanceCached, invalidateGdCache, readGdBalanceForLog } from './near/gd';
+import { getGDBalanceCached, readGdBalanceForLog } from './near/gd';
 import { resumeOrSend } from './near/mintTx';
 import { world } from './sim';
 
@@ -282,7 +282,6 @@ async function mintProfit(row: TradeRow): Promise<void> {
       {
         mark: () => {
           db.prepare(`UPDATE trades SET minted = 1 WHERE id = ? AND minted = 0`).run(fresh.id);
-          invalidateGdCache(accountId);
         },
         persist: (hash, at, attempts) => {
           db.prepare(`UPDATE trades SET mint_tx_hash = ?, mint_tx_at = ?, mint_attempts = ? WHERE id = ?`).run(

@@ -200,7 +200,7 @@ describe('settlement', () => {
       `INSERT INTO trades (id, player_id, sym, dir, stake, fee, p0, opened_at, resolves_at, status, pnl, credited, capped, minted)
        VALUES (?, ?, 'BTX', 1, '1000', '10', '1', ?, ?, 'settled', '5000', '5000', 0, 0)`,
     ).run(`t-${row.id}`, row.id, now, now);
-    await expect(assertCanSpend(row, 2_000n)).rejects.toThrow(/still landing on chain/);
+    await expect(assertCanSpend(row, 2_000n)).rejects.toThrow(/still on the way/);
     await assertCanSpend(row, 500n);
   });
 

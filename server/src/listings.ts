@@ -288,7 +288,7 @@ async function settleSale(saleId: string, outcome: TransferOutcome): Promise<Lis
   }
   if (outcome === 'failure') {
     markSaleFailed(saleId);
-    throw new AuthError('Purchase failed on chain', 400);
+    throw new AuthError('Purchase did not go through. Try again.', 400);
   }
   return { settling: true, saleId };
 }
@@ -330,7 +330,7 @@ export async function buyListing(buyerId: string, listingId: string): Promise<Li
     if (spendable < price) {
       db.prepare(`UPDATE listings SET status = 'open' WHERE id = ? AND status = 'sold'`).run(listingId);
       if (spendable + held.settling >= price) {
-        throw new AuthError('Winnings are still landing on chain. Wait and try again.', 400);
+        throw new AuthError('Some of your GD is still on the way. Wait a moment and try again.', 400);
       }
       throw new AuthError('Not enough GD', 400);
     }

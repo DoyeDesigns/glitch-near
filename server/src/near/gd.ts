@@ -58,6 +58,23 @@ export function invalidateGdCache(accountId: string): void {
 }
 
 /**
+ * Move a cached balance by a transfer we already know succeeded.
+ * A follow-up ft_balance_of can still show the pre-transfer number for a few seconds,
+ * so a warm cache is adjusted here instead of discarded.
+ * No-op when this account has not been read yet.
+ */
+export function applyGdDelta(accountId: string, delta: bigint): void {
+  if (delta === 0n) return;
+  const hit = gdCache.get(accountId);
+  if (!hit) return;
+  const next = BigInt(hit.balance) + delta;
+  gdCache.set(accountId, {
+    balance: (next < 0n ? 0n : next).toString(),
+    until: Date.now() + GD_CACHE_MS,
+  });
+}
+
+/**
  * Move GD when a mock/test transfer hook is installed (no player outbox).
  * Returns false if no hook — caller must sign on-chain.
  */
@@ -78,7 +95,7 @@ export async function mintGD(accountId: string, amount: bigint | number | string
   const amt = String(amount);
   if (gdMinter) {
     await gdMinter(accountId, BigInt(amt));
-    invalidateGdCache(accountId);
+    applyGdDelta(accountId, BigInt(amt));
     return;
   }
   requireNearConfig();
@@ -93,7 +110,7 @@ export async function mintGD(accountId: string, amount: bigint | number | string
       }),
     { idempotent: false, label: 'gd.mint', account: accountId, amount: amt },
   );
-  invalidateGdCache(accountId);
+  applyGdDelta(accountId, BigInt(amt));
 }
 
 /** View GD balance (ft_balance_of). */
@@ -140,7 +157,7 @@ export async function burnGD(accountId: string, amount: bigint | number | string
   const amt = String(amount);
   if (gdBurner) {
     await gdBurner(accountId, BigInt(amt));
-    invalidateGdCache(accountId);
+    applyGdDelta(accountId, -BigInt(amt));
     return;
   }
   requireNearConfig();
@@ -155,7 +172,7 @@ export async function burnGD(accountId: string, amount: bigint | number | string
       }),
     { idempotent: false, label: 'gd.burn_from', account: accountId, amount: amt },
   );
-  invalidateGdCache(accountId);
+  applyGdDelta(accountId, -BigInt(amt));
 }
 
 /** Diagnostic balance. A cache miss that cannot reach the chain returns null. */
@@ -194,8 +211,8 @@ function markTransferLanded(id: string, fromAccount: string, toAccount: string, 
   return (async () => {
     if (gdTransfer) await gdTransfer(fromAccount, toAccount, amount);
     db.prepare(`UPDATE outbox SET status = 'landed' WHERE id = ?`).run(id);
-    invalidateGdCache(fromAccount);
-    invalidateGdCache(toAccount);
+    applyGdDelta(fromAccount, -amount);
+    applyGdDelta(toAccount, amount);
   })();
 }
 

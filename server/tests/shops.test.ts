@@ -374,7 +374,7 @@ describe('spendable', () => {
     expect(await availableGd(row)).toBe(6_000n);
     insertMerchant('chef');
     const before = state(row.id);
-    await expect(purchase(row.id, 'suya-skewer')).rejects.toThrow(/still landing on chain/);
+    await expect(purchase(row.id, 'suya-skewer')).rejects.toThrow(/still on the way/);
     expect(state(row.id)).toEqual(before);
     expect(db.prepare(`SELECT COUNT(*) AS n FROM outbox`).get() as { n: number }).toEqual({ n: 0 });
     const result = await purchase(row.id, 'zobo-drink');
@@ -565,7 +565,7 @@ describe('purchase', () => {
     fund(row.account_id!, 3_000n);
     const before = state(row.id);
     broadcastImpl = async () => 'failure';
-    await expect(purchase(row.id, 'zobo-drink')).rejects.toThrow(/Purchase failed on chain/);
+    await expect(purchase(row.id, 'zobo-drink')).rejects.toThrow(/did not go through/);
     expect(state(row.id)).toEqual(before);
     expect(db.prepare(`SELECT COUNT(*) AS n FROM escrow WHERE player_id = ?`).get(row.id)).toEqual({ n: 0 });
     expect(purchaseRow(row.id).status).toBe('failed');

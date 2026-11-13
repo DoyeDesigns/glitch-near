@@ -192,7 +192,7 @@ async function settleOutcome(purchaseId: string, outcome: TransferOutcome): Prom
   }
   if (outcome === 'failure') {
     markFailed(purchaseId);
-    throw new AuthError('Purchase failed on chain', 400);
+    throw new AuthError('Purchase did not go through. Try again.', 400);
   }
   return { settling: true, purchaseId };
 }
@@ -220,7 +220,7 @@ async function reserveAndTransfer(opts: {
     const spendable = chain - held.pending - held.escrowed;
     if (spendable < amount) {
       if (spendable + held.settling >= amount) {
-        throw new AuthError('Winnings are still landing on chain. Wait and try again.', 400);
+        throw new AuthError('Some of your GD is still on the way. Wait a moment and try again.', 400);
       }
       throw new AuthError('Not enough GD', 400);
     }

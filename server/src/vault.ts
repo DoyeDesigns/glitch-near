@@ -20,7 +20,7 @@ import { config } from './config';
 import { randomId } from './crypto';
 import { db } from './db';
 import { getPlayerById, type PlayerRow } from './near';
-import { invalidateGdCache, readGdBalanceForLog } from './near/gd';
+import { readGdBalanceForLog } from './near/gd';
 import { createToken, getItemBalances, getToken } from './near/items';
 import { resumeOrSend } from './near/mintTx';
 
@@ -336,7 +336,6 @@ async function mintVault(row: VaultRow): Promise<void> {
             {
               mark: () => {
                 db.prepare(`UPDATE vaults SET gd_minted = 1 WHERE id = ? AND gd_minted = 0`).run(fresh.id);
-                invalidateGdCache(accountId);
               },
               persist: (hash, at, attempts) => {
                 db.prepare(

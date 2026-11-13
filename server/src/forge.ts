@@ -206,7 +206,7 @@ async function settleOutcome(forgeId: string, outcome: TransferOutcome): Promise
   }
   if (outcome === 'failure') {
     markFailed(forgeId);
-    throw new AuthError('Forge payment failed on chain', 400);
+    throw new AuthError('Forge payment did not go through. Try again.', 400);
   }
   return { settling: true, delivered: false };
 }
@@ -257,7 +257,7 @@ export async function forgeMint(playerId: string, itemId: string): Promise<Forge
     const spendable = chain - held.pending - held.escrowed;
     if (spendable < gdCost) {
       if (spendable + held.settling >= gdCost) {
-        throw new AuthError('Winnings are still landing on chain. Wait and try again.', 400);
+        throw new AuthError('Some of your GD is still on the way. Wait a moment and try again.', 400);
       }
       throw new AuthError('Not enough GD', 400);
     }

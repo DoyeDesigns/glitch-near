@@ -320,9 +320,7 @@ export function updateHud() {
   ($('#mDist') as HTMLElement).textContent = fmtN(1 + metrics.on / 40);
   ($('#mVis') as HTMLElement).textContent = fmtN(metrics.vis);
   const m = market.mood;
-  const tradeLine = cityTradeGlance
-    ? `<div class="tk city-trade"><small>Last city trade</small></div><div class="city-trade-line">${esc(cityTradeGlance)}</div>`
-    : '';
+  const tradeLine = `<div class="tk city-trade"><small>City trade</small></div><div class="city-trade-line">${esc(cityTradeGlance ?? 'Waiting for the next merchant trade')}</div>`;
   ($('#mk') as HTMLElement).innerHTML =
     tradeLine +
     `<div class="tk"><small>Market</small><b class="${m >= 0 ? 'pos' : 'neg'}">${m > .25 ? 'GREED' : m < -.25 ? 'FEAR' : 'CALM'}</b></div><div class="bar"><i style="width:${50 + m * 50}%;background:${m >= 0 ? 'var(--lime)' : 'var(--pink)'}"></i></div>` +
