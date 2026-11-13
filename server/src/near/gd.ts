@@ -26,7 +26,15 @@ function playerSecret(enc: string): KeyPairString {
 }
 
 const GD_CACHE_MS = 15_000;
-const gdCache = new Map<string, { balance: string; until: number }>();
+type GdCacheEntry = { balance: string; until: number; gen: number };
+const gdCache = new Map<string, GdCacheEntry>();
+
+function writeGdCache(accountId: string, balance: string, until = Date.now() + GD_CACHE_MS): GdCacheEntry {
+  const prev = gdCache.get(accountId);
+  const entry: GdCacheEntry = { balance, until, gen: (prev?.gen ?? 0) + 1 };
+  gdCache.set(accountId, entry);
+  return entry;
+}
 
 let gdReader: ((accountId: string) => Promise<bigint>) | null = null;
 let gdMinter: ((accountId: string, amount: bigint) => Promise<void>) | null = null;
@@ -68,10 +76,13 @@ export function applyGdDelta(accountId: string, delta: bigint): void {
   const hit = gdCache.get(accountId);
   if (!hit) return;
   const next = BigInt(hit.balance) + delta;
-  gdCache.set(accountId, {
-    balance: (next < 0n ? 0n : next).toString(),
-    until: Date.now() + GD_CACHE_MS,
-  });
+  writeGdCache(accountId, (next < 0n ? 0n : next).toString());
+}
+
+/** Test seam: treat the cache as expired but keep the last balance/gen. */
+export function expireGdCacheForTests(accountId: string): void {
+  const hit = gdCache.get(accountId);
+  if (hit) hit.until = 0;
 }
 
 /**
@@ -138,15 +149,20 @@ export async function getGDBalanceCached(accountId: string): Promise<string> {
   const hit = gdCache.get(accountId);
   const now = Date.now();
   if (hit && hit.until > now) return hit.balance;
+  const startGen = hit?.gen ?? 0;
   try {
     const bal = (await getGDBalance(accountId)).toString();
-    gdCache.set(accountId, { balance: bal, until: now + GD_CACHE_MS });
+    const current = gdCache.get(accountId);
+    // A transfer may have applied an optimistic delta while this view was in flight.
+    if (current && current.gen > startGen) return current.balance;
+    writeGdCache(accountId, bal);
     return bal;
   } catch (err) {
-    if (hit) {
+    const latest = gdCache.get(accountId);
+    if (latest) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[near] stale GD for ${accountId}: ${msg.slice(0, 120)}`);
-      return hit.balance;
+      return latest.balance;
     }
     throw err;
   }
@@ -216,6 +232,16 @@ function markTransferLanded(id: string, fromAccount: string, toAccount: string, 
   })();
 }
 
+/** Prefetch so applyGdDelta is not a no-op on a merchant that has never been read. */
+async function warmGdCache(accountId: string): Promise<void> {
+  if (gdCache.has(accountId)) return;
+  try {
+    await getGDBalanceCached(accountId);
+  } catch {
+    /* applyGdDelta stays a no-op; the next successful view will read the chain */
+  }
+}
+
 function markTransferFailed(id: string): void {
   db.prepare(`UPDATE outbox SET status = 'failed' WHERE id = ? AND status = 'pending'`).run(id);
 }
@@ -277,6 +303,7 @@ export async function pushTransfer(id: string): Promise<TransferOutcome> {
   const accountId = player.account_id;
   const secret = playerSecret(player.enc_private_key);
   const payload = JSON.parse(row.payload) as { to: string; amount: string; memo: string };
+  await warmGdCache(payload.to);
   return enqueueSignerWrite(accountId, async () => {
     const fresh = outboxRow(id);
     if (!fresh) return 'failure';

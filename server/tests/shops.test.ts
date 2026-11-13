@@ -35,7 +35,14 @@ import {
   enqueueTreasuryWrite,
   setNearFundingForTests,
 } from '../src/near/client';
-import { getGDBalanceCached, invalidateGdCache, resumeTransfers, setGdChainForTests, ftTransfer } from '../src/near/gd';
+import {
+  expireGdCacheForTests,
+  getGDBalanceCached,
+  invalidateGdCache,
+  resumeTransfers,
+  setGdChainForTests,
+  ftTransfer,
+} from '../src/near/gd';
 import { setItemsChainForTests } from '../src/near/items';
 import { encryptPrivateKey } from '../src/near/keys';
 import { lastSignedCall, lastTreasuryCall, setMintTxTestHooks } from '../src/near/mintTx';
@@ -67,6 +74,8 @@ const treasuryMethods: string[] = [];
 
 let signs = 0;
 let burnFails = false;
+let gdReadHold: Promise<void> | null = null;
+let gdReadHoldAccount = '';
 let broadcastImpl: () => Promise<'success' | 'failure' | 'unknown'> = async () => 'success';
 let lookupImpl: (hash: string) => Promise<'success' | 'failure' | 'unknown'> = async () => 'success';
 let inFlight = 0;
@@ -144,6 +153,8 @@ function purchaseRow(playerId: string): {
 beforeEach(() => {
   signs = 0;
   burnFails = false;
+  gdReadHold = null;
+  gdReadHoldAccount = '';
   inFlight = 0;
   maxInFlight = 0;
   holdBroadcast = false;
@@ -203,7 +214,10 @@ beforeEach(() => {
     lookup: async hash => lookupImpl(hash),
   });
   setGdChainForTests({
-    read: async accountId => balances.get(accountId) ?? 0n,
+    read: async accountId => {
+      if (gdReadHold && accountId === gdReadHoldAccount) await gdReadHold;
+      return balances.get(accountId) ?? 0n;
+    },
     mint: async (accountId, amount) => {
       mints.push({ id: accountId, amount });
       balances.set(accountId, (balances.get(accountId) ?? 0n) + amount);
@@ -487,6 +501,43 @@ describe('purchase', () => {
     expect(state(row.id).needs_json).toBe('{"energy":82,"hunger":68}');
   });
 
+  it('credits the chef wallet even when the shop balance was never cached', async () => {
+    const row = player('chef-uncached');
+    const chef = insertMerchant('chef');
+    fund(row.account_id!, 2_000n);
+    const result = await purchase(row.id, 'zobo-drink');
+    expect(result).toEqual({ ok: true, purchaseId: expect.any(String), status: 'delivered' });
+    expect(balances.get(chef)).toBe(MERCHANT_FLOAT + 1_000n);
+    const view = await merchantsView();
+    expect(Number(view.chef.gdBalance)).toBe(Number(MERCHANT_FLOAT + 1_000n));
+  });
+
+  it('keeps the merchant sale credit if a stale balance view finishes after the transfer', async () => {
+    const row = player('stale-credit');
+    const chef = insertMerchant('chef');
+    fund(row.account_id!, 2_000n);
+    await getGDBalanceCached(chef);
+    expireGdCacheForTests(chef);
+
+    let release!: () => void;
+    gdReadHoldAccount = chef;
+    gdReadHold = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const inFlight = getGDBalanceCached(chef);
+    await delay(10);
+
+    const result = await purchase(row.id, 'zobo-drink');
+    expect(result).toEqual({ ok: true, purchaseId: expect.any(String), status: 'delivered' });
+    expect(balances.get(chef)).toBe(MERCHANT_FLOAT + 1_000n);
+
+    release();
+    await inFlight;
+    expect(await getGDBalanceCached(chef)).toBe(String(MERCHANT_FLOAT + 1_000n));
+    const view = await merchantsView();
+    expect(Number(view.chef.gdBalance)).toBe(Number(MERCHANT_FLOAT + 1_000n));
+  });
+
   it('lets only one of two concurrent purchases reserve the balance', async () => {
     const row = player('race');
     insertMerchant('dealer');
@@ -752,6 +803,30 @@ describe('smith and dealer prices', () => {
     expect(res.stock).toBeCloseTo(19, 2);
     expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 4);
     expect(res.tokenId).toMatch(/^gear-cap-/);
+  });
+
+  it('credits the smith wallet on forge even when that balance was never cached', async () => {
+    const row = player('smith-uncached');
+    const smith = insertMerchant('smith');
+    fund(row.account_id!, 50_000n);
+    itemBalances.set(row.account_id!, { shard: '10' });
+    const quote = quoteSmithGear('cap');
+    const res = await forgeMint(row.id, 'cap');
+    expect(res.status).toBe('delivered');
+    expect(balances.get(smith)).toBe(MERCHANT_FLOAT + BigInt(quote.finalPrice));
+    const view = await merchantsView();
+    expect(Number(view.smith.gdBalance)).toBe(Number(MERCHANT_FLOAT + BigInt(quote.finalPrice)));
+  });
+
+  it('credits the dealer wallet on furniture buy', async () => {
+    const row = player('dealer-credit');
+    const dealer = insertMerchant('dealer');
+    fund(row.account_id!, 20_000n);
+    const res = await shopBuy(row.id, 'plant');
+    expect(res.status).toBe('delivered');
+    expect(balances.get(dealer)).toBe(MERCHANT_FLOAT + BigInt(res.price ?? 0));
+    const view = await merchantsView();
+    expect(Number(view.dealer.gdBalance)).toBe(Number(MERCHANT_FLOAT + BigInt(res.price ?? 0)));
   });
 
   it('rejects sold-out smith gear', () => {
