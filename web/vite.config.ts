@@ -2,6 +2,8 @@ import path from 'node:path';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  // Meteor's randombytes reads `global.crypto`. Browsers only have globalThis.
+  define: { global: 'globalThis' },
   resolve: {
     alias: {
       '@glitch/shared': path.resolve(import.meta.dirname, '../shared/src/index.ts'),

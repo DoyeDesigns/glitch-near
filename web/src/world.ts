@@ -840,7 +840,8 @@ export function applyPoseTo(g: THREE.Group, p: Pose, drop = 0) {
     if (!limb) return;
     const r = p[k];
     // Face is +Z; Three +Rx swings a hanging limb to −Z — negate stored face-forward x.
-    limb.rotation.set(-r.x, r.y, r.z);
+    // Spread: stored +z is outward left; local +Rz from hang goes inward — negate z like x.
+    limb.rotation.set(-r.x, r.y, -r.z);
   }
   // Elbow curls forward (−Rx); knee curls back (+Rx).
   if (u.elbowL) u.elbowL.rotation.set(-p.elbowL, 0, 0);

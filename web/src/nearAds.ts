@@ -22,7 +22,7 @@ export const NEAR_AD_APPS: NearAdApp[] = [
   },
   {
     id: 'meteor',
-    name: 'Meteor',
+    name: 'Meteor Wallet',
     href: 'https://wallet.meteorwallet.app',
     logo: '/ads/meteor.png',
   },

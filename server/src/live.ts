@@ -304,14 +304,19 @@ export function likePosePost(player: PlayerRow, postId: string) {
     | { player_id: string; caption: string }
     | undefined;
   if (!post) throw new AuthError('Post not found', 404);
+  const already = db
+    .prepare(`SELECT 1 AS ok FROM pose_likes WHERE post_id = ? AND player_id = ?`)
+    .get(postId, player.id) as { ok: number } | undefined;
+  const likesOf = () =>
+    (db.prepare(`SELECT COUNT(*) AS n FROM pose_likes WHERE post_id = ?`).get(postId) as { n: number }).n;
+  if (already) return { id: postId, likes: likesOf(), liked: true };
   const ins = db
     .prepare(`INSERT OR IGNORE INTO pose_likes (post_id, player_id, created_at) VALUES (?, ?, ?)`)
     .run(postId, player.id, Date.now());
   if (ins.changes && post.player_id !== player.id) {
     notify(post.player_id, 'like', `${player.name} liked your pose`);
   }
-  const likes = db.prepare(`SELECT COUNT(*) AS n FROM pose_likes WHERE post_id = ?`).get(postId) as { n: number };
-  return { id: postId, likes: likes.n, liked: true };
+  return { id: postId, likes: likesOf(), liked: true };
 }
 
 export function notificationsFor(playerId: string) {

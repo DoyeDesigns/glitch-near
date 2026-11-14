@@ -88,9 +88,14 @@ describe('live city', () => {
 
     const saved = createPose(a, { name: 'Victory', pose });
     const post = createPosePost(a, { poseId: saved.id, caption: 'hold this' });
-    likePosePost(b, post.id);
-    const likes = notificationsFor(a.id);
-    expect(likes.items.some(n => n.kind === 'like')).toBe(true);
+    const first = likePosePost(b, post.id);
+    expect(first.likes).toBe(1);
+    const second = likePosePost(b, post.id);
+    expect(second.likes).toBe(1);
+    expect(second.liked).toBe(true);
+    const likeNotes = notificationsFor(a.id).items.filter(n => n.kind === 'like');
+    expect(likeNotes).toHaveLength(1);
+    expect(likeNotes[0]?.text).toMatch(/bea liked/);
     expect(() => postChat(a, { place: 'diner', text: 'again' })).toThrow(/Slow down/);
   });
 });

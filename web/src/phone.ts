@@ -70,6 +70,7 @@ import {
 } from './games';
 import { fetchChainProof, me, refreshMe, type ChainProof } from './session';
 import { LOCS, locAt, placeId } from './places';
+import { NEAR_AD_APPS } from './nearAds';
 
 type MarketListing = {
   id: string;
@@ -245,9 +246,10 @@ let phoneApp: string | null = null,
   poseEdit = false,
   poseLimb: PoseLimbId = 'armL',
   poseDraft: CustomPoseDraft = emptyPoseDraft(),
-  posesTab: 'feed' | 'mine' = 'feed',
+  posesTab: 'feed' | 'mine' = 'mine',
   editingPoseId: string | null = null,
-  editingPoseName = 'My pose';
+  editingPoseName = 'My pose',
+  poseLiking = new Set<string>();
 const hash = (s: string) => {
   let h = 0;
   for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -379,7 +381,6 @@ export function openPhone(app?: string) {
 }
 
 async function enterPoses() {
-  posesTab = 'feed';
   await markNotesRead();
   await Promise.all([loadPoses(), loadPoseFeed()]);
   if (phoneOpen && phoneApp === 'poses') phoneRefresh();
@@ -712,14 +713,22 @@ function renderPhone() {
     L0 = here();
   let body = '';
   if (!phoneApp) {
-      const ap = (id: string, nm: string, col: string, ch: string, soon?: number) =>
-      `<button class="ap ${soon ? 'soon' : ''}" ${soon ? 'disabled' : `data-a="app" data-v="${id}"`}><i style="background:${col}">${ch}${id === 'chat' && unread ? `<u>${unread}</u>` : ''}${id === 'poses' && noteCount ? `<u>${noteCount > 9 ? '9+' : noteCount}</u>` : ''}</i><span>${nm}</span></button>`;
+    const ap = (id: string, nm: string, col: string, ch: string, soon?: number) =>
+      `<button class="ap ${soon ? 'soon' : ''}" ${soon ? 'disabled' : `data-a="app" data-v="${id}"`}><i style="background:${col}">${ch}${id === 'chat' && unread ? `<u>${unread}</u>` : ''}</i><span>${nm}</span></button>`;
+    const ads = NEAR_AD_APPS.map(
+      a =>
+        `<a class="ap ad" href="${esc(a.href)}" target="_blank" rel="noopener noreferrer"><i class="ad-logo"><img src="${esc(a.logo)}" alt="" width="28" height="28" loading="lazy"><em>NEAR</em></i><span>${esc(a.name)}</span></a>`,
+    ).join('');
     body =
       `<div class="ph-h"><b>Modules</b></div>` +
       (assistHintsEnabled()
         ? `<p class="assist-tip">${esc(currentAssistHint())}</p>`
         : `<p class="assist-tip muted">Hints hidden. <button type="button" class="lnk" data-a="hintsOn">Show hints</button></p>`) +
-      `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('map', 'Map', '#ffb12e', 'M')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('poses', 'Poses', '#ff7a59', '◇')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}</div>`;
+      `<div class="ph-quick">` +
+      `<button type="button" class="ph-quick-btn map" data-a="app" data-v="map"><span class="ph-quick-ico">M</span><span><b>Map</b><small>Places &amp; travel</small></span></button>` +
+      `<button type="button" class="ph-quick-btn poses" data-a="app" data-v="poses"><span class="ph-quick-ico">◇${noteCount ? `<u>${noteCount > 9 ? '9+' : noteCount}</u>` : ''}</span><span><b>Poses</b><small>Strike a pose</small></span></button>` +
+      `</div>` +
+      `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}${ads}</div>`;
   } else if (phoneApp === 'poses' || phoneApp === 'pose') {
     if (poseEdit) {
       const draftPose = poseFromDraft(poseDraft);
@@ -736,7 +745,7 @@ function renderPhone() {
       body =
         hdr('Make a pose', 'poseList') +
         `<p class="hint">${isArm ? 'Raise 0 = arm at ribs; higher lifts. Spread aims the lift out (T-pose = raise + spread).' : 'Raise / spread the leg.'} ${bendLabel} bends.</p>` +
-        `<div class="pose-stage" id="poseLive">${poseSvgMarkup(draftPose, { size: 148, className: 'pose-fig pose-fig-lg' })}</div>` +
+        `<div class="pose-stage" id="poseLive">${poseSvgMarkup(draftPose, { size: 148, className: 'pose-fig pose-fig-lg', look: S.look })}</div>` +
         `<div class="pose-chips">${chip('armL', 'Arm L')}${chip('armR', 'Arm R')}${chip('legL', 'Leg L')}${chip('legR', 'Leg R')}</div>` +
         row('raise', isArm ? 'Raise (0 = ribs)' : 'Raise', isArm ? -0.8 : -2.4, 2.4) +
         row('spread', 'Spread out', 0, 1.7) +
@@ -766,7 +775,7 @@ function renderPhone() {
       const card = (id: string, name: string, p: Pose) => {
         const on = heldPoseId === id ? ' on' : '';
         return `<button type="button" class="pose-card${on}" data-a="posePick" data-v="${esc(id)}">
-          <span class="pose-thumb">${poseSvgMarkup(p, { size: 88, className: 'pose-fig' })}</span>
+          <span class="pose-thumb">${poseSvgMarkup(p, { size: 88, className: 'pose-fig', look: S.look })}</span>
           <span class="pose-card-name">${esc(name)}</span>
         </button>`;
       };
@@ -780,9 +789,9 @@ function renderPhone() {
       body =
         hdr('Poses', 'home') +
         `<div class="chips"><button data-a="posesTab" data-v="feed">Feed</button><button data-a="posesTab" data-v="mine" class="on">Mine</button></div>` +
-        `<p class="hint">Tap a silhouette. It holds until you walk. Saved poses stay on your account.</p>` +
+        `<p class="hint">Tap a pose of you. It holds until you walk. Saved poses stay on your account.</p>` +
         `<div class="pose-now${heldPoseId ? ' live' : ''}">
-          <div class="pose-stage sm">${poseSvgMarkup(activePose, { size: 112, className: 'pose-fig pose-fig-lg' })}</div>
+          <div class="pose-stage sm">${poseSvgMarkup(activePose, { size: 112, className: 'pose-fig pose-fig-lg', look: S.look })}</div>
           <div class="pose-now-meta"><small>Now</small><b>${esc(activeName)}</b></div>
         </div>` +
         `<h3>Yours</h3>${mine || '<p class="hint">No saved poses yet.</p>'}` +
@@ -967,6 +976,7 @@ function renderPhone() {
   }
   sheet.innerHTML = `<div class="ph-bar"><span>ASSIST · ONLINE</span><span>${esc(L0.name)}</span><span>${t}</span></div><div class="ph-scr">${body}</div><div class="ph-nav"><button data-a="home" aria-label="Modules home"></button></div>`;
   sheet.onclick = e => {
+    if ((e.target as HTMLElement).closest('a[href]')) return;
     const b = (e.target as HTMLElement).closest('[data-a]') as HTMLElement | null;
     if (!b || (b as HTMLButtonElement).disabled) return;
     const a = b.dataset.a!,
@@ -1065,7 +1075,18 @@ function renderPhone() {
       });
       return;
     } else if (a === 'poseLike' && v) {
-      void likePose(v).then(() => {
+      const post = posePosts.find(p => p.id === v);
+      if (!post || post.liked || poseLiking.has(v)) return;
+      poseLiking.add(v);
+      post.liked = true;
+      post.likes += 1;
+      renderPhone();
+      void likePose(v).then(ok => {
+        poseLiking.delete(v);
+        if (!ok && post) {
+          post.liked = false;
+          post.likes = Math.max(0, post.likes - 1);
+        }
         if (phoneOpen) renderPhone();
       });
       return;
@@ -1274,7 +1295,9 @@ function renderPhone() {
     const label = t.closest('label')?.querySelector('small');
     if (label) label.textContent = `${Math.round((val * 180) / Math.PI)}°`;
     const stage = sheet.querySelector('#poseLive');
-    if (stage) stage.innerHTML = poseSvgMarkup(live, { size: 148, className: 'pose-fig pose-fig-lg' });
+    if (stage) {
+      stage.innerHTML = poseSvgMarkup(live, { size: 148, className: 'pose-fig pose-fig-lg', look: S.look });
+    }
   };
 }
 

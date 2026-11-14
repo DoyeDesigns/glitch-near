@@ -320,8 +320,16 @@ export function updateHud() {
   ($('#mDist') as HTMLElement).textContent = fmtN(1 + metrics.on / 40);
   ($('#mVis') as HTMLElement).textContent = fmtN(metrics.vis);
   const m = market.mood;
-  const tradeLine = `<div class="tk city-trade"><small>City trade</small></div><div class="city-trade-line">${esc(cityTradeGlance ?? 'Waiting for the next merchant trade')}</div>`;
+  const tradeLine =
+    `<button type="button" class="city-trade-hit" data-hud-app="map" title="Open map">` +
+    `<div class="tk city-trade"><small>City trade</small></div>` +
+    `<div class="city-trade-line">${esc(cityTradeGlance ?? 'Waiting for the next merchant trade')}</div>` +
+    `</button>`;
   ($('#mk') as HTMLElement).innerHTML =
+    `<div class="hud-apps">` +
+    `<button type="button" class="map" data-hud-app="map">Map</button>` +
+    `<button type="button" class="poses" data-hud-app="poses">Poses</button>` +
+    `</div>` +
     tradeLine +
     `<div class="tk"><small>Market</small><b class="${m >= 0 ? 'pos' : 'neg'}">${m > .25 ? 'GREED' : m < -.25 ? 'FEAR' : 'CALM'}</b></div><div class="bar"><i style="width:${50 + m * 50}%;background:${m >= 0 ? 'var(--lime)' : 'var(--pink)'}"></i></div>` +
     TOK.map(t => {
@@ -329,6 +337,20 @@ export function updateHud() {
       return `<div class="tk"><b>${t.sym}</b><span>${px(t.price)}</span><span class="${c >= 0 ? 'pos' : 'neg'}">${(c * 100).toFixed(1)}%</span></div>`;
     }).join('') +
     `<div class="tk"><small>Regulator heat</small><span>${Math.round(market.heat * 100)}%</span></div>`;
+  bindHudApps();
+}
+
+/** Map / Poses (and city-trade → Map) on the always-visible #mk strip — no Assist home first. */
+let hudAppsBound = false;
+function bindHudApps() {
+  if (hudAppsBound) return;
+  hudAppsBound = true;
+  ($('#mk') as HTMLElement).addEventListener('click', e => {
+    const b = (e.target as HTMLElement).closest('[data-hud-app]') as HTMLElement | null;
+    if (!b?.dataset.hudApp) return;
+    const app = b.dataset.hudApp;
+    void import('./phone').then(({ openPhone }) => openPhone(app));
+  });
 }
 
 export const DINER_COACH_TEXT =

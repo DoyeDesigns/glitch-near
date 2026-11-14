@@ -232,12 +232,12 @@ export async function publishPose(poseId: string, caption: string) {
 }
 
 export async function likePose(id: string) {
-  const data = await api<{ likes: number }>(`/pose-posts/${id}/like`, { method: 'POST' });
+  const data = await api<{ likes: number; liked: boolean }>(`/pose-posts/${id}/like`, { method: 'POST' });
   if (data) {
     const post = posePosts.find(p => p.id === id);
     if (post) {
       post.likes = data.likes;
-      post.liked = true;
+      post.liked = !!data.liked;
     }
   }
   return data != null;

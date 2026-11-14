@@ -2,21 +2,23 @@
  * Advertiser-only page. Connects a NEAR wallet and calls market.book_ad.
  * Players never see this flow.
  */
+import './node-globals';
 import {
   internalActionToNaj,
   setupWalletSelector,
   type WalletSelector,
 } from '@near-wallet-selector/core';
 import { setupModal, type WalletSelectorModal } from '@near-wallet-selector/modal-ui-js';
+import { setupMeteorWallet } from '@near-wallet-selector/meteor-wallet';
 import { setupMyNearWallet } from '@near-wallet-selector/my-near-wallet';
 import '@near-wallet-selector/modal-ui-js/styles.css';
 import { JsonRpcProvider } from 'near-api-js';
 
-const NETWORK = 'testnet';
 const CONTRACT =
   (import.meta.env.VITE_MARKET_CONTRACT as string | undefined) ||
   'market.glitch-edoye.testnet';
-const RPC = 'https://test.rpc.fastnear.com';
+/** Same testnet RPC the server uses. rpc.testnet.near.org and FastNEAR both 429. */
+const RPC = 'https://near-testnet.drpc.org';
 
 type ConfigView = {
   slot_count: number;
@@ -228,11 +230,24 @@ async function book(ev: Event) {
 
 async function main() {
   selector = await setupWalletSelector({
-    network: NETWORK,
-    modules: [setupMyNearWallet()],
+    network: {
+      networkId: 'testnet',
+      nodeUrl: RPC,
+      helperUrl: 'https://helper.testnet.near.org',
+      explorerUrl: 'https://testnet.nearblocks.io',
+      indexerUrl: 'https://testnet-api.kitwallet.app',
+    },
+    // v10 ignores network.nodeUrl and uses test.rpc.fastnear.com unless this is set.
+    fallbackRpcUrls: [RPC],
+    createAccessKeyFor: { contractId: CONTRACT, methodNames: ['book_ad'] },
+    modules: [
+      setupMeteorWallet(),
+      setupMyNearWallet({ walletUrl: 'https://testnet.mynearwallet.com' }),
+    ],
   });
   modal = setupModal(selector, {
     contractId: CONTRACT,
+    methodNames: ['book_ad'],
     description: 'Glitch billboard ads (testnet)',
   });
 
@@ -241,7 +256,22 @@ async function main() {
   });
   await refreshAccount();
 
-  $('connect').onclick = () => modal.show();
+  $('connect').onclick = () => {
+    showErr('');
+    try {
+      modal.show();
+    } catch (err) {
+      showErr(err instanceof Error ? err.message : 'Could not open the wallet');
+    }
+  };
+  const walletModal = document.getElementById('near-wallet-selector-modal');
+  if (walletModal) {
+    const watch = new MutationObserver(() => {
+      const msg = walletModal.querySelector('.error-floating p')?.textContent?.trim();
+      if (msg) showErr(msg);
+    });
+    watch.observe(walletModal, { childList: true, subtree: true, characterData: true });
+  }
   $('disconnect').onclick = async () => {
     const wallet = await selector.wallet();
     await wallet.signOut();
@@ -258,4 +288,6 @@ async function main() {
   }
 }
 
-void main();
+void main().catch(err => {
+  showErr(err instanceof Error ? err.message : 'Could not start wallet login');
+});
