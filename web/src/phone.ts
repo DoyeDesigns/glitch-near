@@ -11,14 +11,18 @@ import { banner, cityTradeGlance, feed, post, serverTick } from './market';
 import {
   assistantScreenPos,
   cam,
+  camera,
   clearInterior,
   currentInterior,
+  DRIP_LINE,
   draftFromPose,
   heldPoseId,
   overdue,
   player,
   poseFromDraft,
   POSE_PRESETS,
+  renderer,
+  scene,
   setAssistantClickHandler,
   setHeldPose,
   vel,
@@ -46,8 +50,10 @@ import {
   closeModal,
   hudAvailable,
   introOpen,
+  modalEl,
   modalOpen,
   openModal,
+  resultCard,
   setHudAvailable,
   setHudSettling,
   sheet,
@@ -250,6 +256,40 @@ let phoneApp: string | null = null,
   editingPoseId: string | null = null,
   editingPoseName = 'My pose',
   poseLiking = new Set<string>();
+
+/** Bottom-docked pose editor: see the live avatar while dragging sliders. */
+let poseDockActive = false;
+let poseCamSaved: { dist: number; pitch: number; ty: number } | null = null;
+
+function leavePoseDock() {
+  if (poseCamSaved) {
+    cam.dist = poseCamSaved.dist;
+    cam.pitch = poseCamSaved.pitch;
+    cam.ty = poseCamSaved.ty;
+    poseCamSaved = null;
+  }
+  poseDockActive = false;
+  modalEl.classList.remove('low');
+  sheet.classList.remove('pose-dock');
+}
+
+function enterPoseDock() {
+  if (!poseDockActive) {
+    poseCamSaved = { dist: cam.dist, pitch: cam.pitch, ty: cam.ty };
+    cam.dist = 7.6;
+    cam.pitch = 0.1;
+    cam.ty = -0.7;
+    poseDockActive = true;
+  }
+  modalEl.classList.add('low');
+  sheet.classList.add('pose-dock');
+}
+
+function syncPoseDock() {
+  if (phoneOpen && poseEdit) enterPoseDock();
+  else leavePoseDock();
+}
+
 const hash = (s: string) => {
   let h = 0;
   for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -365,7 +405,8 @@ export function openPhone(app?: string) {
   openModal('', () => {
     phoneOpen = false;
     poseEdit = false;
-    sheet.classList.remove('phonesheet', 'assist-sheet');
+    leavePoseDock();
+    sheet.classList.remove('phonesheet', 'assist-sheet', 'pose-dock');
     sheet.onclick = null;
     sheet.onkeydown = null;
     sheet.oninput = null;
@@ -539,8 +580,11 @@ export function currentAssistHint(): string {
   const sit = situationHint();
   if (sit) return sit;
   const pool = skillTier() === 'beginner' ? BEGINNER_HINTS : skillTier() === 'mid' ? MID_HINTS : HIGH_HINTS;
-  const i = Math.floor(Date.now() / 12000) % pool.length;
-  return pool[i]!;
+  const hints = heldPoseId
+    ? pool
+    : [`Make a pose, then hit Shot to share. ${DRIP_LINE}`, ...pool];
+  const i = Math.floor(Date.now() / 12000) % hints.length;
+  return hints[i]!;
 }
 
 export function placeAssistBadge() {
@@ -726,7 +770,7 @@ function renderPhone() {
         : `<p class="assist-tip muted">Hints hidden. <button type="button" class="lnk" data-a="hintsOn">Show hints</button></p>`) +
       `<div class="ph-quick">` +
       `<button type="button" class="ph-quick-btn map" data-a="app" data-v="map"><span class="ph-quick-ico">M</span><span><b>Map</b><small>Places &amp; travel</small></span></button>` +
-      `<button type="button" class="ph-quick-btn poses" data-a="app" data-v="poses"><span class="ph-quick-ico">◇${noteCount ? `<u>${noteCount > 9 ? '9+' : noteCount}</u>` : ''}</span><span><b>Poses</b><small>Strike a pose</small></span></button>` +
+      `<button type="button" class="ph-quick-btn poses" data-a="app" data-v="poses"><span class="ph-quick-ico">◇${noteCount ? `<u>${noteCount > 9 ? '9+' : noteCount}</u>` : ''}</span><span><b>Poses</b><small>Drip is forever</small></span></button>` +
       `</div>` +
       `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}${ads}</div>`;
   } else if (phoneApp === 'poses' || phoneApp === 'pose') {
@@ -744,8 +788,8 @@ function renderPhone() {
       };
       body =
         hdr('Make a pose', 'poseList') +
-        `<p class="hint">${isArm ? 'Raise 0 = arm at ribs; higher lifts. Spread aims the lift out (T-pose = raise + spread).' : 'Raise / spread the leg.'} ${bendLabel} bends.</p>` +
-        `<div class="pose-stage" id="poseLive">${poseSvgMarkup(draftPose, { size: 148, className: 'pose-fig pose-fig-lg', look: S.look })}</div>` +
+        `<p class="hint">Your character updates live — drag the city to orbit. ${isArm ? 'Raise 0 = ribs; spread aims the lift out.' : 'Raise / spread the leg.'} ${bendLabel} bends.</p>` +
+        `<div class="pose-stage pose-stage-dock" id="poseLive">${poseSvgMarkup(draftPose, { size: 80, className: 'pose-fig', look: S.look })}</div>` +
         `<div class="pose-chips">${chip('armL', 'Arm L')}${chip('armR', 'Arm R')}${chip('legL', 'Leg L')}${chip('legR', 'Leg R')}</div>` +
         row('raise', isArm ? 'Raise (0 = ribs)' : 'Raise', isArm ? -0.8 : -2.4, 2.4) +
         row('spread', 'Spread out', 0, 1.7) +
@@ -765,7 +809,7 @@ function renderPhone() {
       body =
         hdr('Poses', 'home') +
         `<div class="chips"><button data-a="posesTab" data-v="feed" class="on">Feed</button><button data-a="posesTab" data-v="mine">Mine</button></div>` +
-        `<div class="cmp"><select id="posePick">${opts}</select><input id="pin" type="text" maxlength="140" placeholder="Caption" autocomplete="off"><button class="pri" data-a="posePost" ${myPoses.length ? '' : 'disabled'}>Post</button></div>` +
+        `<div class="cmp"><select id="posePick">${opts}</select><input id="pin" type="text" maxlength="140" placeholder="The economy can be on fire, but drip is forever." autocomplete="off"><button class="pri" data-a="posePost" ${myPoses.length ? '' : 'disabled'}>Post</button></div>` +
         (cards || '<p class="hint">No poses posted yet.</p>');
     } else {
       const saved = myPoses.find(p => p.id === heldPoseId);
@@ -789,7 +833,7 @@ function renderPhone() {
       body =
         hdr('Poses', 'home') +
         `<div class="chips"><button data-a="posesTab" data-v="feed">Feed</button><button data-a="posesTab" data-v="mine" class="on">Mine</button></div>` +
-        `<p class="hint">Tap a pose of you. It holds until you walk. Saved poses stay on your account.</p>` +
+        `<p class="hint">It's all about fashion and poses. Tap a pose, then hit Shot to share. It holds until you walk.</p>` +
         `<div class="pose-now${heldPoseId ? ' live' : ''}">
           <div class="pose-stage sm">${poseSvgMarkup(activePose, { size: 112, className: 'pose-fig pose-fig-lg', look: S.look })}</div>
           <div class="pose-now-meta"><small>Now</small><b>${esc(activeName)}</b></div>
@@ -975,6 +1019,7 @@ function renderPhone() {
       `<details class="adv"${advancedOpen ? ' open' : ''}><summary>Advanced</summary><h3>Onchain proof</h3>${proofHtml()}</details><div class="acts"><button class="dn" data-a="reset">Reset progress</button></div>`;
   }
   sheet.innerHTML = `<div class="ph-bar"><span>ASSIST · ONLINE</span><span>${esc(L0.name)}</span><span>${t}</span></div><div class="ph-scr">${body}</div><div class="ph-nav"><button data-a="home" aria-label="Modules home"></button></div>`;
+  syncPoseDock();
   sheet.onclick = e => {
     if ((e.target as HTMLElement).closest('a[href]')) return;
     const b = (e.target as HTMLElement).closest('[data-a]') as HTMLElement | null;
@@ -1299,7 +1344,7 @@ function renderPhone() {
     if (label) label.textContent = `${Math.round((val * 180) / Math.PI)}°`;
     const stage = sheet.querySelector('#poseLive');
     if (stage) {
-      stage.innerHTML = poseSvgMarkup(live, { size: 148, className: 'pose-fig pose-fig-lg', look: S.look });
+      stage.innerHTML = poseSvgMarkup(live, { size: 80, className: 'pose-fig', look: S.look });
     }
   };
 }
@@ -1308,6 +1353,45 @@ setAssistantClickHandler(() => {
   if (phoneOpen) closeModal();
   else openPhone('poses');
 });
+
+function heldPoseName(): string {
+  if (!heldPoseId) return 'Standing';
+  return myPoses.find(p => p.id === heldPoseId)?.name ?? POSE_PRESETS.find(p => p.id === heldPoseId)?.name ?? 'Pose';
+}
+
+/** Picture of the live character in the city, with a caption, for saving or copying. */
+function takePoseShot() {
+  if (!heldPoseId) return;
+  renderer.render(scene, camera);
+  const src = renderer.domElement;
+  const snap = document.createElement('canvas');
+  snap.width = src.width;
+  snap.height = src.height;
+  const sx = snap.getContext('2d');
+  if (!sx) return;
+  sx.drawImage(src, 0, 0);
+  const poseName = heldPoseName();
+  const who = S.name || 'You';
+  openModal('');
+  resultCard(true, poseName, who, `${DRIP_LINE} ${poseName}`, (x, w, h) => {
+    const bar = 72;
+    x.drawImage(snap, 0, 0, w, h - bar);
+    x.fillStyle = '#070910';
+    x.fillRect(0, h - bar, w, bar);
+    x.textAlign = 'left';
+    x.textBaseline = 'alphabetic';
+    x.fillStyle = '#e9eefc';
+    x.font = '600 16px "Chakra Petch", sans-serif';
+    x.fillText(`${who} · ${poseName}`, 16, h - 48);
+    x.fillStyle = '#8b97b8';
+    x.font = '500 13px "Chakra Petch", sans-serif';
+    x.fillText("It's all about fashion and poses.", 16, h - 30);
+    x.fillStyle = '#2ee6ff';
+    x.fillText('The economy can be on fire, but drip is forever.', 16, h - 12);
+  });
+}
+
+($('#shotBtn') as HTMLButtonElement | null)?.addEventListener('click', () => takePoseShot());
 ($('#assistHintHide') as HTMLButtonElement | null)?.addEventListener('click', e => {
   e.preventDefault();
   e.stopPropagation();

@@ -27,7 +27,15 @@ export default defineConfig({
       '/forge': { target: 'http://localhost:8787', changeOrigin: true },
       '/merchants': { target: 'http://localhost:8787', changeOrigin: true },
       '/sim': { target: 'http://localhost:8787', changeOrigin: true },
-      '/ads': { target: 'http://localhost:8787', changeOrigin: true },
+      // /ads and /ads/creative are the API. Logo files in web/public/ads stay on Vite.
+      '/ads': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+        bypass(req) {
+          const url = (req.url ?? '').split('?')[0] ?? '';
+          if (url !== '/ads' && !url.startsWith('/ads/creative')) return url;
+        },
+      },
       '/presence': { target: 'http://localhost:8787', changeOrigin: true },
       '/chat': { target: 'http://localhost:8787', changeOrigin: true },
       '/poses': { target: 'http://localhost:8787', changeOrigin: true },

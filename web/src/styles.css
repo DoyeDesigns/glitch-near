@@ -66,6 +66,7 @@ button.is-busy[disabled]{opacity:1;cursor:wait}
 #banner.good{background:var(--lime);color:#0a1400}#banner.info{background:var(--cyan);color:#021018}
 #reconnect{position:absolute;left:50%;top:calc(var(--top) + 48px);transform:translateX(-50%);z-index:6;padding:6px 12px;border-radius:8px;font:600 12px var(--mono);letter-spacing:.06em;text-transform:uppercase;background:color-mix(in srgb,var(--amber) 85%,transparent);color:#1a1200;border:1px solid var(--amber);pointer-events:none}
 #prompt{position:absolute;left:50%;bottom:calc(var(--bot) + 14px);transform:translateX(-50%);padding:12px 22px;font-size:15px;z-index:4}
+#shotBtn{position:absolute;right:14px;bottom:calc(var(--bot) + 14px);z-index:4;padding:12px 18px}
 #joy{position:absolute;left:22px;bottom:calc(var(--bot) + 18px);width:120px;height:120px;border-radius:50%;border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 60%,transparent);touch-action:none;z-index:3}
 #joy i{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:var(--cyan);opacity:.7}
 #coach{position:absolute;left:50%;bottom:calc(var(--bot) + 70px);transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:color-mix(in srgb,var(--panel) 85%,transparent);border:1px solid var(--line);color:var(--mute);font-size:12px;text-align:center;max-width:86vw;pointer-events:none}
@@ -115,6 +116,11 @@ input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-
 .sw{width:30px;height:30px;padding:0;border-radius:50%;border:2px solid var(--line)}.sw.on{border-color:var(--cyan);box-shadow:0 0 0 2px var(--cyan)}
 .cz small{display:block;margin-top:6px}
 #modal.low{background:transparent;align-items:flex-end;pointer-events:none}#modal.low .sheet{pointer-events:auto;max-height:52%;width:min(560px,100%)}
+#modal.low .phonesheet.pose-dock{width:min(560px,100%);height:auto;max-height:min(52vh,480px);border-radius:12px!important;border-width:1px!important}
+.phonesheet.pose-dock .pose-stage-dock{margin:2px 0 6px;padding:6px;min-height:0}
+.phonesheet.pose-dock .pose-row{margin:6px 0}
+.phonesheet.pose-dock .pose-chips{margin:2px 0 6px}
+.phonesheet.pose-dock .ph-scr{padding-bottom:4px}
 @media (prefers-reduced-motion:reduce){.bet .ar{animation:none}}
 #assistBadge{position:absolute;z-index:5;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--pink);color:#fff;font:700 11px/18px var(--mono);text-align:center;pointer-events:none;transform:translate(-50%,-140%)}
 #assistHint{position:absolute;left:0;top:0;z-index:4;max-width:min(240px,62vw);padding:8px 28px 8px 10px;border:1px solid color-mix(in srgb,var(--cyan) 55%,var(--line));background:color-mix(in srgb,var(--panel) 92%,transparent);color:var(--cyan);font:600 11px/1.35 var(--mono);text-align:left;letter-spacing:.02em;pointer-events:none;transform:translate(14px,-100%);clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
@@ -157,7 +163,7 @@ input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-
 .ap u{position:absolute;top:-4px;right:-4px;background:var(--pink);color:#fff;border-radius:9px;padding:0 5px;font:700 11px var(--mono);text-decoration:none}
 a.ap.ad{text-decoration:none;color:var(--fg)}
 .ap.ad i.ad-logo{background:#0d1526;border:1px solid color-mix(in srgb,var(--cyan) 35%,var(--line));overflow:hidden;padding:0}
-.ap.ad i.ad-logo img{width:28px;height:28px;object-fit:contain;display:block}
+.ap.ad i.ad-logo img{width:100%;height:100%;object-fit:contain;display:block;padding:6px;box-sizing:border-box}
 .ap.ad i.ad-logo em{position:absolute;left:4px;bottom:3px;font:700 7px/1 var(--mono);font-style:normal;letter-spacing:.04em;color:var(--cyan);opacity:.9}
 .cmp{display:flex;gap:6px;margin:8px 0;align-items:stretch}.cmp input,.cmp select{margin:0;flex:1;padding:8px 10px;font-size:14px;min-width:0}
 .cmp select{width:auto}

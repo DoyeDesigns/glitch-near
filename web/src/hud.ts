@@ -2,7 +2,7 @@ import { $, esc, fmt, fmtN } from './util';
 import { applyChainItems } from './itemsSync';
 import { lvl, roleName, S, SAVE, START, SK, save } from './state';
 import { cases, chg, cityTradeGlance, feed, market, metrics, px, serverTick, TOK } from './market';
-import { buildFurn, adTex, exTex, keys, labTex, releaseLookLock, towTex } from './world';
+import { buildFurn, adTex, exTex, heldPoseId, keys, labTex, releaseLookLock, towTex } from './world';
 import { refreshMe } from './session';
 
 /** Last `available` from GET /me. HUD balance uses this when set. */
@@ -338,8 +338,15 @@ export function updateHud() {
     }).join('') +
     `<div class="tk"><small>Regulator heat</small><span>${Math.round(market.heat * 100)}%</span></div>`;
   bindHudApps();
+  syncPoseShot();
 }
 
+/** Shot is only useful while the character is holding a pose and the city is on screen. */
+export function syncPoseShot() {
+  const btn = $('#shotBtn') as HTMLButtonElement | null;
+  if (!btn) return;
+  btn.hidden = !heldPoseId || introOpen();
+}
 /** Map / Poses (and city-trade → Map) on the always-visible #mk strip — no Assist home first. */
 let hudAppsBound = false;
 function bindHudApps() {
@@ -451,6 +458,7 @@ export function renderSide() {
   } else {
     el.innerHTML =
       head +
+      `<p>It's all about fashion and poses. The economy can be on fire, but drip is forever.</p>` +
       `<p style="color:var(--mute)">Glitch is a free multiplayer city where web3 history becomes a game. This is a one-player slice: the market, other players and visitor counts are simulated. Your GD is custodial — the server settles earn/spend on NEAR testnet or a local mock ledger. Players never see a wallet. GD cannot be cashed out to mainnet.</p>
     <b>Economy health</b><div class="rk"><span>Created by skill pay</span><span class="pos">${fmt(S.created)}</span></div><div class="rk"><span>Burned (fees, losses, fines, holding tax)</span><span class="neg">${fmt(S.burned)}</span></div>
     <p style="color:var(--mute)">Tired or hungry cuts skill pay 40%. Losses burn. Starter is 60,000 GD.</p><button id="resetBtn">Reset progress</button>`;

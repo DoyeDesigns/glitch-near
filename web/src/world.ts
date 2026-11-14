@@ -12,7 +12,7 @@ import { DEFAULT_LOOK, type Look, type Station } from './types';
 import { $, clamp, pick, randn, rnd } from './util';
 import { S, weak } from './state';
 import { market } from './market';
-import { introOpen, modalOpen } from './hud';
+import { introOpen, modalEl, modalOpen, syncPoseShot } from './hud';
 import { useStation } from './games';
 
 export { BUILDINGS, buildingById } from './buildings';
@@ -707,6 +707,10 @@ export function emptyPose(): Pose {
  * Built-in poses. Limb `x` is face-forward positive (toward the head’s +Z).
  * `applyHeldPose` negates shoulder/hip x for Three.js.
  */
+/** Story line. Fashion and poses outlast a hot market. */
+export const DRIP_LINE =
+  "It's all about fashion and poses. The economy can be on fire, but drip is forever.";
+
 export const POSE_PRESETS: { id: string; name: string; pose: Pose }[] = [
   {
     id: 'crossed',
@@ -875,6 +879,7 @@ export function setHeldPose(poseIn: Pose | null, id: string | null = null) {
   heldPoseId = heldPose ? id : null;
   if (heldPose) applyHeldPose(player);
   else resetPoseJoints(player);
+  syncPoseShot();
 }
 
 export function clearHeldPose() {
@@ -1129,12 +1134,19 @@ export function releaseLookLock(): void {
   if (document.pointerLockElement === canvas) document.exitPointerLock();
 }
 
+/** Full-screen modals block orbit; `#modal.low` (look / pose dock) keeps the city draggable. */
+function cityOrbitBlocked(): boolean {
+  if (introOpen()) return true;
+  if (!modalOpen()) return false;
+  return !modalEl.classList.contains('low');
+}
+
 /*
  * Hold-drag to look everywhere except a short click on the assistant.
  * Presses that miss the bot look immediately — no click threshold delay.
  */
 canvas.addEventListener('pointerdown', e => {
-  if (modalOpen() || introOpen()) return;
+  if (cityOrbitBlocked()) return;
   if (e.button !== 0 && e.pointerType === 'mouse') return;
   canvas.setPointerCapture(e.pointerId);
   const onAssist = tryPickAssistant(e.clientX, e.clientY);
@@ -1363,11 +1375,12 @@ function stepPlayer(dt: number) {
     return;
   }
   if (customizing) {
-    cam.yaw += dt * 0.5;
+    if (keys.has('a') || keys.has('arrowleft') || keys.has('q')) cam.yaw += dt * 1.8;
+    if (keys.has('d') || keys.has('arrowright') || keys.has('r')) cam.yaw -= dt * 1.8;
     walkAnim(player, 0, clockT, 0);
     return;
   }
-  const frozen = modalOpen();
+  const frozen = modalOpen() && !modalEl.classList.contains('low');
   let ix = frozen ? 0 : (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0) + joyV.x;
   let iy = frozen ? 0 : (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0) + joyV.y;
   if (!frozen) {

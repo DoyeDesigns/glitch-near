@@ -656,7 +656,7 @@ export function openCustomizer() {
       S.look.gear === 1
         ? `<small>Cap facing</small><div class="chips">${ch(CAPDIRS, 'capDir')}</div>`
         : '';
-    sheet.innerHTML = `<h2>Your look</h2><div class="cz"><small>Skin</small><div class="chips">${sw(SKINS, 'skin')}</div><small>Hair</small><div class="chips">${ch(HAIRS, 'hair')}</div><small>Hair colour</small><div class="chips">${sw(HAIRC, 'hairC')}</div>
+    sheet.innerHTML = `<h2>Your look</h2><p class="hint">Drag above to turn · A/D or Q/R to spin</p><div class="cz"><small>Skin</small><div class="chips">${sw(SKINS, 'skin')}</div><small>Hair</small><div class="chips">${ch(HAIRS, 'hair')}</div><small>Hair colour</small><div class="chips">${sw(HAIRC, 'hairC')}</div>
     <small>Top</small><div class="chips">${sw(TOPC, 'top')}</div><small>Trousers</small><div class="chips">${sw(BOTC, 'bot')}</div>
     <small>Glasses</small><div class="chips"><button class="${S.look.glasses ? 'on' : ''}" data-k="glasses" data-v="1">On</button><button class="${S.look.glasses ? '' : 'on'}" data-k="glasses" data-v="0">Off</button>${S.look.glasses ? sw(GLASSC, 'glassC') : ''}</div>
     <small>Gear</small><div class="chips">${ch(GEARS, 'gear')}</div>${capRow}</div><div class="acts"><button class="pri" id="cdone">Done</button></div>`;
