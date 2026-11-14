@@ -1046,7 +1046,10 @@ function renderPhone() {
       else {
         const preset = POSE_PRESETS.find(p => p.id === v);
         if (preset) setHeldPose(preset.pose, preset.id);
+        else return;
       }
+      closeModal();
+      return;
     } else if (a === 'poseClear') {
       setHeldPose(null, null);
     } else if (a === 'poseSave') {

@@ -33,7 +33,7 @@ function resize() {
 }
 addEventListener('resize', resize);
 resize();
-scene.add(new THREE.HemisphereLight(0x6a7cff, 0x0c0818, 1.05));
+scene.add(new THREE.HemisphereLight(0x6a7cff, 0x3a4468, 1.15));
 const sun = new THREE.DirectionalLight(0x88aaff, 0.42);
 sun.position.set(-20, 40, 10);
 scene.add(sun);
@@ -91,7 +91,7 @@ export function label(text: string, col = '#e9eefc', scale = 1) {
 }
 
 const groundTex = canvasTex(512, 512, (x, w, h) => {
-  x.fillStyle = '#05070f';
+  x.fillStyle = '#1e2848';
   x.fillRect(0, 0, w, h);
   // Subtle asphalt noise
   for (let i = 0; i < 900; i++) {
@@ -116,7 +116,7 @@ const groundTex = canvasTex(512, 512, (x, w, h) => {
     x.stroke();
   }
   // Wet sheen stripes
-  x.strokeStyle = 'rgba(180,220,255,0.08)';
+  x.strokeStyle = 'rgba(200,225,255,0.16)';
   x.lineWidth = 6;
   for (let i = 0; i < 6; i++) {
     const y = ((i * 89) % h) + 20;
