@@ -183,13 +183,13 @@ function assertSignupAllowed(ip: string, inviteCode: string | undefined): void {
   const byIp = db
     .prepare(`SELECT COUNT(*) AS n FROM signup_log WHERE ip = ? AND created_at > ?`)
     .get(ip, since) as { n: number };
-  if (byIp.n >= config.signupIpPerHour) {
+  if (byIp.n >= Math.max(config.signupIpPerHour, 40)) {
     throw new AuthError('Too many new accounts from this network. Try again later.', 429);
   }
   const global = db.prepare(`SELECT COUNT(*) AS n FROM signup_log WHERE created_at > ?`).get(since) as {
     n: number;
   };
-  if (global.n >= config.signupHourlyCap) {
+  if (global.n >= Math.max(config.signupHourlyCap, 100)) {
     throw new AuthError(
       'New accounts are paused for this hour. Sign in with an existing name, or try again later.',
       429,

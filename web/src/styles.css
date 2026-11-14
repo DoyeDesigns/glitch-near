@@ -246,7 +246,14 @@ details.adv h3{margin:8px 0 4px;font-size:15px;color:var(--cyan)}
 @media (max-width:700px){
   #tl{min-width:0;padding:7px 9px}.bal{font-size:20px}
   .metrics{gap:8px;padding:6px 8px}.metrics b{font-size:12px}
-  #mk{top:auto;bottom:calc(var(--bot) + 150px);left:10px;width:min(200px,46vw);max-height:28vh;font-size:11px}
+  #mk{top:auto;bottom:calc(var(--bot) + 132px);left:10px;width:min(168px,42vw);max-height:none;padding:6px;overflow:hidden;font-size:10px}
+  #mk .hud-apps{gap:4px;margin:0 0 4px}
+  #mk .hud-apps button{padding:4px 6px;font-size:11px}
+  #mk .city-trade-hit{margin:0}
+  #mk .city-trade{margin:0}
+  #mk .city-trade small{font-size:9px}
+  #mk .city-trade-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px;line-height:1.2}
+  #mk .tk:not(.city-trade),#mk .bar{display:none}
   #side{left:0;right:0;top:auto;bottom:0;width:auto;max-height:46%;border-radius:14px 14px 0 0;padding-bottom:var(--bot)}
   #banner{top:calc(var(--top) + 100px);max-width:90vw;font-size:13px}
   .cap span:last-child{margin-left:8px}
