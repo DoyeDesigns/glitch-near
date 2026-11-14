@@ -19,6 +19,7 @@ import { installMockChain } from './near/mockLedger';
 import { getHealth, getStreamPayload } from './sim';
 import { openTrade, parseTradeDir, parseTradeStake, tradeSnapshot } from './trade';
 import { nextPostReadyAt, parsePostTake, publishPost } from './post';
+import { withdrawGd } from './withdraw';
 import { getAdsPayload, proxyCreative } from './ads';
 import { merchantsView } from './chef';
 import { forgeMint } from './forge';
@@ -279,6 +280,24 @@ export function createApp() {
       if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
       console.error('[vault] cancel failed');
       return c.json({ error: 'Could not leave the vault' }, 502);
+    }
+  });
+
+  app.post('/withdraw', async c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { to?: unknown; amount?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    try {
+      return c.json(await withdrawGd(player, body));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[withdraw] failed');
+      return c.json({ error: 'Could not send GD' }, 502);
     }
   });
 

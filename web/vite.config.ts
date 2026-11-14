@@ -19,6 +19,7 @@ export default defineConfig({
       '/trade': { target: 'http://localhost:8787', changeOrigin: true },
       '/vault': { target: 'http://localhost:8787', changeOrigin: true },
       '/post': { target: 'http://localhost:8787', changeOrigin: true },
+      '/withdraw': { target: 'http://localhost:8787', changeOrigin: true },
       '/shop': { target: 'http://localhost:8787', changeOrigin: true },
       '/market': { target: 'http://localhost:8787', changeOrigin: true },
       '/home': { target: 'http://localhost:8787', changeOrigin: true },

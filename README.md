@@ -60,7 +60,7 @@ npm run verify
 | --- | --- | --- |
 | Intro | First screen | Tabs: Sign in, Create account, Play as guest. Google only if `GOOGLE_CLIENT_ID` is set |
 | City | WASD / stick; hold-drag look | Exchange (trade), Vault Lab, Attention Tower (post), Gear Forge, Neon Diner, Home |
-| Assist | Click floating drone or **P** | Modules: Social, Chat, Map, Balance (+ city-day sim), Profile, Pose, Settings, My Home, Market |
+| Assist | Click floating drone or **P** | Modules: Social, Chat, Map, Balance, Bank (send GD), Profile, Pose, Settings, My Home, Market |
 | HUD tabs | Top-right | Feed, Skills, Rank (`GET /leaderboard`), About |
 | Advertise | `/advertise` | Wallet books ad slots in NEAR |
 | Admin | `/admin` | Ops health if `ADMIN_TOKEN` is set |
@@ -86,6 +86,7 @@ Needs a funded `players` parent account. Keys stay in `server/.env.local` (never
 | Vault / trade profit / post profit | Treasury `gd.mint` after server accepts result |
 | Trade losses, fees, half post cost | Accrue in SQLite; flush later with `burn_from` |
 | Food, furniture, studio, maintenance | Player `ft_transfer` to merchant; then hunger or `items.mint` (pay-then-deliver) |
+| Bank withdraw | Player `ft_transfer` of spendable GD to an account the server does not control. Fresh receivers get `storage_deposit` from the server signer. |
 | Gear | GD to smith, burn shards, `create_token` + `mint` for `gear-<type>-<uuid>` |
 | Player market sale | Buyer pays seller; item `admin_transfer`; 2% fee pending burn |
 | Ads | Advertiser `market.book_ad` (NEAR → treasury); city reads `get_current_ad` |
@@ -121,6 +122,7 @@ Session cookie required unless noted.
 | POST | `/trade/open`, GET `/trade` | Bets |
 | POST | `/vault/start`, `/finish`, `/cancel` | Vault Cracker |
 | POST | `/post` | Attention booth |
+| POST | `/withdraw` | Bank: send spendable GD to a testnet account |
 | POST | `/shop/buy` | Food / furniture catalog |
 | POST | `/home/buy`, `/home/pay-rent` | Studio |
 | POST | `/rest` | Bench / sleep |

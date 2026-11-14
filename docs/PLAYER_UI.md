@@ -50,6 +50,7 @@ Open: click the cyan square drone beside the player, or press **P**. Modules gri
 | Chat | Here / DMs | Client-local NPC chat stub |
 | Map | Districts + Go | **Go** → `POST /travel` (`GAS_GD` pending burn); warp only on success |
 | Balance | Available GD, shards, city-day sim | `/me`; sim uses `/sim/fast-forward` (no chain write) |
+| Bank | Send spendable GD to a testnet account you control. No wallet popup. | `POST /withdraw` |
 | Profile | Name / role card | Mostly client + `/me` |
 | Pose | 10 presets + custom (arm raise 0=ribs / spread / elbow·knee) | **Client-only**; `localStorage` key `glitch-custom-pose-v5` |
 | Settings | Rename, look, hint toggle, Advanced chain proof, reset | `/me/chain`; reset clears local save only |

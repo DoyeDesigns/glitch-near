@@ -16,8 +16,8 @@ Contracts: `GD_CONTRACT`, `ITEMS_CONTRACT`. Player keys are custodial (encrypted
 
 **(a)** call kinds:
 
-- **Player-signed:** `ft_transfer` (and any player-origin NEP-141) using the player’s decrypted key.
-- **Treasury-signed:** `mint`, `burn_from`, `create_token`, forge item mint, shard mint/burn.
+- **Player-signed:** `ft_transfer` (and any player-origin NEP-141) using the player’s decrypted key. Bank withdraw uses this after `assertCanSpend`. If the receiver has no GD storage, the server signer calls `storage_deposit` first.
+- **Treasury-signed:** `mint`, `burn_from`, `create_token`, forge item mint, shard mint/burn, and that `storage_deposit`.
 - **Merchant-signed:** `ft_transfer` between merchant wallets (restock supply chain + city trades).
 
 ---

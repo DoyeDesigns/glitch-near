@@ -96,6 +96,7 @@ let marketMySales: MarketSale[] = [];
 let marketErr = '';
 /** '' idle, or `list` / `buy:<id>` / `cancel:<id>` while a market request is in flight. */
 let marketBusyKey = '';
+let bankBusy = false;
 let marketFetchGen = 0;
 
 function readSalesSeen(): Record<string, number> {
@@ -772,7 +773,7 @@ function renderPhone() {
       `<button type="button" class="ph-quick-btn map" data-a="app" data-v="map"><span class="ph-quick-ico">M</span><span><b>Map</b><small>Places &amp; travel</small></span></button>` +
       `<button type="button" class="ph-quick-btn poses" data-a="app" data-v="poses"><span class="ph-quick-ico">◇${noteCount ? `<u>${noteCount > 9 ? '9+' : noteCount}</u>` : ''}</span><span><b>Poses</b><small>Drip is forever</small></span></button>` +
       `</div>` +
-      `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}${ads}</div>`;
+      `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('bank', 'Bank', '#ffb12e', 'B')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}${ads}</div>`;
   } else if (phoneApp === 'poses' || phoneApp === 'pose') {
     if (poseEdit) {
       const draftPose = poseFromDraft(poseDraft);
@@ -1000,6 +1001,18 @@ function renderPhone() {
             `<div class="tx"><span class="${x.kind === 'in' ? 'pos' : 'neg'}">${x.kind === 'in' ? '+' : '-'}${fmtN(Math.abs(x.amt))}</span><span>${esc(x.note)}</span><code>${x.h}</code></div>`,
         )
         .join('') || '<p class="hint">No activity yet. Play a game.</p>');
+  } else if (phoneApp === 'bank') {
+    const gd = fmtN(hudAvailable ?? S.bal);
+    body =
+      hdr('Bank', 'home') +
+      `<section class="bank">` +
+      `<div class="bank-bal"><small>Available to send</small><b>${gd}</b><span>GD</span></div>` +
+      `<p class="hint">Sending moves GD to an account you control. Play is unchanged until you send.</p>` +
+      `<label class="mkt-label" for="bankTo">Account</label>` +
+      `<input id="bankTo" type="text" maxlength="64" placeholder="name.testnet" autocomplete="off" spellcheck="false" ${bankBusy ? 'disabled' : ''}>` +
+      `<label class="mkt-label" for="bankAmt">Amount</label>` +
+      `<div class="cmp"><input id="bankAmt" type="text" inputmode="numeric" maxlength="15" placeholder="1000" autocomplete="off" ${bankBusy ? 'disabled' : ''}><button class="pri${bankBusy ? ' is-busy' : ''}" data-a="bankSend" ${bankBusy ? 'disabled' : ''}>Send</button></div>` +
+      `</section>`;
   } else if (phoneApp === 'myhome') {
     body = homeHtml(hdr);
   } else if (phoneApp === 'me') {
@@ -1282,6 +1295,38 @@ function renderPhone() {
         .finally(() => {
           marketBusyKey = '';
           phoneRefresh();
+        });
+      return;
+    } else if (a === 'bankSend') {
+      if (bankBusy) return;
+      const to = (($('#bankTo') as HTMLInputElement | null)?.value ?? '').trim();
+      const amount = (($('#bankAmt') as HTMLInputElement | null)?.value ?? '').trim();
+      if (!to || !amount) {
+        banner('Enter an account and an amount', 'bad');
+        return;
+      }
+      bankBusy = true;
+      phoneRefresh();
+      void fetch('/withdraw', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ to, amount }),
+      })
+        .then(async res => {
+          const data = (await res.json()) as { error?: string; available?: string; settling?: string; pending?: boolean };
+          if (!res.ok) throw new Error(data.error || 'Could not send GD');
+          if (data.available != null) setHudAvailable(Number(data.available));
+          if (data.settling != null) setHudSettling(Number(data.settling) || 0);
+          S.bal = Number(data.available ?? S.bal);
+          updateHud();
+          await refreshMe().catch(() => {});
+          banner(data.pending ? 'Sent. It may take a moment to show.' : 'GD sent', 'good');
+        })
+        .catch(err => banner(err instanceof Error ? err.message : 'Could not send GD', 'bad'))
+        .finally(() => {
+          bankBusy = false;
+          if (phoneOpen && phoneApp === 'bank') phoneRefresh();
         });
       return;
     } else if (a === 'name') {
