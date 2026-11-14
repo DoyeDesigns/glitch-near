@@ -1091,7 +1091,9 @@ export function glitchFx() {
 export const cam = { yaw: 0, pitch: 0.5, dist: 16, tx: 0, ty: 1.2, tz: 10 };
 export const keys = new Set<string>();
 const hideCoach = () => {
-  ($('#coach') as HTMLElement).hidden = true;
+  const el = $('#coach') as HTMLElement;
+  if (el.dataset.diner === '1') return;
+  el.hidden = true;
 };
 addEventListener('keydown', e => {
   if (modalOpen() || introOpen()) return;

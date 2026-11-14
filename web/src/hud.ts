@@ -1,6 +1,6 @@
 import { $, esc, fmt, fmtN } from './util';
 import { applyChainItems } from './itemsSync';
-import { lvl, roleName, S, SAVE, START, SK } from './state';
+import { lvl, roleName, S, SAVE, START, SK, save } from './state';
 import { cases, chg, cityTradeGlance, feed, market, metrics, px, serverTick, TOK } from './market';
 import { buildFurn, adTex, exTex, keys, labTex, releaseLookLock, towTex } from './world';
 import { refreshMe } from './session';
@@ -331,8 +331,30 @@ export function updateHud() {
     `<div class="tk"><small>Regulator heat</small><span>${Math.round(market.heat * 100)}%</span></div>`;
 }
 
+export const DINER_COACH_TEXT =
+  'WASD to move. Neon Diner is the orange building east of the plaza. Use the counter and buy the cheapest drink.';
+
+/** First-session diner pointer. Stays up through WASD until the first delivered food buy. */
+export function showDinerCoach(): void {
+  if (S.dinerBought) return;
+  const el = $('#coach') as HTMLElement;
+  el.dataset.diner = '1';
+  el.textContent = DINER_COACH_TEXT;
+  el.hidden = false;
+}
+
+export function clearDinerCoach(): void {
+  S.dinerBought = 1;
+  save();
+  const el = $('#coach') as HTMLElement;
+  delete el.dataset.diner;
+  el.hidden = true;
+}
+
 const hideCoach = () => {
-  ($('#coach') as HTMLElement).hidden = true;
+  const el = $('#coach') as HTMLElement;
+  if (el.dataset.diner === '1') return;
+  el.hidden = true;
 };
 
 function sideTitle(): string {

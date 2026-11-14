@@ -85,6 +85,8 @@ export interface S {
   home: Home;
   look: Look;
   styled?: number;
+  /** Set after the first delivered diner purchase. Hides the first-session coach. */
+  dinerBought?: number;
 }
 
 export interface TokenBase {

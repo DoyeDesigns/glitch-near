@@ -16,6 +16,7 @@ import {
 } from './client';
 import { decryptPrivateKey } from './keys';
 import { deliverSigned, lookupSignedTx, signAccountCall } from './mintTx';
+import { addBalancePin, reconcileBalancePin } from './balancePin';
 import { ChainWriteError, recordChainFailure, withChainRetry } from './retry';
 
 const MOCK_SECRET = 'ed25519:mock' as KeyPairString;
@@ -75,8 +76,8 @@ export function applyGdDelta(accountId: string, delta: bigint): void {
   if (delta === 0n) return;
   const hit = gdCache.get(accountId);
   if (!hit) return;
-  const next = BigInt(hit.balance) + delta;
-  writeGdCache(accountId, (next < 0n ? 0n : next).toString());
+  const shown = addBalancePin(accountId, 'gd', hit.balance, delta);
+  writeGdCache(accountId, shown);
 }
 
 /** Test seam: treat the cache as expired but keep the last balance/gen. */
@@ -151,12 +152,13 @@ export async function getGDBalanceCached(accountId: string): Promise<string> {
   if (hit && hit.until > now) return hit.balance;
   const startGen = hit?.gen ?? 0;
   try {
-    const bal = (await getGDBalance(accountId)).toString();
+    const chain = await getGDBalance(accountId);
     const current = gdCache.get(accountId);
     // A transfer may have applied an optimistic delta while this view was in flight.
     if (current && current.gen > startGen) return current.balance;
-    writeGdCache(accountId, bal);
-    return bal;
+    const shown = reconcileBalancePin(accountId, 'gd', chain).toString();
+    writeGdCache(accountId, shown);
+    return shown;
   } catch (err) {
     const latest = gdCache.get(accountId);
     if (latest) {
@@ -223,12 +225,26 @@ function outboxRow(id: string): OutboxRow | undefined {
     .get(id) as OutboxRow | undefined;
 }
 
+/** Apply a player transfer once. A later success lookup must not add it again. */
+function notePlayerTransfer(id: string, fromAccount: string, toAccount: string, amount: bigint): void {
+  const inserted = db.prepare(`INSERT OR IGNORE INTO gd_transfer_notes (id) VALUES (?)`).run(id);
+  if (inserted.changes === 0) return;
+  applyGdDelta(fromAccount, -amount);
+  applyGdDelta(toAccount, amount);
+}
+
+function revertPlayerTransfer(id: string, fromAccount: string, toAccount: string, amount: bigint): void {
+  const removed = db.prepare(`DELETE FROM gd_transfer_notes WHERE id = ?`).run(id);
+  if (removed.changes === 0) return;
+  applyGdDelta(fromAccount, amount);
+  applyGdDelta(toAccount, -amount);
+}
+
 function markTransferLanded(id: string, fromAccount: string, toAccount: string, amount: bigint): Promise<void> {
   return (async () => {
     if (gdTransfer) await gdTransfer(fromAccount, toAccount, amount);
     db.prepare(`UPDATE outbox SET status = 'landed' WHERE id = ?`).run(id);
-    applyGdDelta(fromAccount, -amount);
-    applyGdDelta(toAccount, amount);
+    notePlayerTransfer(id, fromAccount, toAccount, amount);
   })();
 }
 
@@ -312,6 +328,7 @@ export async function pushTransfer(id: string): Promise<TransferOutcome> {
     await ensurePlayerNear(accountId);
     const looked = fresh.tx_hash ? await lookupSignedTx(fresh.tx_hash, accountId) : null;
     if (looked === 'failure') {
+      revertPlayerTransfer(id, accountId, payload.to, BigInt(payload.amount));
       markTransferFailed(id);
       return 'failure';
     }
@@ -363,6 +380,8 @@ export async function pushTransfer(id: string): Promise<TransferOutcome> {
             });
       if (!(err instanceof ChainWriteError)) recordChainFailure(cwe);
       // Hash may already be stored; treat as ambiguous so resume can look it up.
+      const sent = outboxRow(id);
+      if (sent?.tx_hash) notePlayerTransfer(id, accountId, payload.to, BigInt(payload.amount));
       return 'unknown';
     }
     if (outcome === 'success') {
@@ -370,6 +389,7 @@ export async function pushTransfer(id: string): Promise<TransferOutcome> {
       return 'success';
     }
     if (outcome === 'failure') {
+      revertPlayerTransfer(id, accountId, payload.to, BigInt(payload.amount));
       markTransferFailed(id);
       const cwe = new ChainWriteError({
         label: 'gd.ft_transfer',
@@ -380,6 +400,7 @@ export async function pushTransfer(id: string): Promise<TransferOutcome> {
       recordChainFailure(cwe);
       return 'failure';
     }
+    notePlayerTransfer(id, accountId, payload.to, BigInt(payload.amount));
     return 'unknown';
   });
 }

@@ -26,6 +26,7 @@ import {
   modalOpen,
   setHudAvailable,
   setHudSettling,
+  showDinerCoach,
   startAdsPoll,
   startMePoll,
   updateHud,
@@ -134,6 +135,8 @@ function applyProfile(profile: Me) {
   if (!S.styled) {
     S.styled = 1;
     openCustomizer();
+  } else {
+    showDinerCoach();
   }
 }
 
@@ -281,34 +284,52 @@ function loadGisScript(): Promise<void> {
   });
 }
 
+function showGoogleProblem(message: string) {
+  const err = $('#googleErr') as HTMLElement;
+  err.hidden = false;
+  err.textContent = message;
+  googleReady = true;
+  setIntroTab(introTab);
+}
+
 async function setupGoogleSignIn() {
   const clientId = await fetchGoogleClientId();
   if (!clientId) return;
   try {
     await loadGisScript();
   } catch {
+    showGoogleProblem('Google sign-in could not load. This site must be an authorized JavaScript origin.');
     return;
   }
   const gis = window.google?.accounts?.id;
-  if (!gis) return;
+  if (!gis) {
+    showGoogleProblem('Google sign-in could not load. This site must be an authorized JavaScript origin.');
+    return;
+  }
 
-  gis.initialize({
-    client_id: clientId,
-    callback: res => {
-      if (!res?.credential) {
-        showIntroError('Google sign-in was cancelled');
-        return;
-      }
-      void completeGoogleLogin(res.credential);
-    },
-  });
-  gis.renderButton($('#googleBtn') as HTMLElement, {
-    theme: 'outline',
-    size: 'large',
-    text: 'signin_with',
-    shape: 'rectangular',
-    width: 280,
-  });
+  try {
+    gis.initialize({
+      client_id: clientId,
+      callback: res => {
+        if (!res?.credential) {
+          showIntroError('Google sign-in was cancelled');
+          return;
+        }
+        void completeGoogleLogin(res.credential);
+      },
+    });
+    gis.renderButton($('#googleBtn') as HTMLElement, {
+      theme: 'outline',
+      size: 'large',
+      text: 'signin_with',
+      shape: 'rectangular',
+      width: 280,
+    });
+  } catch {
+    showGoogleProblem('Google sign-in could not load. This site must be an authorized JavaScript origin.');
+    return;
+  }
+  ($('#googleErr') as HTMLElement).hidden = true;
   googleReady = true;
   if (introTab === 'signin' || introTab === 'create') {
     ($('#googleWrap') as HTMLElement).hidden = false;

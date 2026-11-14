@@ -6,6 +6,18 @@ Glitch is a 3D city game on **NEAR testnet** (or a local **mock** ledger). Playe
 
 ![Glitch city hub](docs/media/glitch-city.jpg)
 
+## Try the live demo
+
+Hosted on NEAR testnet: https://glitch-near.onrender.com/
+
+1. Open https://glitch-near.onrender.com/ — see the city and the account tabs. No wallet popup.
+2. Choose **Create account**, enter a name and a 4–6 digit PIN, and submit. See the city and about 60,000 GD.
+3. Close the look screen and follow the coach. WASD east to the orange **Neon Diner**, then **Use** the counter.
+4. Buy the cheapest item (Zobo). See hunger rise and the price leave 1,000 GD.
+5. Read the receipt in the shop: the amount, Chef, and the testnet account link on `testnet.nearblocks.io`.
+
+**Sign in** and **Create account** also show **Sign in with Google** on that host.
+
 The pre-hackathon prototype is `legacy/glitch-prototype-v2c.html` (reference only). Hackathon work is the TypeScript split, three contracts, and the server-settled loop below.
 
 ## Architecture
@@ -27,7 +39,7 @@ flowchart TB
 
 The server is a **trusted custodian and oracle**. It creates each player as a custodial NEAR subaccount, holds the encrypted key, and signs every mint, burn, and transfer after it validates the game result. In `CHAIN_MODE=mock`, the same APIs write a SQLite ledger instead of RPC. `available = chain − pending burns − escrow` (see [docs/ONCHAIN.md](docs/ONCHAIN.md)).
 
-## Try it (mock — no secrets) — primary screener path
+## Try it locally (mock — no secrets)
 
 1. `cp server/.env.example server/.env.local` (defaults to `CHAIN_MODE=mock`).
 2. `npm install` at the repo root.

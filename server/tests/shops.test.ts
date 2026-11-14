@@ -36,6 +36,7 @@ import {
   setNearFundingForTests,
 } from '../src/near/client';
 import {
+  applyGdDelta,
   expireGdCacheForTests,
   getGDBalanceCached,
   invalidateGdCache,
@@ -170,6 +171,8 @@ beforeEach(() => {
   treasuryMethods.length = 0;
   itemBalances.clear();
   db.prepare(`DELETE FROM outbox`).run();
+  db.prepare(`DELETE FROM balance_pins`).run();
+  db.prepare(`DELETE FROM gd_transfer_notes`).run();
   db.prepare(`DELETE FROM merchants`).run();
   db.prepare(`DELETE FROM pending_burns`).run();
   db.prepare(`DELETE FROM escrow`).run();
@@ -538,6 +541,18 @@ describe('purchase', () => {
     expect(Number(view.chef.gdBalance)).toBe(Number(MERCHANT_FLOAT + 1_000n));
   });
 
+  it('keeps the sale credit when a later balance view is still the pre-transfer number', async () => {
+    const chef = insertMerchant('chef');
+    fund(chef, MERCHANT_FLOAT);
+    await getGDBalanceCached(chef);
+    applyGdDelta(chef, 1_000n);
+    expireGdCacheForTests(chef);
+    expect(await getGDBalanceCached(chef)).toBe(String(MERCHANT_FLOAT + 1_000n));
+    balances.set(chef, MERCHANT_FLOAT + 1_000n);
+    expireGdCacheForTests(chef);
+    expect(await getGDBalanceCached(chef)).toBe(String(MERCHANT_FLOAT + 1_000n));
+  });
+
   it('lets only one of two concurrent purchases reserve the balance', async () => {
     const row = player('race');
     insertMerchant('dealer');
@@ -693,11 +708,27 @@ describe('shop home rest', () => {
     expect(slept.needs.energy).toBe(100);
   });
 
+  it('skips needs decay for 8 minutes after the account is created', () => {
+    const row = player('grace');
+    const now = Date.now();
+    db.prepare(`UPDATE players SET needs_json = ?, needs_updated_at = ?, created_at = ? WHERE id = ?`).run(
+      '{"energy":100,"hunger":80}',
+      now - 10_000,
+      now - 60_000,
+      row.id,
+    );
+    const after = syncNeedsDecay(row.id, now);
+    expect(after.hunger).toBe(80);
+    expect(after.energy).toBe(100);
+  });
+
   it('decays needs across timestamps and applies bench rest', async () => {
     const row = player('decay');
-    db.prepare(`UPDATE players SET needs_json = ?, needs_updated_at = ? WHERE id = ?`).run(
+    const now = Date.now();
+    db.prepare(`UPDATE players SET needs_json = ?, needs_updated_at = ?, created_at = ? WHERE id = ?`).run(
       '{"energy":100,"hunger":80}',
-      Date.now() - 10_000,
+      now - 10_000,
+      now - 9 * 60 * 1000,
       row.id,
     );
     const after = syncNeedsDecay(row.id);
@@ -728,6 +759,9 @@ describe('chef prices', () => {
     const res = await shopBuy(row.id, 'zobo-drink');
     expect(res.status).toBe('delivered');
     expect(res.price).toBe(1_000);
+    expect(res.merchantId).toBe('chef');
+    expect(res.merchantAccountId).toBe(chef);
+    expect(res.chainMode).toBe('mock');
     expect(balances.get(chef)).toBe(MERCHANT_FLOAT + 1_000n);
     expect(purchaseRow(row.id).amount).toBe('1000');
     expect(res.stock).toBeCloseTo(19, 2);
@@ -744,6 +778,9 @@ describe('chef prices', () => {
     const res = await shopBuy(row.id, 'plant');
     expect(res.status).toBe('delivered');
     expect(res.price).toBe(quote.finalPrice);
+    expect(res.merchantId).toBe('dealer');
+    expect(res.merchantAccountId).toBe(merchantAccountId('dealer'));
+    expect(res.chainMode).toBe('mock');
     expect(purchaseRow(row.id).amount).toBe(String(quote.finalPrice));
     expect(res.stock).toBeCloseTo(19, 2);
     expect(res.demandEma).toBeCloseTo(CHEF_DEMAND_BUY, 4);

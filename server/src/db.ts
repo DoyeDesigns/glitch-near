@@ -453,6 +453,17 @@ function addMintColumns(): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS balance_pins (
+      account_id TEXT NOT NULL,
+      token_id TEXT NOT NULL,
+      basis TEXT NOT NULL,
+      offset TEXT NOT NULL,
+      until_ms INTEGER NOT NULL,
+      PRIMARY KEY (account_id, token_id)
+    );
+    CREATE TABLE IF NOT EXISTS gd_transfer_notes (
+      id TEXT PRIMARY KEY
+    );
   `);
 }
 

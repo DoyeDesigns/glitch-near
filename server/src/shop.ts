@@ -1,5 +1,6 @@
 import { catalogById, type ChefPriceReasoning } from '@glitch/shared';
 import { AuthError, fundsView } from './auth';
+import { config } from './config';
 import {
   chefFoodSnapshot,
   dealerItemSnapshot,
@@ -9,6 +10,7 @@ import {
 import { getPlayerById } from './near/accounts';
 import { syncNeedsDecay } from './needs';
 import { assertMerchantOpen } from './merchantGate';
+import { getMerchant } from './near/merchants';
 import { purchase } from './purchase';
 
 export type ShopBuyResult = {
@@ -19,6 +21,9 @@ export type ShopBuyResult = {
   needs: { energy: number; hunger: number };
   /** Quoted merchant price when food or furniture. */
   price?: number;
+  merchantId: string;
+  merchantAccountId: string;
+  chainMode: 'mock' | 'testnet';
   reasoning?: ChefPriceReasoning;
   stock?: number;
   demandEma?: number;
@@ -47,12 +52,17 @@ export async function shopBuy(playerId: string, itemId: string): Promise<ShopBuy
       ? chefFoodSnapshot(itemId) ?? quote
       : dealerItemSnapshot(itemId) ?? quote
     : quote;
+  const merchantId = item.kind === 'food' ? 'chef' : 'dealer';
+  const merchant = getMerchant(merchantId);
   return {
     status: delivered ? 'delivered' : 'settling',
     purchaseId: result.purchaseId,
     ...funds,
     needs,
     price: quote.finalPrice,
+    merchantId,
+    merchantAccountId: merchant?.account_id ?? '',
+    chainMode: config.chainMode,
     reasoning: after.reasoning,
     stock: after.stock,
     demandEma: after.demandEma,

@@ -15,6 +15,7 @@ import {
 import { $, clamp, esc, fmt, fmtN, pick } from './util';
 import { applyChainItems, forgeItemIdForGear } from './itemsSync';
 import { L, save, S, weak } from './state';
+import { clearDinerCoach, showDinerCoach } from './hud';
 import { banner, cityTradeGlance, post, px, setCityTradeGlance, TOK } from './market';
 import {
   applyHomePaint,
@@ -461,7 +462,12 @@ export function secGame() {
       S.payUsed = 0;
     }
     S.payUsed = Math.max(S.payUsed, state.payUsed);
-    if (state.shardBalance != null) S.shards = Number(state.shardBalance) || 0;
+    if (state.shardsMinted > 0) {
+      const chain = state.shardBalance != null ? Number(state.shardBalance) || 0 : 0;
+      S.shards = Math.max(chain, S.shards + state.shardsMinted);
+    } else if (state.shardBalance != null) {
+      S.shards = Number(state.shardBalance) || 0;
+    }
     if (L('sec') > before) banner(`Security skill up: level ${L('sec')}`, 'good');
     save();
     updateHud();
@@ -616,6 +622,7 @@ export function openCustomizer() {
     cam.ty = pty;
     modalEl.classList.remove('low');
     save();
+    showDinerCoach();
   });
   modalEl.classList.add('low');
   const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
@@ -1169,6 +1176,29 @@ function roleLabel(id: string): string {
   return id;
 }
 
+type ShopReceipt = {
+  price: number;
+  merchantId: string;
+  merchantAccountId: string;
+  chainMode?: 'mock' | 'testnet';
+  status: 'delivered' | 'settling';
+};
+
+let lastShopReceipt: ShopReceipt | null = null;
+
+function shopReceiptHtml(merchantId: string): string {
+  const r = lastShopReceipt;
+  if (!r || r.merchantId !== merchantId || r.price == null) return '';
+  const who = roleLabel(r.merchantId);
+  const verb = r.status === 'delivered' ? 'Paid' : 'Sending';
+  const line = `${verb} ${fmtN(r.price)} GD to ${esc(who)}.`;
+  if (r.chainMode === 'mock' || !r.merchantAccountId) {
+    return `<p class="hint">${line} Local mock ledger — no testnet explorer.</p>`;
+  }
+  const href = `https://testnet.nearblocks.io/address/${encodeURIComponent(r.merchantAccountId)}`;
+  return `<p class="hint">${line} <a href="${href}" target="_blank" rel="noopener">${esc(r.merchantAccountId)}</a></p>`;
+}
+
 function merchantWalletBlock(name: string, shop: MerchantShopMeta): string {
   const status = shop.closed
     ? shop.closedReason === 'no_keys'
@@ -1322,7 +1352,7 @@ export function dinerGame() {
     const funds = fundsNow();
     const closed = chefShop.closed;
     menu = chefMenu.length ? chefMenu : menu;
-    sheet.innerHTML = `<h2>Neon Diner</h2><p>Paid in <b>GD</b>. Prices move with stock and demand. You have <b>${fmtN(funds)} GD</b>.</p>${meters()}${merchantWalletBlock('Chef', chefShop)}${
+    sheet.innerHTML = `<h2>Neon Diner</h2><p>Paid in <b>GD</b>. Prices move with stock and demand. You have <b>${fmtN(funds)} GD</b>.</p>${shopReceiptHtml('chef')}${meters()}${merchantWalletBlock('Chef', chefShop)}${
       menu.length === 0
         ? '<p class="hint">Loading menu…</p>'
         : menu
@@ -1354,6 +1384,9 @@ export function dinerGame() {
               settling: string;
               needs: { energy: number; hunger: number };
               price?: number;
+              merchantId?: string;
+              merchantAccountId?: string;
+              chainMode?: 'mock' | 'testnet';
               stock?: number;
               demandEma?: number;
               reasoning?: ChefMenuDish['reasoning'];
@@ -1361,8 +1394,20 @@ export function dinerGame() {
             applyFunds(res.available, res.settling);
             applyNeeds(res.needs);
             const item = catalogById((b as HTMLElement).dataset.id!);
+            if (res.price != null && res.merchantId && res.merchantAccountId) {
+              lastShopReceipt = {
+                price: res.price,
+                merchantId: res.merchantId,
+                merchantAccountId: res.merchantAccountId,
+                chainMode: res.chainMode,
+                status: res.status,
+              };
+            }
             if (res.status === 'settling') banner('Payment is processing.', 'info');
-            else banner(`Ate ${item?.title ?? 'food'}${res.price != null ? ` for ${fmtN(res.price)} GD` : ''}.`, 'good');
+            else {
+              banner(`Ate ${item?.title ?? 'food'}${res.price != null ? ` for ${fmtN(res.price)} GD` : ''}.`, 'good');
+              clearDinerCoach();
+            }
             crowdTo('eat', 8);
             await loadMenu();
             save();
@@ -1502,6 +1547,7 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
   if (!H.owned)
     return (
       hdr('My Home', 'home') +
+      shopReceiptHtml('dealer') +
       dealerWallet +
       `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div>${studioQ ? `<div class="hint">${esc(reasonHint(studioQ))}</div>` : ''}</div></div><div class="acts"><button class="pri${merchantBusy === 'buyhome' ? ' is-busy' : ''}" data-a="buyhome" ${closed || !!merchantBusy || funds < studioPrice + MAINTENANCE ? 'disabled' : ''}>${closed ? 'Closed' : `Buy: ${fmtN(studioPrice)} GD + ${fmtN(MAINTENANCE)} GD maintenance`}</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
     );
@@ -1512,6 +1558,7 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
   ).join('');
   return (
     hdr('My Home', 'home') +
+    shopReceiptHtml('dealer') +
     dealerWallet +
     `<div class="loc"><div><b>Studio apartment</b><div class="hint">${overdue() ? '<span class="neg">MAINTENANCE OVERDUE. Your bed is locked until you pay.</span>' : 'Maintenance paid for ' + mmss(maintenanceLeft())} · Comfort ${comfort()}</div></div></div>
   <div class="acts"><button class="pri" data-a="gohome" ${merchantBusy ? 'disabled' : ''}>Go home (free)</button><button class="${merchantBusy === 'paymaintenance' ? 'is-busy' : ''}" data-a="paymaintenance" ${closed || !!merchantBusy || funds < MAINTENANCE || maintenanceLeft() > MAINTENANCE_MS * 2 ? 'disabled' : ''}>${closed ? 'Closed' : `Pay maintenance ${fmtN(MAINTENANCE)} GD`}</button></div>
@@ -1614,10 +1661,23 @@ export function homeAct(a: string, v?: string): boolean | void {
       available: string;
       settling: string;
       needs: { energy: number; hunger: number };
+      price?: number;
+      merchantId?: string;
+      merchantAccountId?: string;
+      chainMode?: 'mock' | 'testnet';
     }>('/shop/buy', { itemId: v })
       .then(res => {
         applyFunds(res.available, res.settling);
         applyNeeds(res.needs);
+        if (res.price != null && res.merchantId && res.merchantAccountId) {
+          lastShopReceipt = {
+            price: res.price,
+            merchantId: res.merchantId,
+            merchantAccountId: res.merchantAccountId,
+            chainMode: res.chainMode,
+            status: res.status,
+          };
+        }
         if (res.status === 'settling') banner('Payment is processing.', 'info');
         else {
           if (!H.items.includes(v)) H.items.push(v);
