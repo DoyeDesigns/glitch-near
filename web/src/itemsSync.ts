@@ -9,7 +9,8 @@ export function applyChainItems(items: Record<string, string> | null | undefined
   if (!items) return;
 
   S.shards = Number(items.shard ?? '0') || 0;
-  if (BigInt(items['studio-apartment'] ?? '0') > 0n) S.home.owned = true;
+  // Keep client ownership in sync with the deed (clear stale localStorage "owned").
+  S.home.owned = BigInt(items['studio-apartment'] ?? '0') > 0n;
 
   const furn: string[] = [];
   for (const [id, amt] of Object.entries(items)) {

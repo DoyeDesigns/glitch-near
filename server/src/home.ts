@@ -25,7 +25,7 @@ export type HomeResult = {
 
 /** Buy the studio deed (dealer quote), then charge the first maintenance period. */
 export async function homeBuy(playerId: string): Promise<HomeResult> {
-  if (await ownsStudio(playerId)) throw new AuthError('You already own a studio', 409);
+  if (await ownsStudio(playerId)) throw new AuthError('You already own a home', 409);
   syncNeedsDecay(playerId);
   await assertMerchantOpen('dealer');
   const quote = quoteDealerItem('studio-apartment');

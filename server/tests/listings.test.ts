@@ -9,6 +9,7 @@ import {
   createListing,
   getListingForTests,
   getListingSaleForTests,
+  listRecentSoldBySeller,
   resumeListingSales,
 } from '../src/listings';
 import { getPlayerById, type PlayerRow } from '../src/near/accounts';
@@ -155,6 +156,25 @@ describe('player market listings', () => {
         .prepare(`SELECT amount, reason FROM pending_burns WHERE player_id = ? AND reason = 'market_fee'`)
         .get(seller.id),
     ).toEqual({ amount: '20', reason: 'market_fee' });
+  });
+
+  it('lists recent sold listings for the seller', async () => {
+    const seller = player('seller-sales');
+    const buyer = player('buyer-sales');
+    giveItem(seller.account_id!, TOKEN);
+    fund(buyer.account_id!, 50_000n);
+    const listing = await createListing(seller.id, TOKEN, 1500);
+    await buyListing(buyer.id, listing.id);
+    const sales = listRecentSoldBySeller(seller.id);
+    expect(sales).toHaveLength(1);
+    expect(sales[0]).toMatchObject({
+      id: listing.id,
+      tokenId: TOKEN,
+      price: '1500',
+      sellerId: seller.id,
+    });
+    expect(sales[0]!.soldAt).toBeGreaterThan(0);
+    expect(listRecentSoldBySeller(buyer.id)).toEqual([]);
   });
 
   it('rejects a buyer with insufficient GD', async () => {

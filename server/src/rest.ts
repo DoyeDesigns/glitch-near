@@ -21,7 +21,9 @@ export async function restPlayer(
   if (!player) throw new AuthError('Player not found', 400);
 
   if (kind === 'sleep') {
-    if (!(await ownsStudio(playerId))) throw new AuthError('You need a studio to sleep', 400);
+    if (!(await ownsStudio(playerId))) {
+      throw new AuthError('You need a home to sleep. Buy one in My Home.', 400);
+    }
     if (!hasUnlockedHome(player)) {
       throw new AuthError('Your bed is locked: pay maintenance first', 400);
     }

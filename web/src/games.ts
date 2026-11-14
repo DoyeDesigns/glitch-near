@@ -541,6 +541,11 @@ export function secGame() {
     const elapsed = Math.round(Date.now() - attempt.startedAt);
     if (elapsed < vaultLockStart(stops, round)) return;
     busy = true;
+    const stopBtn = $('#stopb') as HTMLButtonElement | null;
+    if (stopBtn) {
+      stopBtn.classList.add('is-busy');
+      stopBtn.disabled = true;
+    }
     try {
       const state = await vaultRequest<VaultFinish>('/vault/finish', {
         method: 'POST',
@@ -551,6 +556,7 @@ export function secGame() {
       const n = $('#ndl') as HTMLElement | null;
       if (n) n.style.background = state.hit ? '#b8ff3d' : '#ff3d9a';
       if (state.status === 'settled') {
+        // Keep spinner on STOP through the settle pause (esp. last lock / payout).
         window.setTimeout(() => {
           if (!done) showResult(state);
         }, attempt.pauseMs);
@@ -567,6 +573,10 @@ export function secGame() {
       }, wait);
     } catch (err) {
       busy = false;
+      if (stopBtn) {
+        stopBtn.classList.remove('is-busy');
+        stopBtn.disabled = false;
+      }
       banner(err instanceof Error ? err.message : 'Vault failed', 'bad');
     }
   }
@@ -1549,7 +1559,7 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
       hdr('My Home', 'home') +
       shopReceiptHtml('dealer') +
       dealerWallet +
-      `<div class="loc"><div><b>Studio apartment</b><div class="hint">Own a home: sleep to restore energy and decorate. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it can't be paid, the home is locked until it is.</div>${studioQ ? `<div class="hint">${esc(reasonHint(studioQ))}</div>` : ''}</div></div><div class="acts"><button class="pri${merchantBusy === 'buyhome' ? ' is-busy' : ''}" data-a="buyhome" ${closed || !!merchantBusy || funds < studioPrice + MAINTENANCE ? 'disabled' : ''}>${closed ? 'Closed' : `Buy: ${fmtN(studioPrice)} GD + ${fmtN(MAINTENANCE)} GD maintenance`}</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
+      `<div class="loc"><div><b>Home</b><div class="hint">Buy a home to sleep, restore energy, and decorate. Maintenance is ${fmtN(MAINTENANCE)} GD each period; if it lapses, the bed locks until you pay.</div>${studioQ ? `<div class="hint">${esc(reasonHint(studioQ))}</div>` : ''}</div></div><div class="acts"><button class="pri${merchantBusy === 'buyhome' ? ' is-busy' : ''}" data-a="buyhome" ${closed || !!merchantBusy || funds < studioPrice + MAINTENANCE ? 'disabled' : ''}>${closed ? 'Closed' : `Buy home: ${fmtN(studioPrice)} GD + ${fmtN(MAINTENANCE)} GD maintenance`}</button></div><div class="loc"><div><b>Penthouse</b><div class="hint">Bigger rooms. Coming later.</div></div><button disabled>Soon</button></div><p class="hint">You have ${fmtN(funds)} GD.</p>`
     );
   const paintId = H.paint?.id ?? 'midnight';
   const paints = HOME_PAINT_PRESETS.map(
@@ -1560,7 +1570,7 @@ export function homeHtml(hdr: (title: string, back: string) => string) {
     hdr('My Home', 'home') +
     shopReceiptHtml('dealer') +
     dealerWallet +
-    `<div class="loc"><div><b>Studio apartment</b><div class="hint">${overdue() ? '<span class="neg">MAINTENANCE OVERDUE. Your bed is locked until you pay.</span>' : 'Maintenance paid for ' + mmss(maintenanceLeft())} · Comfort ${comfort()}</div></div></div>
+    `<div class="loc"><div><b>Your home</b><div class="hint">${overdue() ? '<span class="neg">MAINTENANCE OVERDUE. Your bed is locked until you pay.</span>' : 'Maintenance paid for ' + mmss(maintenanceLeft())} · Comfort ${comfort()}</div></div></div>
   <div class="acts"><button class="pri" data-a="gohome" ${merchantBusy ? 'disabled' : ''}>Go home (free)</button><button class="${merchantBusy === 'paymaintenance' ? 'is-busy' : ''}" data-a="paymaintenance" ${closed || !!merchantBusy || funds < MAINTENANCE || maintenanceLeft() > MAINTENANCE_MS * 2 ? 'disabled' : ''}>${closed ? 'Closed' : `Pay maintenance ${fmtN(MAINTENANCE)} GD`}</button></div>
   <small style="display:block;margin-top:10px">Room colors</small><div class="paint-grid">${paints}</div>
   <small style="display:block;margin-top:10px">Furniture</small>` +
@@ -1609,15 +1619,21 @@ export function homeAct(a: string, v?: string): boolean | void {
       .then(res => {
         applyFunds(res.available, res.settling);
         applyNeeds(res.needs);
-        H.owned = true;
         H.paidUntil = res.homePaidUntil;
-        buildFurn();
-        if (res.studioStatus === 'settling') banner('Studio payment is processing.', 'info');
-        else if (res.maintenanceStatus === 'settling') banner('Studio bought. Maintenance is still processing.', 'info');
-        else if ((res.homePaidUntil ?? 0) <= Date.now()) banner('Studio bought. Pay maintenance to unlock your bed.', 'info');
-        else {
-          banner('You bought a Studio! Tap Go home.', 'good');
-          post('sys', 'NEWS', `${S.name} bought a Studio apartment.`);
+        // Settling deed must not hide Buy; only mark owned once delivered.
+        if (res.studioStatus === 'settling') {
+          banner('Home purchase is settling on-chain…', 'info');
+        } else {
+          H.owned = true;
+          buildFurn();
+          if (res.maintenanceStatus === 'settling') {
+            banner('Home bought. Maintenance is still processing.', 'info');
+          } else if ((res.homePaidUntil ?? 0) <= Date.now()) {
+            banner('Home bought. Pay maintenance to unlock your bed.', 'info');
+          } else {
+            banner('You bought a home! Tap Go home.', 'good');
+            post('sys', 'NEWS', `${S.name} bought a home.`);
+          }
         }
         save();
         updateHud();
@@ -1701,7 +1717,11 @@ export function exitHome() {
 }
 
 export function sleepGame() {
-  if (!S.home.owned) return;
+  if (!S.home.owned) {
+    banner('Buy a home in My Home to sleep here.', 'info');
+    void import('./phone').then(({ openPhone }) => openPhone('myhome'));
+    return;
+  }
   if (overdue()) return banner('Your bed is locked: pay maintenance in the My Home app', 'bad');
   openModal('');
   const secs = Math.max(3, Math.round(8 - comfort() * 0.5));
@@ -1713,13 +1733,17 @@ export function sleepGame() {
       .then(res => {
         applyFunds(res.available, res.settling);
         applyNeeds(res.needs);
-        resultCard(true, 'Fully rested', `Comfort ${comfort()}: slept in ${secs}s`, 'Slept in my Glitch apartment.');
+        resultCard(true, 'Fully rested', `Comfort ${comfort()}: slept in ${secs}s`, 'Slept at home.');
         updateHud();
         save();
       })
       .catch(err => {
-        banner(err instanceof Error ? err.message : 'Could not sleep', 'bad');
+        const msg = err instanceof Error ? err.message : 'Could not sleep';
+        banner(msg, 'bad');
         closeModal();
+        if (/need a home/i.test(msg)) {
+          void import('./phone').then(({ openPhone }) => openPhone('myhome'));
+        }
       });
   });
 }

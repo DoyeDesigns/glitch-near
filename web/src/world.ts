@@ -831,23 +831,28 @@ export function draftFromPose(p: Pose): {
   };
 }
 
-export function applyHeldPose(g: THREE.Group = player) {
-  if (!heldPose) return;
+/** Apply a pose to any avatar. `drop` lowers the rig for sit/kneel. */
+export function applyPoseTo(g: THREE.Group, p: Pose, drop = 0) {
   const rig = g.userData.rig as THREE.Group;
   const u = rig.userData as Record<string, THREE.Object3D>;
   for (const k of ROOT_LIMBS) {
     const limb = u[k];
     if (!limb) return;
-    const r = heldPose[k];
+    const r = p[k];
     // Face is +Z; Three +Rx swings a hanging limb to −Z — negate stored face-forward x.
     limb.rotation.set(-r.x, r.y, r.z);
   }
   // Elbow curls forward (−Rx); knee curls back (+Rx).
-  if (u.elbowL) u.elbowL.rotation.set(-heldPose.elbowL, 0, 0);
-  if (u.elbowR) u.elbowR.rotation.set(-heldPose.elbowR, 0, 0);
-  if (u.kneeL) u.kneeL.rotation.set(heldPose.kneeL, 0, 0);
-  if (u.kneeR) u.kneeR.rotation.set(heldPose.kneeR, 0, 0);
-  rig.position.y = poseRigDrop(g === player ? heldPoseId : null);
+  if (u.elbowL) u.elbowL.rotation.set(-p.elbowL, 0, 0);
+  if (u.elbowR) u.elbowR.rotation.set(-p.elbowR, 0, 0);
+  if (u.kneeL) u.kneeL.rotation.set(p.kneeL, 0, 0);
+  if (u.kneeR) u.kneeR.rotation.set(p.kneeR, 0, 0);
+  rig.position.y = drop;
+}
+
+export function applyHeldPose(g: THREE.Group = player) {
+  if (!heldPose) return;
+  applyPoseTo(g, heldPose, poseRigDrop(g === player ? heldPoseId : null));
 }
 
 function resetPoseJoints(g: THREE.Group) {
@@ -887,7 +892,7 @@ export function makeAvatar(L: Look, name: string, parent: THREE.Object3D = scene
   parent.add(g);
   return g;
 }
-function walkAnim(a: THREE.Group, sp: number, t: number, ph: number) {
+export function walkAnim(a: THREE.Group, sp: number, t: number, ph: number) {
   const r = a.userData.rig as THREE.Group,
     u = r.userData as Record<string, THREE.Object3D>;
   if (a === player && heldPose && sp <= 0.4) {
@@ -995,7 +1000,7 @@ function tickAssistant(dt: number) {
   assistant.rotation.y = Math.atan2(dx, dz);
 }
 
-/** No walking NPCs — real multiplayer presence is not wired yet. */
+/** Legacy stub — live remotes are managed in live.ts. */
 export const npcs: THREE.Group[] = [];
 
 /** Visual-only merchant staff inside far-plot interiors (no colliders / economy). */

@@ -42,7 +42,7 @@ const MIN_ROOT_NEAR = nearToYocto('0.2');
 export class AuthError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 401 | 403 | 409 | 429 | 503 = 400,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 429 | 503 = 400,
     readonly extra?: Record<string, unknown>,
   ) {
     super(message);

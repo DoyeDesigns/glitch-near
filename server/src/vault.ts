@@ -21,7 +21,7 @@ import { randomId } from './crypto';
 import { db } from './db';
 import { getPlayerById, type PlayerRow } from './near';
 import { readGdBalanceForLog } from './near/gd';
-import { createToken, getItemBalances, getToken } from './near/items';
+import { applyItemDelta, createToken, getItemBalances, getToken } from './near/items';
 import { resumeOrSend } from './near/mintTx';
 
 const minting = new Set<string>();
@@ -298,15 +298,11 @@ export async function finishVault(player: PlayerRow, stops: number[]): Promise<V
   return viewOf(player, paid, hit);
 }
 
-/** Boot check. A vault finish does not call getToken or createToken. */
+/** Register the shard token type. Throws if the items contract cannot be reached. */
 export async function ensureShardToken(): Promise<void> {
-  try {
-    const existing = await getToken('shard');
-    if (existing) return;
-    await createToken('shard', 'shard', 'Shard', null);
-  } catch {
-    console.error('[vault] shard token is missing');
-  }
+  const existing = await getToken('shard');
+  if (existing) return;
+  await createToken('shard', 'shard', 'Shard', null);
 }
 
 async function mintVault(row: VaultRow): Promise<void> {
@@ -360,6 +356,14 @@ async function mintVault(row: VaultRow): Promise<void> {
         db.prepare(`UPDATE vaults SET shards_minted = 1 WHERE id = ?`).run(fresh.id);
       } else {
         try {
+          if (!process.env.VITEST) {
+            try {
+              await getItemBalances(accountId);
+            } catch {
+              /* a cold cache skips the optimistic shard credit */
+            }
+            await ensureShardToken();
+          }
           await resumeOrSend(
             {
               flag: afterGd.shards_minted,
@@ -370,6 +374,7 @@ async function mintVault(row: VaultRow): Promise<void> {
             {
               mark: () => {
                 db.prepare(`UPDATE vaults SET shards_minted = 1 WHERE id = ? AND shards_minted = 0`).run(fresh.id);
+                applyItemDelta(accountId, 'shard', BigInt(afterGd.shards));
               },
               persist: (hash, at, attempts) => {
                 db.prepare(
@@ -383,8 +388,9 @@ async function mintVault(row: VaultRow): Promise<void> {
               },
             },
           );
-        } catch {
-          console.error('[vault] shard mint failed');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[vault] shard mint failed: ${msg.slice(0, 200)}`);
         }
       }
     }

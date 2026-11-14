@@ -290,7 +290,7 @@ export async function payMaintenance(playerId: string): Promise<PurchaseResult> 
   const merchant = getMerchant('dealer');
   if (!merchant) throw new AuthError('Unknown merchant', 400);
   await assertMerchantOpen('dealer');
-  if (!(await ownsStudio(playerId))) throw new AuthError('You do not own a studio', 400);
+  if (!(await ownsStudio(playerId))) throw new AuthError('You do not own a home', 400);
   return reserveAndTransfer({
     playerId,
     merchantId: 'dealer',

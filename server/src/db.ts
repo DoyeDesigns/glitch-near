@@ -170,6 +170,56 @@ db.exec(`
     PRIMARY KEY (merchant_id, item_id)
   );
 
+  CREATE TABLE IF NOT EXISTS presence (
+    player_id TEXT PRIMARY KEY REFERENCES players(id),
+    x REAL NOT NULL,
+    z REAL NOT NULL,
+    place TEXT NOT NULL,
+    look_json TEXT NOT NULL,
+    pose_json TEXT,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS place_chat (
+    id TEXT PRIMARY KEY,
+    place TEXT NOT NULL,
+    player_id TEXT NOT NULL REFERENCES players(id),
+    text TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS poses (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL REFERENCES players(id),
+    name TEXT NOT NULL,
+    pose_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS pose_posts (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL REFERENCES players(id),
+    pose_json TEXT NOT NULL,
+    caption TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS pose_likes (
+    post_id TEXT NOT NULL REFERENCES pose_posts(id),
+    player_id TEXT NOT NULL REFERENCES players(id),
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (post_id, player_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL REFERENCES players(id),
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL,
+    read_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS signup_log (
     id TEXT PRIMARY KEY,
     ip TEXT NOT NULL,

@@ -1,6 +1,7 @@
 import { catalogSeedEntries } from '@glitch/shared';
 import { config, requireNearConfig } from '../config';
 import { db } from '../db';
+import { addBalancePin, reconcileBalancePin } from './balancePin';
 import { DEFAULT_GAS, getProvider, getTreasuryAccount, parseU128 } from './client';
 import { withChainRetry } from './retry';
 
@@ -109,6 +110,7 @@ export async function mintItem(
   const amt = String(amount);
   if (itemMinter) {
     await itemMinter(accountId, tokenId, BigInt(amt));
+    applyItemDelta(accountId, tokenId, BigInt(amt));
     return;
   }
   const contractId = requireItemsContract();
@@ -123,7 +125,7 @@ export async function mintItem(
       }),
     { idempotent: false, label: 'items.mint', account: accountId, amount: amt },
   );
-  invalidateItemBalances(accountId);
+  applyItemDelta(accountId, tokenId, BigInt(amt));
 }
 
 /** Burn items from a player (minter-only burn_from). Never retried. */
@@ -135,6 +137,7 @@ export async function burnItem(
   const amt = String(amount);
   if (itemBurner) {
     await itemBurner(accountId, tokenId, BigInt(amt));
+    applyItemDelta(accountId, tokenId, -BigInt(amt));
     return;
   }
   const contractId = requireItemsContract();
@@ -149,7 +152,7 @@ export async function burnItem(
       }),
     { idempotent: false, label: 'items.burn_from', account: accountId, amount: amt },
   );
-  invalidateItemBalances(accountId);
+  applyItemDelta(accountId, tokenId, -BigInt(amt));
 }
 
 /** Server-signed move between accounts (admin_transfer). Never retried. */
@@ -178,8 +181,29 @@ export async function adminTransfer(
 
 let tokenListCache: { ids: string[]; until: number } | null = null;
 let tokenListInflight: Promise<string[]> | null = null;
-const balanceCache = new Map<string, { value: Record<string, string>; until: number }>();
+const balanceCache = new Map<string, { value: Record<string, string>; until: number; gen: number }>();
 const balanceInflight = new Map<string, Promise<Record<string, string>>>();
+
+function writeItemCache(accountId: string, value: Record<string, string>): void {
+  const prev = balanceCache.get(accountId);
+  balanceCache.set(accountId, {
+    value,
+    until: Date.now() + BALANCE_MS,
+    gen: (prev?.gen ?? 0) + 1,
+  });
+}
+
+/** Move a cached item balance by a mint or burn that already succeeded. */
+export function applyItemDelta(accountId: string, tokenId: string, delta: bigint): void {
+  if (delta === 0n) return;
+  const hit = balanceCache.get(accountId);
+  if (!hit) return;
+  const shown = addBalancePin(accountId, tokenId, hit.value[tokenId] ?? '0', delta);
+  const next = { ...hit.value };
+  if (BigInt(shown) <= 0n) delete next[tokenId];
+  else next[tokenId] = shown;
+  writeItemCache(accountId, next);
+}
 
 export function invalidateItemBalances(accountId?: string): void {
   if (accountId) balanceCache.delete(accountId);
@@ -234,6 +258,19 @@ async function tokenIds(): Promise<string[]> {
  * Item balances for an account. The token list is cached for 60s.
  * Balances are cached for 5s. Returns only non-zero balances.
  */
+function mergePinnedItems(accountId: string, chain: Record<string, string>): Record<string, string> {
+  const merged = { ...chain };
+  const pins = db
+    .prepare(`SELECT token_id FROM balance_pins WHERE account_id = ? AND token_id != 'gd'`)
+    .all(accountId) as { token_id: string }[];
+  for (const pin of pins) {
+    const shown = reconcileBalancePin(accountId, pin.token_id, BigInt(chain[pin.token_id] ?? '0'));
+    if (shown <= 0n) delete merged[pin.token_id];
+    else merged[pin.token_id] = shown.toString();
+  }
+  return merged;
+}
+
 export async function getItemBalances(accountId: string): Promise<Record<string, string>> {
   if (itemBalancesReader) return itemBalancesReader(accountId);
   const now = Date.now();
@@ -241,6 +278,7 @@ export async function getItemBalances(accountId: string): Promise<Record<string,
   if (hit && hit.until > now) return hit.value;
   const pending = balanceInflight.get(accountId);
   if (pending) return pending;
+  const startGen = hit?.gen ?? 0;
 
   const run = (async () => {
     const contractId = requireItemsContract();
@@ -255,12 +293,15 @@ export async function getItemBalances(accountId: string): Promise<Record<string,
         }),
       { idempotent: true, label: 'items.mt_batch_balance_of', account: accountId },
     );
-    const out: Record<string, string> = {};
+    const chain: Record<string, string> = {};
     for (let i = 0; i < tokenIdsForAccount.length; i++) {
       const n = parseU128(bals?.[i]);
-      if (n > 0n) out[tokenIdsForAccount[i]!] = n.toString();
+      if (n > 0n) chain[tokenIdsForAccount[i]!] = n.toString();
     }
-    balanceCache.set(accountId, { value: out, until: Date.now() + BALANCE_MS });
+    const current = balanceCache.get(accountId);
+    if (current && current.gen > startGen) return current.value;
+    const out = mergePinnedItems(accountId, chain);
+    writeItemCache(accountId, out);
     return out;
   })().finally(() => {
     balanceInflight.delete(accountId);

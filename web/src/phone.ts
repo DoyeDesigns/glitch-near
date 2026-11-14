@@ -13,6 +13,7 @@ import {
   cam,
   clearInterior,
   currentInterior,
+  draftFromPose,
   heldPoseId,
   overdue,
   player,
@@ -25,6 +26,22 @@ import {
   type PoseLimbDraft,
 } from './world';
 import { NEUTRAL_POSE, poseSvgMarkup } from './posePreview';
+import {
+  deleteServerPose,
+  likePose,
+  loadPlaceChat,
+  loadPoseFeed,
+  loadPoses,
+  markNotesRead,
+  myPoses,
+  noteCount,
+  peopleAtPlace,
+  placeMessages,
+  posePosts,
+  publishPose,
+  saveServerPose,
+  sendPlaceChat,
+} from './live';
 import {
   closeModal,
   hudAvailable,
@@ -52,6 +69,7 @@ import {
   type CityDayRow,
 } from './games';
 import { fetchChainProof, me, refreshMe, type ChainProof } from './session';
+import { LOCS, locAt, placeId } from './places';
 
 type MarketListing = {
   id: string;
@@ -62,57 +80,87 @@ type MarketListing = {
   sellerId: string;
 };
 
-let marketListings: MarketListing[] = [];
-let marketErr = '';
-let marketBusy = false;
+type MarketSale = MarketListing & { soldAt: number };
 
-async function loadMarket(): Promise<void> {
+const MARKET_SALES_SEEN_KEY = 'glitch_market_sales_seen';
+
+let marketListings: MarketListing[] = [];
+let marketMySales: MarketSale[] = [];
+let marketErr = '';
+/** '' idle, or `list` / `buy:<id>` / `cancel:<id>` while a market request is in flight. */
+let marketBusyKey = '';
+let marketFetchGen = 0;
+
+function readSalesSeen(): Record<string, number> {
   try {
-    const res = await fetch('/market', { credentials: 'include' });
-    const data = (await res.json()) as { listings?: MarketListing[]; error?: string };
-    if (!res.ok) throw new Error(data.error || 'Could not load market');
-    marketListings = data.listings ?? [];
-    marketErr = '';
-  } catch (err) {
-    marketErr = err instanceof Error ? err.message : 'Could not load market';
-  } finally {
-    if (phoneOpen && phoneApp === 'shop') phoneRefresh();
+    const raw = localStorage.getItem(MARKET_SALES_SEEN_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
   }
 }
 
-export const LOCS = [
-  { id: 'plaza', name: 'Central Plaza', x: 0, z: 6, r: 14, sp: [0, 10] as [number, number], note: 'The main square. Everyone passes through.' },
-  { id: 'wall', name: 'Wall Street', x: -20, z: -4, r: 12, sp: [-15.5, -9] as [number, number], note: 'Trade coins at the Exchange.' },
-  { id: 'lab', name: 'Vault Lab', x: 20, z: -4, r: 12, sp: [15.5, -9] as [number, number], note: 'Crack vaults and watch the bounty board.' },
-  { id: 'tower', name: 'Attention Tower', x: 0, z: -26, r: 10, sp: [0, -25] as [number, number], note: 'Post, trend and gain followers.' },
-  { id: 'forge', name: 'Gear Forge', x: 0, z: -10, r: 8, sp: [0, -6] as [number, number], note: 'Forge gear from shards.' },
-  { id: 'diner', name: 'Neon Diner', x: 34, z: 24, r: 10, sp: [34, 20.5] as [number, number], note: 'Eat here. Paid in GD.' },
-  { id: 'home', name: 'My Home', x: 22, z: 32, r: 10, sp: [22, 26.5] as [number, number], note: 'Your place.' },
-];
-export const GAS = GAS_GD;
-export const locAt = (x: number, z: number) => {
-  let b = LOCS[0]!,
-    bd = 1e9;
-  for (const l of LOCS) {
-    const d = Math.hypot(x - l.x, z - l.z) - l.r;
-    if (d < bd) {
-      bd = d;
-      b = l;
-    }
+function writeSalesSeen(map: Record<string, number>): void {
+  try {
+    localStorage.setItem(MARKET_SALES_SEEN_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
   }
-  return b;
-};
+}
+
+function notifyNewSales(sales: MarketSale[]): void {
+  const seen = readSalesSeen();
+  const fresh = sales.filter(s => !seen[s.id]);
+  if (!fresh.length) return;
+  for (const s of fresh) {
+    seen[s.id] = s.soldAt;
+    const furnHint = s.tokenId.includes('gear-')
+      ? 'Item left your inventory.'
+      : 'It left your home/inventory.';
+    banner(`Your ${s.title} sold for ${fmtN(Number(s.price))} GD. ${furnHint}`, 'good');
+  }
+  writeSalesSeen(seen);
+}
+
+async function loadMarket(): Promise<void> {
+  const gen = ++marketFetchGen;
+  try {
+    const res = await fetch('/market', { credentials: 'include' });
+    const data = (await res.json()) as {
+      listings?: MarketListing[];
+      mySales?: MarketSale[];
+      error?: string;
+    };
+    if (!res.ok) throw new Error(data.error || 'Could not load market');
+    if (gen !== marketFetchGen) return;
+    marketListings = data.listings ?? [];
+    marketMySales = data.mySales ?? [];
+    marketErr = '';
+    notifyNewSales(marketMySales);
+  } catch (err) {
+    if (gen !== marketFetchGen) return;
+    marketErr = err instanceof Error ? err.message : 'Could not load market';
+  } finally {
+    if (gen === marketFetchGen && phoneOpen && phoneApp === 'shop') phoneRefresh();
+  }
+}
+
+function enterMarket(): void {
+  void loadMarket();
+  void refreshMe().catch(() => {});
+}
+
+export { LOCS, locAt };
+export const GAS = GAS_GD;
 export const here = () => {
-  if (currentInterior === 'home') return LOCS.find(l => l.id === 'home')!;
-  if (currentInterior === 'diner') return LOCS.find(l => l.id === 'diner')!;
-  if (currentInterior === 'exchange') return LOCS.find(l => l.id === 'wall')!;
-  if (currentInterior === 'vault') return LOCS.find(l => l.id === 'lab')!;
-  if (currentInterior === 'tower') return LOCS.find(l => l.id === 'tower')!;
-  if (currentInterior === 'forge') return LOCS.find(l => l.id === 'forge')!;
-  return locAt(player.position.x, player.position.z);
+  const id = placeId(currentInterior, player.position.x, player.position.z);
+  return LOCS.find(l => l.id === id) ?? locAt(player.position.x, player.position.z);
 };
-/** Real multiplayer presence is not wired — only you count as “here”. */
-export const peopleAt = (_id: string) => [] as Array<{ userData: { npc: { name: string } } }>;
+/** Other players currently at a place (from presence heartbeat). */
+export const peopleAt = (id: string) =>
+  peopleAtPlace(id).map(o => ({ userData: { npc: { name: o.name } } }));
 const chatLog: Record<string, Array<{ who: string; text: string; t: number; me?: boolean }>> = {};
 LOCS.forEach(l => {
   chatLog[l.id] = [];
@@ -178,8 +226,6 @@ function loadChainProof(): void {
       if (phoneOpen && phoneApp === 'set') phoneRefresh();
     });
 }
-/** v5: arm raise 0 = ribs hang; spread aims lift out. */
-const CUSTOM_POSE_KEY = 'glitch-custom-pose-v5';
 type PoseLimbId = 'armL' | 'armR' | 'legL' | 'legR';
 type CustomPoseDraft = Record<PoseLimbId, PoseLimbDraft>;
 
@@ -191,40 +237,6 @@ const emptyPoseDraft = (): CustomPoseDraft => ({
   legR: emptyLimbDraft(),
 });
 
-function readLimbDraft(raw: unknown): PoseLimbDraft | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const o = raw as Record<string, unknown>;
-  const raise = Number(o.raise),
-    spread = Number(o.spread),
-    bend = Number(o.bend);
-  if (![raise, spread, bend].every(Number.isFinite)) return null;
-  return { raise, spread, bend };
-}
-
-function loadCustomPoseDraft(): CustomPoseDraft | null {
-  try {
-    const raw = JSON.parse(localStorage.getItem(CUSTOM_POSE_KEY) || 'null') as Partial<CustomPoseDraft> | null;
-    if (!raw || typeof raw !== 'object') return null;
-    const armL = readLimbDraft(raw.armL),
-      armR = readLimbDraft(raw.armR),
-      legL = readLimbDraft(raw.legL),
-      legR = readLimbDraft(raw.legR);
-    if (!armL || !armR || !legL || !legR) return null;
-    return { armL, armR, legL, legR };
-  } catch {
-    return null;
-  }
-}
-
-function saveCustomPoseDraft(xs: CustomPoseDraft) {
-  localStorage.setItem(CUSTOM_POSE_KEY, JSON.stringify(xs));
-}
-
-function customPose(): Pose | null {
-  const xs = loadCustomPoseDraft();
-  return xs ? poseFromDraft(xs) : null;
-}
-
 let phoneApp: string | null = null,
   socialTab = 'all',
   chatTab = 'here',
@@ -232,7 +244,10 @@ let phoneApp: string | null = null,
   profOf: string | null = null,
   poseEdit = false,
   poseLimb: PoseLimbId = 'armL',
-  poseDraft: CustomPoseDraft = emptyPoseDraft();
+  poseDraft: CustomPoseDraft = emptyPoseDraft(),
+  posesTab: 'feed' | 'mine' = 'feed',
+  editingPoseId: string | null = null,
+  editingPoseName = 'My pose';
 const hash = (s: string) => {
   let h = 0;
   for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -336,6 +351,8 @@ export function openPhone(app?: string) {
     phoneApp = app || null;
     renderPhone();
     if (phoneApp === 'myhome') refreshMyHomeQuotes();
+    if (phoneApp === 'poses') void enterPoses();
+    if (phoneApp === 'shop') enterMarket();
     syncHomeMerchantPoll();
     return;
   }
@@ -356,25 +373,64 @@ export function openPhone(app?: string) {
   sheet.classList.add('phonesheet', 'assist-sheet');
   renderPhone();
   if (phoneApp === 'myhome') refreshMyHomeQuotes();
+  if (phoneApp === 'poses') void enterPoses();
+  if (phoneApp === 'shop') enterMarket();
   syncHomeMerchantPoll();
+}
+
+async function enterPoses() {
+  posesTab = 'feed';
+  await markNotesRead();
+  await Promise.all([loadPoses(), loadPoseFeed()]);
+  if (phoneOpen && phoneApp === 'poses') phoneRefresh();
+  placeAssistBadge();
 }
 export function phoneRefresh() {
   if (!phoneOpen) return;
   const scr = sheet.querySelector('.ph-scr') as HTMLElement | null;
   const top = scr?.scrollTop ?? 0;
-  const i = $('#pin') as HTMLInputElement | null,
-    v = i && i.value,
-    f = i && document.activeElement === i;
+  const pin = $('#pin') as HTMLInputElement | null;
+  const pinVal = pin?.value;
+  const pinFocus = !!pin && document.activeElement === pin;
+  const mktTok = $('#mktToken') as HTMLSelectElement | null;
+  const mktTokVal = mktTok?.value;
+  const mktTokFocus = !!mktTok && document.activeElement === mktTok;
+  const mktPrice = $('#mktPrice') as HTMLInputElement | null;
+  const mktPriceVal = mktPrice?.value;
+  const mktPriceFocus = !!mktPrice && document.activeElement === mktPrice;
+  const mktPriceSel =
+    mktPriceFocus && mktPrice
+      ? ([mktPrice.selectionStart ?? 0, mktPrice.selectionEnd ?? 0] as const)
+      : null;
   renderPhone();
   const scr2 = sheet.querySelector('.ph-scr') as HTMLElement | null;
   if (scr2 && top) scr2.scrollTop = top;
-  if (i) {
+  if (pinVal != null) {
     const n = $('#pin') as HTMLInputElement | null;
-    if (n && v != null) {
-      n.value = v;
-      if (f) {
+    if (n) {
+      n.value = pinVal;
+      if (pinFocus) {
         n.focus();
-        n.setSelectionRange(v.length, v.length);
+        n.setSelectionRange(pinVal.length, pinVal.length);
+      }
+    }
+  }
+  if (mktTokVal != null) {
+    const n = $('#mktToken') as HTMLSelectElement | null;
+    if (n) {
+      if ([...n.options].some(o => o.value === mktTokVal)) n.value = mktTokVal;
+      if (mktTokFocus) n.focus();
+    }
+  }
+  if (mktPriceVal != null) {
+    const n = $('#mktPrice') as HTMLInputElement | null;
+    if (n) {
+      n.value = mktPriceVal;
+      if (mktPriceFocus) {
+        n.focus();
+        const a = mktPriceSel?.[0] ?? mktPriceVal.length;
+        const b = mktPriceSel?.[1] ?? mktPriceVal.length;
+        n.setSelectionRange(a, b);
       }
     }
   }
@@ -391,7 +447,7 @@ const BEGINNER_HINTS = [
   'Neon Diner east — walk in and Use the counter to eat.',
   'Vault Lab — Use a terminal to crack vaults for shards.',
   'Gear Forge — spend shards to mint wearable gear.',
-  'My Home — buy a studio, then sleep to restore energy.',
+  'My Home — buy a home, then sleep to restore energy.',
   'Step to a lit door, press Use to enter. E also works.',
   'Hold-drag to look. Click me anytime for modules.',
 ];
@@ -484,6 +540,22 @@ export function currentAssistHint(): string {
   const pool = skillTier() === 'beginner' ? BEGINNER_HINTS : skillTier() === 'mid' ? MID_HINTS : HIGH_HINTS;
   const i = Math.floor(Date.now() / 12000) % pool.length;
   return pool[i]!;
+}
+
+export function placeAssistBadge() {
+  const el = $('#assistBadge') as HTMLElement | null;
+  if (!el) return;
+  const pos = noteCount > 0 ? assistantScreenPos() : null;
+  if (!pos) {
+    el.hidden = true;
+    return;
+  }
+  const app = $('#app') as HTMLElement;
+  const ar = app.getBoundingClientRect();
+  el.hidden = false;
+  el.textContent = noteCount > 9 ? '9+' : String(noteCount);
+  el.style.left = `${pos.x - ar.left + 18}px`;
+  el.style.top = `${pos.y - ar.top - 8}px`;
 }
 
 export function updateAssistHint() {
@@ -640,15 +712,15 @@ function renderPhone() {
     L0 = here();
   let body = '';
   if (!phoneApp) {
-    const ap = (id: string, nm: string, col: string, ch: string, soon?: number) =>
-      `<button class="ap ${soon ? 'soon' : ''}" ${soon ? 'disabled' : `data-a="app" data-v="${id}"`}><i style="background:${col}">${ch}${id === 'chat' && unread ? `<u>${unread}</u>` : ''}</i><span>${nm}</span></button>`;
+      const ap = (id: string, nm: string, col: string, ch: string, soon?: number) =>
+      `<button class="ap ${soon ? 'soon' : ''}" ${soon ? 'disabled' : `data-a="app" data-v="${id}"`}><i style="background:${col}">${ch}${id === 'chat' && unread ? `<u>${unread}</u>` : ''}${id === 'poses' && noteCount ? `<u>${noteCount > 9 ? '9+' : noteCount}</u>` : ''}</i><span>${nm}</span></button>`;
     body =
       `<div class="ph-h"><b>Modules</b></div>` +
       (assistHintsEnabled()
         ? `<p class="assist-tip">${esc(currentAssistHint())}</p>`
         : `<p class="assist-tip muted">Hints hidden. <button type="button" class="lnk" data-a="hintsOn">Show hints</button></p>`) +
-      `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('map', 'Map', '#ffb12e', 'M')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('pose', 'Pose', '#ff7a59', '◇')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}</div>`;
-  } else if (phoneApp === 'pose') {
+      `<div class="apps">${ap('social', 'Social', '#2ee6ff', 'S')}${ap('chat', 'Chat', '#b8ff3d', 'C')}${ap('map', 'Map', '#ffb12e', 'M')}${ap('wallet', 'Balance', '#ff3d9a', 'W')}${ap('me', 'Profile', '#7a8cff', 'P')}${ap('poses', 'Poses', '#ff7a59', '◇')}${ap('set', 'Settings', '#8b97b8', '⚙')}${ap('myhome', 'My Home', '#3dffb0', 'H')}${ap('shop', 'Market', '#26324f', '$')}</div>`;
+  } else if (phoneApp === 'poses' || phoneApp === 'pose') {
     if (poseEdit) {
       const draftPose = poseFromDraft(poseDraft);
       const limb = poseDraft[poseLimb];
@@ -669,44 +741,55 @@ function renderPhone() {
         row('raise', isArm ? 'Raise (0 = ribs)' : 'Raise', isArm ? -0.8 : -2.4, 2.4) +
         row('spread', 'Spread out', 0, 1.7) +
         row('bend', bendLabel, isArm ? -2.3 : 0, 2.3) +
+        `<label class="pose-row"><span>Name</span><input id="poseName" type="text" maxlength="40" value="${esc(editingPoseName)}"></label>` +
         `<div class="acts"><button class="pri" data-a="poseSave">Save pose</button><button data-a="poseList">Cancel</button></div>`;
+    } else if (posesTab === 'feed') {
+      const opts =
+        myPoses.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('') ||
+        '<option value="">Save a pose first</option>';
+      const cards = posePosts
+        .map(
+          p =>
+            `<article class="post"><b>${esc(p.name)}</b><div class="pose-stage sm">${poseSvgMarkup(p.pose, { size: 112, className: 'pose-fig' })}</div><div>${esc(p.caption || '…')}</div><button data-a="poseLike" data-v="${esc(p.id)}" ${p.liked ? 'disabled' : ''}>${p.liked ? 'Liked' : 'Like'} ${p.likes}</button></article>`,
+        )
+        .join('');
+      body =
+        hdr('Poses', 'home') +
+        `<div class="chips"><button data-a="posesTab" data-v="feed" class="on">Feed</button><button data-a="posesTab" data-v="mine">Mine</button></div>` +
+        `<div class="cmp"><select id="posePick">${opts}</select><input id="pin" type="text" maxlength="140" placeholder="Caption" autocomplete="off"><button class="pri" data-a="posePost" ${myPoses.length ? '' : 'disabled'}>Post</button></div>` +
+        (cards || '<p class="hint">No poses posted yet.</p>');
     } else {
-      const custom = loadCustomPoseDraft();
-      const customP = customPose();
+      const saved = myPoses.find(p => p.id === heldPoseId);
       const activePreset = POSE_PRESETS.find(p => p.id === heldPoseId);
-      const activePose: Pose =
-        heldPoseId === 'custom' && customP
-          ? customP
-          : activePreset?.pose ?? NEUTRAL_POSE;
-      const activeName =
-        heldPoseId === 'custom'
-          ? 'Your pose'
-          : activePreset?.name ?? 'Standing';
-      const card = (id: string, name: string, p: Pose, badge?: string) => {
+      const activePose: Pose = saved?.pose ?? activePreset?.pose ?? NEUTRAL_POSE;
+      const activeName = saved?.name ?? activePreset?.name ?? 'Standing';
+      const card = (id: string, name: string, p: Pose) => {
         const on = heldPoseId === id ? ' on' : '';
-        const tag = badge ? `<em class="pose-badge">${esc(badge)}</em>` : '';
         return `<button type="button" class="pose-card${on}" data-a="posePick" data-v="${esc(id)}">
           <span class="pose-thumb">${poseSvgMarkup(p, { size: 88, className: 'pose-fig' })}</span>
-          <span class="pose-card-name">${esc(name)}${tag}</span>
+          <span class="pose-card-name">${esc(name)}</span>
         </button>`;
       };
+      const mine = myPoses
+        .map(
+          p =>
+            `<div class="row">${card(p.id, p.name, p.pose)}<span><button data-a="poseRename" data-v="${esc(p.id)}">Edit</button><button data-a="poseDel" data-v="${esc(p.id)}">Delete</button></span></div>`,
+        )
+        .join('');
       const cards = POSE_PRESETS.map(p => card(p.id, p.name, p.pose)).join('');
-      const customCard = customP
-        ? card('custom', 'Your pose', customP, 'saved')
-        : '';
       body =
-        hdr('Pose', 'home') +
-        `<p class="hint">Tap a silhouette. Holds until you walk.</p>` +
+        hdr('Poses', 'home') +
+        `<div class="chips"><button data-a="posesTab" data-v="feed">Feed</button><button data-a="posesTab" data-v="mine" class="on">Mine</button></div>` +
+        `<p class="hint">Tap a silhouette. It holds until you walk. Saved poses stay on your account.</p>` +
         `<div class="pose-now${heldPoseId ? ' live' : ''}">
           <div class="pose-stage sm">${poseSvgMarkup(activePose, { size: 112, className: 'pose-fig pose-fig-lg' })}</div>
           <div class="pose-now-meta"><small>Now</small><b>${esc(activeName)}</b></div>
         </div>` +
-        `<div class="pose-grid">${customCard}${cards}</div>` +
-        `<div class="acts"><button class="pri" data-a="poseEdit">${custom ? 'Edit my pose' : 'Make a pose'}</button>${heldPoseId ? '<button data-a="poseClear">Clear</button>' : ''}</div>`;
+        `<h3>Yours</h3>${mine || '<p class="hint">No saved poses yet.</p>'}` +
+        `<div class="pose-grid">${cards}</div>` +
+        `<div class="acts"><button class="pri" data-a="poseEdit">New pose</button>${heldPoseId ? '<button data-a="poseClear">Clear</button>' : ''}</div>`;
     }
   } else if (phoneApp === 'shop') {
-    void loadMarket();
-    void refreshMe().catch(() => {});
     const owned = Object.entries(me?.items ?? {}).filter(
       ([id, n]) => isPlayerListableToken(id) && BigInt(n) > 0n,
     );
@@ -719,27 +802,42 @@ function renderPhone() {
             `<option value="${esc(id)}">${esc(listableTokenTitle(id))}</option>`,
         )
         .join('') || '<option value="">No listable items</option>';
+    const busy = !!marketBusyKey;
     body =
       hdr('Market', 'home') +
-      `<p class="hint">List furniture or gear for ${MARKET_LIST_MIN_GD}–${fmtN(MARKET_LIST_MAX_GD)} GD. Fee 2% on sale.</p>` +
+      `<p class="hint">Sell furniture or gear for ${MARKET_LIST_MIN_GD}–${fmtN(MARKET_LIST_MAX_GD)} GD (2% fee). Listed items stay in your home until sold, then transfer to the buyer.</p>` +
       (marketErr ? `<p class="hint" style="color:var(--pink)">${esc(marketErr)}</p>` : '') +
-      `<div class="cmp"><select id="mktToken">${opt}</select></div>` +
-      `<div class="cmp"><input id="mktPrice" type="number" min="${MARKET_LIST_MIN_GD}" max="${MARKET_LIST_MAX_GD}" value="500" placeholder="Price GD"><button class="pri" data-a="mktlist" ${marketBusy || !owned.length ? 'disabled' : ''}>List</button></div>` +
+      `<div class="mkt-list-form">` +
+      `<small class="mkt-label">Item</small>` +
+      `<div class="cmp"><select id="mktToken" ${busy || !owned.length ? 'disabled' : ''}>${opt}</select></div>` +
+      `<small class="mkt-label">Price (GD)</small>` +
+      `<div class="cmp"><input id="mktPrice" type="number" min="${MARKET_LIST_MIN_GD}" max="${MARKET_LIST_MAX_GD}" value="500" step="1" inputmode="numeric" placeholder="Price GD" ${busy ? 'disabled' : ''}><button class="pri${marketBusyKey === 'list' ? ' is-busy' : ''}" data-a="mktlist" ${busy || !owned.length ? 'disabled' : ''}>List</button></div>` +
+      `</div>` +
       `<h3>Open listings</h3>` +
       (others.length
         ? others
-            .map(
-              l =>
-                `<div class="row"><span><b>${esc(l.title)}</b><small>${esc(l.sellerName)} · ${esc(fmtN(Number(l.price)))} GD</small></span><button class="pri" data-a="mktbuy" data-v="${esc(l.id)}" ${marketBusy ? 'disabled' : ''}>Buy</button></div>`,
-            )
+            .map(l => {
+              const spinning = marketBusyKey === `buy:${l.id}`;
+              return `<div class="row mkt-row"><span><b>${esc(l.title)}</b><small>${esc(l.sellerName)}</small></span><span class="mkt-price">${esc(fmtN(Number(l.price)))} GD</span><button class="pri${spinning ? ' is-busy' : ''}" data-a="mktbuy" data-v="${esc(l.id)}" ${busy ? 'disabled' : ''}>Buy</button></div>`;
+            })
             .join('')
         : '<p class="hint">No open listings yet.</p>') +
       (mine.length
         ? `<h3>Your listings</h3>` +
           mine
+            .map(l => {
+              const spinning = marketBusyKey === `cancel:${l.id}`;
+              return `<div class="row mkt-row"><span><b>${esc(l.title)}</b><small>Your listing</small></span><span class="mkt-price">${esc(fmtN(Number(l.price)))} GD</span><button class="${spinning ? 'is-busy' : ''}" data-a="mktcancel" data-v="${esc(l.id)}" ${busy ? 'disabled' : ''}>Cancel</button></div>`;
+            })
+            .join('')
+        : '') +
+      (marketMySales.length
+        ? `<h3>Recent sales</h3>` +
+          marketMySales
+            .slice(0, 8)
             .map(
               l =>
-                `<div class="row"><span><b>${esc(l.title)}</b><small>${esc(fmtN(Number(l.price)))} GD</small></span><button data-a="mktcancel" data-v="${esc(l.id)}" ${marketBusy ? 'disabled' : ''}>Cancel</button></div>`,
+                `<div class="row mkt-row"><span><b>${esc(l.title)}</b><small>Sold</small></span><span class="mkt-price">${esc(fmtN(Number(l.price)))} GD</span></div>`,
             )
             .join('')
         : '');
@@ -786,7 +884,7 @@ function renderPhone() {
     if (chatTab === 'here')
       body += `<div class="hint"><b>${L0.name}</b> · ${pp.length + 1} here. Messages go to everyone in this place. Tap a name to message one person.</div>
       <div class="chips">${pp.map(a => `<button data-a="dm" data-v="${esc((a.userData.npc as { name: string }).name)}">${esc((a.userData.npc as { name: string }).name)}</button>`).join('') || '<small>Nobody else here yet</small>'}</div>
-      <div class="msgs">${chatLog[L0.id]!.slice(-14).map(m => `<div class="m ${m.me ? 'me' : ''}"><small>${esc(m.who)}</small>${esc(m.text)}</div>`).join('') || '<p class="hint">Quiet here. Say something.</p>'}</div><div class="cmp"><input id="pin" type="text" maxlength="120" placeholder="Message everyone here" autocomplete="off"><button class="pri" data-a="sendLoc">Send</button></div>`;
+      <div class="msgs">${placeMessages.map(m => `<div class="m ${m.name === S.name ? 'me' : ''}"><small>${esc(m.name)}</small>${esc(m.text)}</div>`).join('') || '<p class="hint">Quiet here. Say something.</p>'}</div><div class="cmp"><input id="pin" type="text" maxlength="160" placeholder="Message everyone here" autocomplete="off"><button class="pri" data-a="sendLoc">Send</button></div>`;
     else
       body +=
         Object.keys(dms)
@@ -884,71 +982,106 @@ function renderPhone() {
       if (v === 'chat') {
         chatTab = 'here';
         dmWith = null;
+        void loadPlaceChat().then(() => {
+          if (phoneOpen && phoneApp === 'chat') phoneRefresh();
+        });
       }
-      if (v === 'pose') {
-        const xs = loadCustomPoseDraft();
-        poseDraft = xs
-          ? {
-              armL: { ...xs.armL },
-              armR: { ...xs.armR },
-              legL: { ...xs.legL },
-              legR: { ...xs.legR },
-            }
-          : emptyPoseDraft();
-        poseLimb = 'armL';
-      }
+      if (v === 'poses') void enterPoses();
+      if (v === 'shop') enterMarket();
     } else if (a === 'hintsOn') {
       setAssistHintsEnabled(true);
     } else if (a === 'hintsOff') {
       setAssistHintsEnabled(false);
+    } else if (a === 'posesTab' && (v === 'feed' || v === 'mine')) {
+      posesTab = v;
+      phoneApp = 'poses';
+      if (v === 'feed') void loadPoseFeed();
+      else void loadPoses();
     } else if (a === 'poseList') {
       poseEdit = false;
-      phoneApp = 'pose';
+      posesTab = 'mine';
+      phoneApp = 'poses';
     } else if (a === 'poseLimb' && v && ['armL', 'armR', 'legL', 'legR'].includes(v)) {
       poseLimb = v as PoseLimbId;
-      phoneApp = 'pose';
+      phoneApp = 'poses';
       poseEdit = true;
     } else if (a === 'poseEdit') {
-      const xs = loadCustomPoseDraft();
-      poseDraft = xs
-        ? {
-            armL: { ...xs.armL },
-            armR: { ...xs.armR },
-            legL: { ...xs.legL },
-            legR: { ...xs.legR },
-          }
-        : emptyPoseDraft();
+      editingPoseId = null;
+      editingPoseName = 'My pose';
+      poseDraft = emptyPoseDraft();
       poseLimb = 'armL';
-      setHeldPose(poseFromDraft(poseDraft), 'custom');
+      setHeldPose(poseFromDraft(poseDraft), null);
       poseEdit = true;
-      phoneApp = 'pose';
+      phoneApp = 'poses';
+    } else if (a === 'poseRename' && v) {
+      const saved = myPoses.find(p => p.id === v);
+      if (!saved) return;
+      editingPoseId = saved.id;
+      editingPoseName = saved.name;
+      poseDraft = draftFromPose(saved.pose);
+      poseLimb = 'armL';
+      setHeldPose(saved.pose, saved.id);
+      poseEdit = true;
+      phoneApp = 'poses';
+    } else if (a === 'poseDel' && v) {
+      void deleteServerPose(v).then(ok => {
+        if (heldPoseId === v) setHeldPose(null, null);
+        banner(ok ? 'Pose deleted' : 'Could not delete', ok ? 'good' : 'bad');
+        if (phoneOpen) renderPhone();
+      });
+      return;
     } else if (a === 'posePick') {
-      if (v === 'custom') {
-        const p = customPose();
-        if (p) setHeldPose(p, 'custom');
-      } else {
+      const saved = myPoses.find(p => p.id === v);
+      if (saved) setHeldPose(saved.pose, saved.id);
+      else {
         const preset = POSE_PRESETS.find(p => p.id === v);
         if (preset) setHeldPose(preset.pose, preset.id);
       }
     } else if (a === 'poseClear') {
       setHeldPose(null, null);
     } else if (a === 'poseSave') {
-      saveCustomPoseDraft({
-        armL: { ...poseDraft.armL },
-        armR: { ...poseDraft.armR },
-        legL: { ...poseDraft.legL },
-        legR: { ...poseDraft.legR },
+      const name = (($('#poseName') as HTMLInputElement | null)?.value || editingPoseName).trim();
+      const pose = poseFromDraft(poseDraft);
+      void saveServerPose(editingPoseId, name || 'My pose', pose).then(saved => {
+        if (!saved) {
+          banner('Could not save pose', 'bad');
+          return;
+        }
+        editingPoseId = saved.id;
+        setHeldPose(saved.pose, saved.id);
+        poseEdit = false;
+        posesTab = 'mine';
+        banner('Pose saved', 'good');
+        if (phoneOpen) renderPhone();
       });
-      setHeldPose(poseFromDraft(poseDraft), 'custom');
-      poseEdit = false;
-      banner('Pose saved', 'good');
+      return;
+    } else if (a === 'posePost') {
+      const poseId = ($('#posePick') as HTMLSelectElement | null)?.value;
+      const caption = inp?.value.trim() ?? '';
+      if (!poseId) return;
+      void publishPose(poseId, caption).then(ok => {
+        banner(ok ? 'Posted' : 'Could not post', ok ? 'good' : 'bad');
+        if (phoneOpen) renderPhone();
+      });
+      return;
+    } else if (a === 'poseLike' && v) {
+      void likePose(v).then(() => {
+        if (phoneOpen) renderPhone();
+      });
+      return;
     } else if (a === 'social') phoneApp = 'social';
     else if (a === 'inbox') {
       dmWith = null;
       chatTab = 'inbox';
       phoneApp = 'chat';
     } else if (a === 'stab') socialTab = v!;
-    else if (a === 'ctab') chatTab = v!;
+    else if (a === 'ctab') {
+      chatTab = v!;
+      if (v === 'here')
+        void loadPlaceChat().then(() => {
+          if (phoneOpen && phoneApp === 'chat') phoneRefresh();
+        });
+    }
     else if (a === 'like') {
       const p = feed[+v!]!;
       if (p) p.me = !p.me;
@@ -977,7 +1110,10 @@ function renderPhone() {
     } else if (a === 'sendLoc') {
       const x = inp!.value.trim();
       if (!x) return;
-      chatIn(here().id, S.name, x, true);
+      void sendPlaceChat(x).then(ok => {
+        if (!ok) banner('Could not send', 'bad');
+        if (phoneOpen && phoneApp === 'chat') renderPhone();
+      });
     } else if (a === 'sendDM') {
       const x = inp!.value.trim();
       if (!x) return;
@@ -995,7 +1131,7 @@ function renderPhone() {
       );
       return;
     } else if (a === 'mktlist') {
-      if (marketBusy) return;
+      if (marketBusyKey) return;
       const tokenEl = $('#mktToken') as HTMLSelectElement | null;
       const priceEl = $('#mktPrice') as HTMLInputElement | null;
       const tokenId = tokenEl?.value?.trim() ?? '';
@@ -1004,7 +1140,8 @@ function renderPhone() {
         banner('Pick an item to list', 'bad');
         return;
       }
-      marketBusy = true;
+      marketBusyKey = 'list';
+      phoneRefresh();
       void fetch('/market/list', {
         method: 'POST',
         credentials: 'include',
@@ -1020,13 +1157,15 @@ function renderPhone() {
         })
         .catch(err => banner(err instanceof Error ? err.message : 'List failed', 'bad'))
         .finally(() => {
-          marketBusy = false;
+          marketBusyKey = '';
           phoneRefresh();
         });
       return;
     } else if (a === 'mktbuy') {
-      if (marketBusy || !v) return;
-      marketBusy = true;
+      if (marketBusyKey || !v) return;
+      const listing = marketListings.find(l => l.id === v);
+      marketBusyKey = `buy:${v}`;
+      phoneRefresh();
       void fetch('/market/buy', {
         method: 'POST',
         credentials: 'include',
@@ -1037,19 +1176,27 @@ function renderPhone() {
           const data = (await res.json()) as { error?: string; settling?: boolean };
           if (!res.ok) throw new Error(data.error || 'Buy failed');
           banner(data.settling ? 'Settling…' : 'Bought', 'good');
+          if (listing) {
+            post(
+              'sys',
+              'MARKET',
+              `${S.name} bought ${listing.title} from ${listing.sellerName} for ${fmtN(Number(listing.price))} GD.`,
+            );
+          }
           await loadMarket();
           await refreshMe();
           updateHud();
         })
         .catch(err => banner(err instanceof Error ? err.message : 'Buy failed', 'bad'))
         .finally(() => {
-          marketBusy = false;
+          marketBusyKey = '';
           phoneRefresh();
         });
       return;
     } else if (a === 'mktcancel') {
-      if (marketBusy || !v) return;
-      marketBusy = true;
+      if (marketBusyKey || !v) return;
+      marketBusyKey = `cancel:${v}`;
+      phoneRefresh();
       void fetch('/market/cancel', {
         method: 'POST',
         credentials: 'include',
@@ -1064,7 +1211,7 @@ function renderPhone() {
         })
         .catch(err => banner(err instanceof Error ? err.message : 'Cancel failed', 'bad'))
         .finally(() => {
-          marketBusy = false;
+          marketBusyKey = '';
           phoneRefresh();
         });
       return;
@@ -1133,7 +1280,7 @@ function renderPhone() {
 
 setAssistantClickHandler(() => {
   if (phoneOpen) closeModal();
-  else openPhone();
+  else openPhone('poses');
 });
 ($('#assistHintHide') as HTMLButtonElement | null)?.addEventListener('click', e => {
   e.preventDefault();
@@ -1148,16 +1295,27 @@ addEventListener('keydown', e => {
 });
 
 let phT = 0;
+let chatPoll = 0;
 const phoneUpdateState = { last: '' as string };
 export function phoneUpdate(dt: number) {
   phT += dt;
+  chatPoll += dt;
+  if (chatPoll > 3 && phoneOpen && phoneApp === 'chat' && chatTab === 'here') {
+    chatPoll = 0;
+    const typing = (document.activeElement as HTMLElement | null)?.matches?.('#pin');
+    void loadPlaceChat().then(() => {
+      if (!typing && phoneOpen && phoneApp === 'chat') phoneRefresh();
+    });
+  }
   if (phT > 20 && phoneOpen && !(document.activeElement as HTMLElement | null)?.matches?.('#pin')) {
     phT = 0;
     if (phoneApp === 'set' && advancedOpen && Date.now() - chainAt > 5000) loadChainProof();
     phoneRefresh();
   }
   updateAssistHint();
+  placeAssistBadge();
   const l = here();
   if (l.id !== phoneUpdateState.last) phoneUpdateState.last = l.id;
-  ($('#loc') as HTMLElement).textContent = `${l.name} · 1 here`;
+  const hereCount = peopleAt(l.id).length + 1;
+  ($('#loc') as HTMLElement).textContent = `${l.name} · ${hereCount} here`;
 }

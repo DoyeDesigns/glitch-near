@@ -3,6 +3,7 @@ import { $ } from './util';
 import { S, save } from './state';
 import { addTickT, cases, EVENTS, feed, market, post, runEvent, serverTick, TOK, economyUpdate } from './market';
 import { startStream } from './stream';
+import { tickLive } from './live';
 import {
   buildFurn,
   buildLook,
@@ -367,6 +368,7 @@ function frame(now: number) {
   }
   try {
     worldUpdate(dt);
+    tickLive(dt);
     if (!introOpen()) {
       economyUpdate(dt);
       phoneUpdate(dt);

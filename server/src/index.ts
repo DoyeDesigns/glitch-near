@@ -28,7 +28,10 @@ void resumeTransfers()
   .then(() => resumePurchases())
   .then(() => resumeListingSales())
   .then(() => resumeForges());
-void ensureShardToken();
+void ensureShardToken().catch(err => {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`[vault] shard token is missing: ${msg.slice(0, 200)}`);
+});
 
 if (process.env.VITEST !== 'true') {
   void import('./merchantEconomy').then(({ runMerchantSupplyTick }) => {

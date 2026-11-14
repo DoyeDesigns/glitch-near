@@ -16,9 +16,6 @@ Hosted on NEAR testnet: https://glitch-near.onrender.com/
 4. Buy the cheapest item (Zobo). See hunger rise and the price leave 1,000 GD.
 5. Read the receipt in the shop: the amount, Chef, and the testnet account link on `testnet.nearblocks.io`.
 
-**Sign in** and **Create account** also show **Sign in with Google** on that host.
-
-The pre-hackathon prototype is `legacy/glitch-prototype-v2c.html` (reference only). Hackathon work is the TypeScript split, three contracts, and the server-settled loop below.
 
 ## Architecture
 
@@ -142,7 +139,6 @@ Paint, poses, and the assist drone stay **client cosmetic** (localStorage / pres
 
 - No NEAR Intents, no NEAR Auth, no mainnet.
 - Merchant NPCs are rule-driven accounts with GD, not LLM agents.
-- Google sign-in appears only when `GOOGLE_CLIENT_ID` is set.
 - Floating assist companion, poses, home paint, and level hints are **client cosmetic** (localStorage); not minted.
 - Market contract prize-cycle methods are unused by the server.
 

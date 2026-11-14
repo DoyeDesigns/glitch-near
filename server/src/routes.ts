@@ -24,8 +24,29 @@ import { merchantsView } from './chef';
 import { forgeMint } from './forge';
 import { homeBuy, homePayRent } from './home';
 import { getLeaderboard } from './leaderboard';
+import {
+  createPose,
+  createPosePost,
+  deletePose,
+  heartbeat,
+  likePosePost,
+  listChat,
+  listPoses,
+  listPresence,
+  markNotificationsRead,
+  notificationsFor,
+  poseFeed,
+  postChat,
+  updatePose,
+} from './live';
 import { restPlayer } from './rest';
-import { buyListing, cancelListing, createListing, listOpenListings } from './listings';
+import {
+  buyListing,
+  cancelListing,
+  createListing,
+  listOpenListings,
+  listRecentSoldBySeller,
+} from './listings';
 import { chargeTravel } from './burns';
 import { shopBuy } from './shop';
 import { cancelVault, finishVault, parseVaultStops, startVault } from './vault';
@@ -394,7 +415,10 @@ export function createApp() {
     const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
     if (!player) return c.json({ error: 'Not signed in' }, 401);
     try {
-      return c.json({ listings: listOpenListings() });
+      return c.json({
+        listings: listOpenListings(),
+        mySales: listRecentSoldBySeller(player.id),
+      });
     } catch (err) {
       if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
       console.error('[market] list failed');
@@ -519,6 +543,158 @@ export function createApp() {
       console.error('[forge] mint failed');
       return c.json({ error: 'Could not mint gear' }, 502);
     }
+  });
+
+  const livePlayer = (c: Parameters<typeof getCookie>[0]) => playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+
+  app.post('/presence', async c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { x?: unknown; z?: unknown; place?: unknown; look?: unknown; pose?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Bad body' }, 400);
+    }
+    try {
+      return c.json({ others: heartbeat(player, body) });
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[presence] failed');
+      return c.json({ error: 'Could not update presence' }, 500);
+    }
+  });
+
+  app.get('/presence', c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    return c.json({ others: listPresence(player.id) });
+  });
+
+  app.get('/chat', c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    return c.json(listChat(c.req.query('place')));
+  });
+
+  app.post('/chat', async c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { place?: unknown; text?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Bad body' }, 400);
+    }
+    try {
+      return c.json(postChat(player, body));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[chat] failed');
+      return c.json({ error: 'Could not send' }, 500);
+    }
+  });
+
+  app.get('/poses', c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    return c.json({ poses: listPoses(player.id) });
+  });
+
+  app.post('/poses', async c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { name?: unknown; pose?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Bad body' }, 400);
+    }
+    try {
+      return c.json(createPose(player, body));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[poses] create failed');
+      return c.json({ error: 'Could not save pose' }, 500);
+    }
+  });
+
+  app.patch('/poses/:id', async c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { name?: unknown; pose?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Bad body' }, 400);
+    }
+    try {
+      return c.json(updatePose(player, c.req.param('id'), body));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[poses] update failed');
+      return c.json({ error: 'Could not update pose' }, 500);
+    }
+  });
+
+  app.delete('/poses/:id', c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(deletePose(player, c.req.param('id')));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[poses] delete failed');
+      return c.json({ error: 'Could not delete pose' }, 500);
+    }
+  });
+
+  app.get('/pose-feed', c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    return c.json({ posts: poseFeed(player.id) });
+  });
+
+  app.post('/pose-posts', async c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    let body: { poseId?: unknown; caption?: unknown; pose?: unknown } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Bad body' }, 400);
+    }
+    try {
+      return c.json(createPosePost(player, body));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[pose-posts] failed');
+      return c.json({ error: 'Could not post' }, 500);
+    }
+  });
+
+  app.post('/pose-posts/:id/like', c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    try {
+      return c.json(likePosePost(player, c.req.param('id')));
+    } catch (err) {
+      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      console.error('[pose-posts] like failed');
+      return c.json({ error: 'Could not like' }, 500);
+    }
+  });
+
+  app.get('/notifications', c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    return c.json(notificationsFor(player.id));
+  });
+
+  app.post('/notifications/read', c => {
+    const player = livePlayer(c);
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    return c.json(markNotificationsRead(player.id));
   });
 
   app.get('/stream', c =>

@@ -57,6 +57,10 @@ export type ListingView = {
   createdAt: number;
 };
 
+export type SoldListingView = ListingView & {
+  soldAt: number;
+};
+
 export type ListingSaleResult =
   | { ok: true; saleId: string; status: 'delivered' }
   | { settling: true; saleId: string };
@@ -188,6 +192,33 @@ export function listOpenListings(): ListingView[] {
       createdAt: row.created_at,
     };
   });
+}
+
+/** Recent sold listings for the seller (item already transferred or in flight). */
+export function listRecentSoldBySeller(sellerId: string, limit = 12): SoldListingView[] {
+  const rows = db
+    .prepare(
+      `SELECT l.id, l.seller_id, l.token_id, l.qty, l.price, l.status, l.created_at,
+              COALESCE(s.created_at, l.created_at) AS sold_at
+       FROM listings l
+       LEFT JOIN listing_sales s ON s.listing_id = l.id
+       WHERE l.seller_id = ? AND l.status = 'sold'
+       ORDER BY sold_at DESC
+       LIMIT ?`,
+    )
+    .all(sellerId, limit) as Array<ListingRow & { sold_at: number }>;
+  const seller = getPlayerById(sellerId);
+  return rows.map(row => ({
+    id: row.id,
+    tokenId: row.token_id,
+    title: listableTokenTitle(row.token_id),
+    price: row.price,
+    qty: row.qty,
+    sellerName: seller?.name ?? 'player',
+    sellerId: row.seller_id,
+    createdAt: row.created_at,
+    soldAt: row.sold_at,
+  }));
 }
 
 function markSaleFailed(saleId: string): void {
