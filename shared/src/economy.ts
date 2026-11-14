@@ -268,8 +268,8 @@ export const POST_BURN = 5_000;
 export const POST_ESCROW = 5_000;
 export const POST_PER_MIN = 6;
 export const POST_XP = 14;
-/** A player cannot post again until this long after their last post. */
-export const POST_COOLDOWN_MS = 30_000;
+/** A player cannot post again until this long after their last post. Short so they can stay at the booth. */
+export const POST_COOLDOWN_MS = 8_000;
 /**
  * Added to every post's reach. Was 0.25 (hype mean about +4,259 GD at
  * community level 1). -0.282 brings that hype mean to about 0.

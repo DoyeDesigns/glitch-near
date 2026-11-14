@@ -66,6 +66,8 @@ export type PostResult = {
   settling: string;
   xp: SkillXp;
   payUsed: number;
+  /** Wall-clock ms when this player may post again. 0 means they can post now. */
+  nextPostAt: number;
 };
 
 function parseXp(raw: string): SkillXp {
@@ -154,7 +156,18 @@ function resultOf(
     settling: account.settling,
     xp: account.xp,
     payUsed: account.payUsed,
+    nextPostAt: row.created_at + POST_COOLDOWN_MS,
   };
+}
+
+/** When this player may post again, or 0 if the booth is free. */
+export function nextPostReadyAt(playerId: string): number {
+  const last = db
+    .prepare(`SELECT created_at FROM posts WHERE player_id = ? ORDER BY created_at DESC LIMIT 1`)
+    .get(playerId) as { created_at: number } | undefined;
+  if (!last) return 0;
+  const at = last.created_at + POST_COOLDOWN_MS;
+  return at > Date.now() ? at : 0;
 }
 
 export async function publishPost(player: PlayerRow, input: { sym: string; take: PostTake }): Promise<PostResult> {
@@ -184,7 +197,12 @@ export async function publishPost(player: PlayerRow, input: { sym: string; take:
     const last = db
       .prepare(`SELECT created_at FROM posts WHERE player_id = ? ORDER BY created_at DESC LIMIT 1`)
       .get(player.id) as { created_at: number } | undefined;
-    if (last && now - last.created_at < POST_COOLDOWN_MS) throw new AuthError('Wait before the next post', 429);
+    if (last && now - last.created_at < POST_COOLDOWN_MS) {
+      throw new AuthError('Wait before the next post', 429, {
+        retryAfterMs: POST_COOLDOWN_MS - (now - last.created_at),
+        nextPostAt: last.created_at + POST_COOLDOWN_MS,
+      });
+    }
     const held = ledgerTotals(player.id);
     const available = chain - held.pending - held.escrowed + held.settling;
     if (available < BigInt(POST_COST)) throw new AuthError('Not enough GD', 400);

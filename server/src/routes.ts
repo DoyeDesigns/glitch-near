@@ -18,7 +18,7 @@ import { config } from './config';
 import { installMockChain } from './near/mockLedger';
 import { getHealth, getStreamPayload } from './sim';
 import { openTrade, parseTradeDir, parseTradeStake, tradeSnapshot } from './trade';
-import { parsePostTake, publishPost } from './post';
+import { nextPostReadyAt, parsePostTake, publishPost } from './post';
 import { getAdsPayload, proxyCreative } from './ads';
 import { merchantsView } from './chef';
 import { forgeMint } from './forge';
@@ -282,6 +282,12 @@ export function createApp() {
     }
   });
 
+  app.get('/post', c => {
+    const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
+    if (!player) return c.json({ error: 'Not signed in' }, 401);
+    return c.json({ nextPostAt: nextPostReadyAt(player.id) });
+  });
+
   app.post('/post', async c => {
     const player = playerFromSessionToken(getCookie(c, SESSION_COOKIE));
     if (!player) return c.json({ error: 'Not signed in' }, 401);
@@ -296,7 +302,7 @@ export function createApp() {
     try {
       return c.json(await publishPost(player, { sym: body.sym, take }));
     } catch (err) {
-      if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
+      if (err instanceof AuthError) return c.json({ error: err.message, ...err.extra }, err.status);
       console.error('[post] publish failed');
       return c.json({ error: 'Could not post' }, 502);
     }

@@ -185,11 +185,20 @@ describe('settlement', () => {
     await expect(publishPost(row, { sym: 'NOPE', take: 'meme' })).rejects.toThrow(/Unknown coin/);
   });
 
-  it('rejects a second post inside 30 seconds', async () => {
+  it('rejects a second post inside the cooldown', async () => {
     const row = player('cool');
     fund(row.account_id!, 100_000n);
     await publishPost(row, { sym: 'BTX', take: 'meme' });
-    await expect(publishPost(row, { sym: 'BTX', take: 'meme' })).rejects.toThrow(/Wait before the next post/);
+    try {
+      await publishPost(row, { sym: 'BTX', take: 'meme' });
+      throw new Error('second post should wait');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AuthError);
+      const wait = (err as AuthError).extra?.retryAfterMs;
+      expect(typeof wait).toBe('number');
+      expect(wait as number).toBeGreaterThan(0);
+      expect(wait as number).toBeLessThanOrEqual(8_000);
+    }
   });
 
   it('refuses a purchase that only unminted credits would cover', async () => {

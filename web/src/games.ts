@@ -6,6 +6,7 @@ import {
   MAINTENANCE_GD,
   MAINTENANCE_MS as MAINTENANCE_PERIOD_MS,
   POST_COST,
+  POST_COOLDOWN_MS,
   TRADE_MAX_STAKE,
   TRADE_MIN_STAKE,
   vaultLockStart,
@@ -690,21 +691,47 @@ type PostResult = {
   settling?: string;
   xp: { trade: number; sec: number; comm: number };
   payUsed: number;
+  nextPostAt?: number;
+  retryAfterMs?: number;
   error?: string;
 };
+
+/** Wall-clock ms when this browser may post again. 0 means the booth is free. */
+let postReadyAt = 0;
 
 export function commGame() {
   let tk = TOK[3]!,
     take: PostTake | null = null,
     funds = hudAvailable ?? S.bal,
-    busy = false;
+    busy = false,
+    alive = true,
+    tick = 0;
+  const stopTick = () => {
+    if (!tick) return;
+    clearInterval(tick);
+    tick = 0;
+  };
+  const waitSecs = () => Math.max(0, Math.ceil((postReadyAt - Date.now()) / 1000));
   function render() {
+    if (!alive) return;
     sheet.dataset.lock = '';
+    const wait = waitSecs();
+    const ready = take && funds >= POST_COST && !busy && wait === 0;
     sheet.innerHTML = `<h2>Attention Booth</h2><p>Boost a post for ${fmt(POST_COST)} GD. Read the mood: hype works in greed, warnings work in fear, memes work any time (a bit less).</p>
     <div class="chips">${TOK.map(t => `<button data-t="${t.sym}" class="${t === tk ? 'on' : ''}">${t.sym}</button>`).join('')}</div>
     <div class="chips">${([['hype', `${tk.sym} to the moon`], ['warn', `careful: ${tk.sym} looks like a rug`], ['meme', `me explaining ${tk.sym} to my landlord`]] as const).map(([k, l]) => `<button data-k="${k}" class="${take === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
     <small>Followers ${fmtN(S.followers)} · Community level ${L('comm')}</small>
-    <div class="acts"><button class="pri" id="pst" ${take && funds >= POST_COST && !busy ? '' : 'disabled'}>Post</button><button id="px">Cancel</button></div>`;
+    <div class="acts"><button class="pri" id="pst" ${ready ? '' : 'disabled'}>${wait > 0 ? `Post ${wait}s` : 'Post'}</button><button id="px">Cancel</button></div>`;
+    if (wait > 0 && !tick) {
+      tick = window.setInterval(() => {
+        if (!alive || !sheet.querySelector('#pst')) {
+          stopTick();
+          return;
+        }
+        if (waitSecs() === 0) stopTick();
+        render();
+      }, 250);
+    }
     sheet.querySelectorAll('[data-t]').forEach(b => {
       (b as HTMLButtonElement).onclick = () => {
         tk = TOK.find(t => t.sym === (b as HTMLElement).dataset.t)!;
@@ -717,7 +744,11 @@ export function commGame() {
         render();
       };
     });
-    ($('#px') as HTMLButtonElement).onclick = closeModal;
+    ($('#px') as HTMLButtonElement).onclick = () => {
+      alive = false;
+      stopTick();
+      closeModal();
+    };
     ($('#pst') as HTMLButtonElement).onclick = () => void send();
   }
   function applyAccount(state: PostResult) {
@@ -738,7 +769,7 @@ export function commGame() {
     updateHud();
   }
   async function send() {
-    if (busy || !take || funds < POST_COST) return;
+    if (busy || !take || funds < POST_COST || waitSecs() > 0) return;
     busy = true;
     render();
     const chosen = take;
@@ -751,7 +782,12 @@ export function commGame() {
         body: JSON.stringify({ sym, take: chosen }),
       });
       const state = (await res.json()) as PostResult;
-      if (!res.ok) throw new Error(state.error || 'Could not post');
+      if (!res.ok) {
+        if (typeof state.nextPostAt === 'number' && state.nextPostAt > Date.now()) postReadyAt = state.nextPostAt;
+        else if (typeof state.retryAfterMs === 'number') postReadyAt = Date.now() + state.retryAfterMs;
+        throw new Error(state.error || 'Could not post');
+      }
+      postReadyAt = state.nextPostAt ?? Date.now() + POST_COOLDOWN_MS;
       applyAccount(state);
       S.stats.posts++;
       if (state.reach > 1.2) S.rep++;
@@ -763,6 +799,8 @@ export function commGame() {
       const pnl = Number(state.pnl);
       const credited = Number(state.credited);
       const shown = pnl >= 0 ? credited : pnl;
+      alive = false;
+      stopTick();
       resultCard(
         shown >= 0,
         (shown >= 0 ? '+' : '') + fmt(shown) + ' GD',
@@ -778,6 +816,14 @@ export function commGame() {
   }
   openModal('');
   render();
+  void fetch('/post', { credentials: 'include' })
+    .then(async res => {
+      if (!alive || !res.ok) return;
+      const data = (await res.json()) as { nextPostAt?: number };
+      if (typeof data.nextPostAt === 'number') postReadyAt = data.nextPostAt;
+      render();
+    })
+    .catch(() => {});
 }
 
 export const MAINTENANCE = MAINTENANCE_GD,
